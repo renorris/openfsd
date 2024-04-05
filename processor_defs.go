@@ -523,7 +523,7 @@ func RadioMessageProcessor(client *FSDClient, rawPacket string) *ProcessorResult
 	}
 
 	// Verify the To field is a radio frequency
-	if !strings.HasPrefix(pdu.To, "@") && len(pdu.To) != 6 {
+	if !strings.HasPrefix(pdu.To, "@") || len(pdu.To) != 6 {
 		return NewProcessorResult()
 	}
 
