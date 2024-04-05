@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>FSD</title>
+</head>
+
+<script src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"></script>
+
+<script>
+    $(document).ready(function() {
+        $('#getUserForm').submit(function(event) {
+            event.preventDefault(); // Prevent the default form submission
+
+            $('#getUserOutputd').text("")
+
+            $.ajax({
+                url: '/user', // The server path
+                type: 'GET', // HTTP method
+                data: {
+                    cid: $('#getUserCid').val() // Send the cid value
+                },
+                dataType: 'json', // Data type from server
+                success: function(response) {
+                    // Handle successful response
+                    $('#getUserOutput').text(response["msg"]);
+                    $('#scratchpadDiv').css("visibility", "visible")
+                    $('#scratchpadCid').val(response["user_record"]["cid"])
+                    $('#scratchpadRating').val(response["user_record"]["rating"])
+                    $('#scratchpadRealName').val(response["user_record"]["real_name"])
+                    $('#scratchpadCreationTime').val(response["user_record"]["creation_time"])
+                    $('#scratchpadPassword').val("")
+                },
+                error: function(jqXHR, textStatus, errorThrown) {
+                    // Handle error
+                    $('#getUserOutput').text('Error: ' + textStatus + ' - ' + errorThrown);
+                    $('#scratchpadDiv').css("visibility", "hidden")
+                }
+            });
+        });
+
+        $('#addUserForm').submit(function(event) {
+            event.preventDefault(); // Prevent the default form submission
+
+            $('#addUserOutput').text("")
+
+            $.ajax({
+                url: '/user', // The server path
+                type: 'POST', // HTTP method
+                data: JSON.stringify({
+                    rating: parseInt($('#addUserRating').val(), 10),
+                    real_name: $('#addUserRealName').val(),
+                    password: $('#addUserPassword').val(),
+                }),
+                contentType: "application/json",
+                dataType: 'json', // Data type from server
+                success: function(response) {
+                    // Handle successful response
+                    if (response["success"]) {
+                        $('#scratchpadDiv').css("visibility", "visible")
+                    } else {
+                        $('#scratchpadDiv').css("visibility", "hidden")
+                    }
+
+                    $('#addUserOutput').text(response["msg"]);
+                    $('#addUserRating').val = "1";
+                    $('#addUserRealName').val("");
+                    $('#addUserPassword').val("");
+
+                    $('#scratchpadCid').val(response["user_record"]["cid"])
+                    $('#scratchpadRating').val(response["user_record"]["rating"])
+                    $('#scratchpadRealName').val(response["user_record"]["real_name"])
+                    $('#scratchpadCreationTime').val(response["user_record"]["creation_time"])
+                    $('#scratchpadPassword').val("")
+                },
+                error: function(jqXHR, textStatus, errorThrown) {
+                    // Handle error
+                    $('#addUserOutput').text('Error: ' + textStatus + ' - ' + errorThrown);
+                    $('#scratchpadDiv').css("visibility", "hidden")
+                }
+            });
+        });
+
+        $('#scratchpadUpdateUser').click(function(event) {
+            event.preventDefault(); // Prevent the default form submission
+
+            $('#scratchpadOutput').text("")
+
+            $.ajax({
+                url: '/user', // The server path
+                type: 'PATCH', // HTTP method
+                data: JSON.stringify({
+                    cid: parseInt($('#scratchpadCid').val(), 10),
+                    rating: parseInt($('#scratchpadRating').val(), 10),
+                    real_name: $('#scratchpadRealName').val(),
+                    password: $('#scratchpadPassword').val(),
+                    creation_time: $('#scratchpadCreationTime').val(),
+                }),
+                contentType: "application/json",
+                dataType: 'json', // Data type from server
+                success: function(response) {
+                    // Handle successful response
+                    if (response["success"]) {
+                        $('#scratchpadDiv').css("visibility", "visible")
+                    } else {
+                        $('#scratchpadDiv').css("visibility", "hidden")
+                    }
+
+                    $('#scratchpadOutput').text(response["msg"]);
+                    $('#scratchpadCid').val(response["user_record"]["cid"])
+                    $('#scratchpadRating').val(response["user_record"]["rating"])
+                    $('#scratchpadRealName').val(response["user_record"]["real_name"])
+                    $('#scratchpadCreationTime').val(response["user_record"]["creation_time"])
+                    $('#scratchpadPassword').val("")
+                },
+                error: function(jqXHR, textStatus, errorThrown) {
+                    // Handle error
+                    $('#scratchpadOutput').text('Error: ' + textStatus + ' - ' + errorThrown);
+                }
+            });
+        });
+    });
+</script>
+
+<body style="font-family: sans-serif;">
+    <h1>FSD</h1>
+
+    <hr>
+
+    <div>
+        <p>Get user</p>
+        <form id="getUserForm">
+            <label for="getUserCid">CID:</label>
+            <input type="number" min="100000" max="9999999" id="getUserCid" name="cid" required>
+            <button type="submit">Submit</button>
+        </form>
+        <output id="getUserOutput"></output>
+    </div>
+    <hr>
+    <div>
+        <p>Create user</p>
+        <form id="addUserForm">
+            <label for="addUserRating">Rating:</label>
+            <select id="addUserRating" required>
+                <option value="1">Observer</option>
+                <option value="2">Student 1</option>
+                <option value="3">Student 2</option>
+                <option value="4">Student 3</option>
+                <option value="5">Controller 1</option>
+                <option value="6">Controller 2</option>
+                <option value="7">Controller 3</option>
+                <option value="8">Instructor 1</option>
+                <option value="9">Instructor 2</option>
+                <option value="10">Instructor 3</option>
+                <option value="11">Supervisor</option>
+                <option value="12">Administrator</option>
+            </select>
+            <label for="addUserRealName">Real Name:</label>
+            <input type="text" id="addUserRealName" required>
+            <label for="addUserPassword">Password:</label>
+            <input type="text" id="addUserPassword" required>
+            <button type="submit">Submit</button>
+        </form>
+        <output id="addUserOutput" ></output>
+    </div>
+    <hr>
+    <div id="scratchpadDiv" style="visibility: hidden">
+            <p>User information:</p>
+            <label for="scratchpadCid">CID</label>
+            <input type="number" min="100000" max="9999999" id="scratchpadCid" readonly><br>
+            <label for="scratchpadRating">Rating</label>
+            <select id="scratchpadRating" required>
+                <option value="1">Observer</option>
+                <option value="2">Student 1</option>
+                <option value="3">Student 2</option>
+                <option value="4">Student 3</option>
+                <option value="5">Controller 1</option>
+                <option value="6">Controller 2</option>
+                <option value="7">Controller 3</option>
+                <option value="8">Instructor 1</option>
+                <option value="9">Instructor 2</option>
+                <option value="10">Instructor 3</option>
+                <option value="11">Supervisor</option>
+                <option value="12">Administrator</option>
+            </select><br>
+            <label for="scratchpadRealName">Real Name:</label>
+            <input type="text" id="scratchpadRealName" required><br>
+            <label for="scratchpadPassword">New Password:</label>
+            <input type="text" id="scratchpadPassword" required><br>
+            <label for="scratchpadCreationTime">Creation Time:</label>
+            <output id="scratchpadCreationTime"></output><br>
+            <button id="scratchpadUpdateUser">UPDATE</button>
+            <button id="scratchpadDeleteUser">DELETE</button><br>
+            <output id="scratchpadOutput"></output>
+    </div>
+</body>
+</html>
