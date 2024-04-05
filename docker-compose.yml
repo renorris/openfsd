@@ -4,7 +4,7 @@ services:
       context: "."
     ports:
       - "6809:6809/tcp"
-      - "443:443/tcp"
+      - "9086:9086/tcp"
     volumes:
       - /opt/fsd/fsd.db:/fsd/fsd.db
     environment:
