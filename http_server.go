@@ -447,7 +447,7 @@ func dashboardHandler(w http.ResponseWriter, r *http.Request) {
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
 		Issuer:    "openfsd",
-		Subject:   string(rune(userRecord.CID)),
+		Subject:   fmt.Sprintf("%d", userRecord.CID),
 		Audience:  []string{"administrator-dashboard"},
 		ExpiresAt: jwt.NewNumericDate(time.Now().Add(12 * time.Hour)),
 		IssuedAt:  jwt.NewNumericDate(time.Now()),
