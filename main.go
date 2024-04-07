@@ -45,15 +45,20 @@ const TableCreateStatement = `
 	`
 
 func StartFSDServer(fsdCtx context.Context) {
+	// Attempt to resolve the previously-configured listen address
 	addr, err := net.ResolveTCPAddr("tcp4", SC.FsdListenAddr)
 	if err != nil {
 		log.Fatal("Error resolving address: " + err.Error())
 	}
 
+	// Attempt to open a listener on that address
 	listener, err := net.ListenTCP("tcp4", addr)
 	if err != nil {
 		log.Fatal("Error listening: " + err.Error())
 	}
+
+	// Defer listener close
+	// This will force the listener goroutine to encounter an error and promptly close itself
 	defer func() {
 		closeErr := listener.Close()
 		if closeErr != nil {
@@ -61,29 +66,36 @@ func StartFSDServer(fsdCtx context.Context) {
 		}
 	}()
 
-	// Listener goroutine
-	inConnections := make(chan *net.TCPConn)
-	go func(outConnections chan<- *net.TCPConn) {
-		defer close(outConnections)
+	// Listen on a separate goroutine
+	// connChan shall be closed when the listener closes (due to an error or surrounding context closed)
+	connChan := make(chan *net.TCPConn)
+	go func(connChan chan<- *net.TCPConn) {
+		// Guarantee that connChan will be closed when we return
+		defer close(connChan)
+
 		for {
+			// Wait for a connection on the listener
 			conn, listenerErr := listener.AcceptTCP()
 			if listenerErr != nil {
 				return
 			}
 
+			// Wait for a consumer on connChan, OR return if the context cancels.
 			select {
-			case outConnections <- conn:
+			case connChan <- conn:
 			case <-fsdCtx.Done():
 				return
 			}
 		}
-	}(inConnections)
+	}(connChan)
 
 	log.Println("FSD listening")
 
+	// Poll from connChan, check if the channel is healthy
+	// Also poll from our context, check if we need to return
 	for {
 		select {
-		case conn, ok := <-inConnections:
+		case conn, ok := <-connChan:
 			if !ok {
 				return
 			}
