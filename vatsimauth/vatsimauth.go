@@ -7,9 +7,13 @@ import (
 )
 
 var Keys = map[uint16]string{
+	8464:  "945507c4c50222c34687e742729252e6",
+	10452: "0ad74157c7f449c216bfed04f3af9fb9",
+	27095: "3518a62c421937ffa46ac3316957da43",
+	33456: "52d9343020e9c7d0c6b04b0cca20ad3b",
 	35044: "fe28334fb753cf0e3d19942197b9ce3e",
 	55538: "ImuL1WbbhVuD8d3MuKpWn2rrLZRa9iVP",
-	47546: "727d1efd5cb9f8d2c28372469d922bb4",
+	56862: "3518a62c421937ffa46ac3316957da43",
 }
 
 type VatsimAuth struct {
@@ -48,6 +52,8 @@ func (v *VatsimAuth) GenerateResponse(challenge string) string {
 		h = s1 + c1 + s2 + c2 + s3
 	case 1:
 		h = s2 + c1 + s3 + c2 + s1
+	default:
+		h = s3 + c1 + s1 + c2 + s2
 	}
 
 	hash := md5.Sum([]byte(h))
