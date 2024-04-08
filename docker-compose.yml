@@ -6,7 +6,7 @@ services:
       - "6809:6809/tcp"
       - "9086:9086/tcp"
     volumes:
-      - /opt/fsd/fsd.db:/fsd/fsd.db
+      - /opt/fsd/fsd.db:/openfsd/fsd.db
     environment:
       FSD_ADDR: "0.0.0.0:6809"
       HTTP_ADDR: "0.0.0.0:9086"
