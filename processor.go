@@ -97,6 +97,9 @@ func GetProcessor(rawPacket string) (Processor, error) {
 			if fields[2] == "PIR" {
 				return PlaneInfoRequestProcessor, nil
 			}
+			if fields[2] == "FSIPIR" {
+				return PlaneInfoRequestFsinnProcessor, nil
+			}
 			if fields[2] == "PI" && len(fields) > 3 && fields[3] == "GEN" {
 				return PlaneInfoResponseProcessor, nil
 			}

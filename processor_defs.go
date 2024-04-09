@@ -193,6 +193,38 @@ func PlaneInfoRequestProcessor(client *FSDClient, rawPacket string) *ProcessorRe
 	return result
 }
 
+func PlaneInfoRequestFsinnProcessor(client *FSDClient, rawPacket string) *ProcessorResult {
+	// Parse & validate packet
+	pdu, err := protocol.ParsePlaneInfoRequestFsinnPDU(rawPacket)
+	if err != nil {
+		var fsdError *protocol.FSDError
+		result := NewProcessorResult()
+		if errors.As(err, &fsdError) {
+			result.AddReply(fsdError.Serialize())
+		}
+		result.Disconnect(true)
+		return result
+	}
+
+	// Check for valid source callsign
+	if pdu.From != client.Callsign {
+		result := NewProcessorResult()
+		result.AddReply(protocol.NewGenericFSDError(protocol.PDUSourceInvalidError).Serialize())
+		result.Disconnect(true)
+		return result
+	}
+
+	mail := NewMail(client)
+	mail.SetType(MailTypeDirect)
+	mail.AddRecipient(pdu.To)
+	mail.AddPacket(rawPacket)
+
+	result := NewProcessorResult()
+	result.AddMail(*mail)
+
+	return result
+}
+
 func PlaneInfoResponseProcessor(client *FSDClient, rawPacket string) *ProcessorResult {
 	// Parse & validate packet
 	pdu, err := protocol.ParsePlaneInfoResponsePDU(rawPacket)
