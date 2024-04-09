@@ -27,7 +27,7 @@ type FSDClient struct {
 	NetworkRating   int
 	SimulatorType   int
 	RealName        string
-	CurrentGeohash  string
+	CurrentGeohash  uint64
 	SendFastEnabled bool
 
 	Kill    chan string // Signal to disconnect this client
@@ -367,7 +367,7 @@ func HandleConnection(conn *net.TCPConn) {
 		NetworkRating:              int(claimedRating),
 		SimulatorType:              addPilotPDU.SimulatorType,
 		RealName:                   addPilotPDU.RealName,
-		CurrentGeohash:             "",
+		CurrentGeohash:             0,
 		SendFastEnabled:            false,
 		Kill:                       make(chan string, 1),
 		Mailbox:                    make(chan string, 16),

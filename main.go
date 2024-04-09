@@ -114,7 +114,7 @@ func configurePostOffice() {
 	PO = &PostOffice{
 		clientRegistry:     make(map[string]*FSDClient),
 		supervisorRegistry: make(map[string]*FSDClient),
-		geohashRegistry:    make(map[string][]*FSDClient),
+		geohashRegistry:    make(map[uint64][]*FSDClient),
 	}
 }
 

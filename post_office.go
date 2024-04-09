@@ -11,7 +11,7 @@ import (
 type PostOffice struct {
 	clientRegistry     map[string]*FSDClient
 	supervisorRegistry map[string]*FSDClient
-	geohashRegistry    map[string][]*FSDClient
+	geohashRegistry    map[uint64][]*FSDClient
 	lock               sync.RWMutex
 }
 
@@ -141,7 +141,7 @@ func (p *PostOffice) SendMail(messages []Mail) {
 				}
 			}
 		case MailTypeBroadcastRanged:
-			neighbors := geohash.Neighbors(msg.Source.CurrentGeohash)
+			neighbors := geohash.NeighborsInt(msg.Source.CurrentGeohash)
 			searchHashes := append(neighbors, msg.Source.CurrentGeohash)
 			for _, hash := range searchHashes {
 				clients, ok := p.geohashRegistry[hash]
@@ -186,7 +186,7 @@ func (p *PostOffice) SendMail(messages []Mail) {
 	}
 }
 
-func (p *PostOffice) removeClientFromGeohashRegistry(client *FSDClient, hash string) {
+func (p *PostOffice) removeClientFromGeohashRegistry(client *FSDClient, hash uint64) {
 	clientList, ok := p.geohashRegistry[client.CurrentGeohash]
 	if !ok {
 		return
@@ -217,7 +217,7 @@ func (p *PostOffice) removeClientFromGeohashRegistry(client *FSDClient, hash str
 // SetLocation updates the internal geohash tracking state for a client, if necessary
 func (p *PostOffice) SetLocation(client *FSDClient, lat, lng float64) {
 	// Check if the geohash has changed since we last updated
-	hash := geohash.EncodeWithPrecision(lat, lng, 3)
+	hash := geohash.EncodeIntWithPrecision(lat, lng, 15)
 	if hash == client.CurrentGeohash {
 		return
 	}
