@@ -284,6 +284,13 @@ func HandleConnection(conn *net.TCPConn) {
 		return
 	}
 
+	// Verify callsign
+	switch clientIdentPDU.From {
+	case protocol.ServerCallsign, protocol.ClientQueryBroadcastRecipient, protocol.ClientQueryBroadcastRecipientPilots:
+		conn.Write([]byte(protocol.NewGenericFSDError(protocol.CallsignInvalidError).Serialize()))
+		return
+	}
+
 	// Verify protocol revision
 	if addPilotPDU.ProtocolRevision != protocol.ProtoRevisionVatsim2022 {
 		conn.Write([]byte(protocol.NewGenericFSDError(protocol.InvalidProtocolRevisionError).Serialize()))
