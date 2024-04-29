@@ -1,7 +1,6 @@
-FROM golang:1.22.1-bullseye as build
+FROM golang:1.22.2-bullseye as build
 
 ENV CGO_ENABLED=1
-ENV GOOS=linux
 
 WORKDIR /build
 COPY . .
@@ -9,7 +8,7 @@ COPY . .
 RUN go mod download
 RUN go mod verify
 
-RUN go build -ldflags='-s -w -extldflags "-static"' -o main .
+RUN go build -ldflags='-extldflags "-static"' -o main .
 
 FROM gcr.io/distroless/static-debian11
 

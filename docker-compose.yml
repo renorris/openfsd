@@ -6,11 +6,11 @@ services:
       - "6809:6809/tcp"
       - "9086:9086/tcp"
     volumes:
-      - /opt/fsd/fsd.db:/openfsd/fsd.db
+      - ./db:/openfsd/db
     environment:
       FSD_ADDR: "0.0.0.0:6809"
       HTTP_ADDR: "0.0.0.0:9086"
       HTTPS_ENABLED: false
-      DATABASE_FILE: "/fsd/fsd.db"
+      DATABASE_FILE: "./db/fsd.db"
       MOTD: "openfsd"
-    restart: always
+    restart: unless-stopped

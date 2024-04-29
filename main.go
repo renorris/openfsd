@@ -25,7 +25,7 @@ type ServerConfig struct {
 	HttpsEnabled   bool   `env:"HTTPS_ENABLED, default=false"`
 	TLSCertFile    string `env:"TLS_CERT_FILE"`
 	TLSKeyFile     string `env:"TLS_KEY_FILE"`
-	DatabaseFile   string `env:"DATABASE_FILE, default=./fsd.db"`
+	DatabaseFile   string `env:"DATABASE_FILE, default=./db/fsd.db"`
 	MOTD           string `env:"MOTD, default=openfsd"`
 }
 
