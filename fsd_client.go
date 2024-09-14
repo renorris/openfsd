@@ -2,11 +2,14 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/renorris/openfsd/protocol"
 	"github.com/renorris/openfsd/vatsimauth"
+	"golang.org/x/crypto/bcrypt"
+	"io"
 	"log"
 	"net"
 	"strconv"
@@ -15,6 +18,9 @@ import (
 )
 
 type FSDClient struct {
+	Ctx       context.Context
+	CancelCtx func()
+
 	Conn   *net.TCPConn
 	Reader *bufio.Reader
 
@@ -38,22 +44,21 @@ type FSDClient struct {
 // All clients that reach this stage are logged in
 func EventLoop(client *FSDClient) {
 
-	// Reader goroutine
-	packetsRead := make(chan string)
-	readerCtx, cancelReader := context.WithCancel(context.Background())
-	go func(ctx context.Context) {
+	// Setup reader goroutine
+	incomingPackets := make(chan string)
+	go func(ctx context.Context, packetChan chan string) {
+		defer close(packetChan)
+
 		for {
 			// Reset the deadline
 			err := client.Conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 			if err != nil {
-				close(packetsRead)
 				return
 			}
 
 			var buf []byte
 			buf, err = client.Reader.ReadSlice('\n')
 			if err != nil {
-				close(packetsRead)
 				return
 			}
 
@@ -61,7 +66,6 @@ func EventLoop(client *FSDClient) {
 
 			// Validate delimiter
 			if len(packet) < 2 || string(packet[len(packet)-2:]) != "\r\n" {
-				close(packetsRead)
 				return
 			}
 
@@ -69,78 +73,14 @@ func EventLoop(client *FSDClient) {
 			// (also watch for context.Done)
 			select {
 			case <-ctx.Done():
-				close(packetsRead)
 				return
-			case packetsRead <- packet:
+			case packetChan <- packet:
 			}
 		}
-	}(readerCtx)
-
-	// Defer reader cancellation
-	defer cancelReader()
-
-	// Writer goroutine
-	packetsToWrite := make(chan string, 16)
-	writerClosed := make(chan struct{})
-	go func() {
-		for {
-			var packet string
-			var ok bool
-			// Wait for a packet
-			select {
-			case packet, ok = <-packetsToWrite:
-				if !ok {
-					close(writerClosed)
-					return
-				}
-			}
-
-			// Reset the deadline
-			err := client.Conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-			if err != nil {
-				close(writerClosed)
-				// Exhaust packetsToWrite
-				for {
-					select {
-					case _, ok := <-packetsToWrite:
-						if !ok {
-							return
-						}
-					}
-				}
-			}
-
-			// Attempt to write the packet
-			_, err = client.Conn.Write([]byte(packet))
-			if err != nil {
-				close(writerClosed)
-				// Exhaust packetsToWrite
-				for {
-					select {
-					case _, ok := <-packetsToWrite:
-						if !ok {
-							return
-						}
-					}
-				}
-			}
-		}
-	}()
-
-	// Wait max 100 milliseconds for writer to flush before continuing the connection shutdown
-	defer func() {
-		timer := time.NewTimer(100 * time.Millisecond)
-		select {
-		case <-writerClosed:
-		case <-timer.C:
-		}
-	}()
-
-	// Defer writer close
-	defer close(packetsToWrite)
+	}(client.Ctx, incomingPackets)
 
 	// Defer "delete pilot" broadcast
-	defer func() {
+	defer func(client *FSDClient) {
 		deletePilotPDU := protocol.DeletePilotPDU{
 			From: client.Callsign,
 			CID:  client.CID,
@@ -150,12 +90,15 @@ func EventLoop(client *FSDClient) {
 		mail.SetType(MailTypeBroadcastAll)
 		mail.AddPacket(deletePilotPDU.Serialize())
 		PO.SendMail([]Mail{*mail})
-	}()
+	}(client)
 
 	// Main loop
 	for {
 		select {
-		case packet, ok := <-packetsRead:
+		case <-client.Ctx.Done(): // Check for context cancel
+			return
+
+		case packet, ok := <-incomingPackets: // Read incoming packets
 			// Check if the reader closed
 			if !ok {
 				return
@@ -164,7 +107,7 @@ func EventLoop(client *FSDClient) {
 			// Find the processor for this packet
 			processor, err := GetProcessor(packet)
 			if err != nil {
-				packetsToWrite <- protocol.NewGenericFSDError(protocol.SyntaxError).Serialize()
+				sendSyntaxError(client.Conn)
 				return
 			}
 
@@ -172,7 +115,10 @@ func EventLoop(client *FSDClient) {
 
 			// Send replies to the client
 			for _, replyPacket := range result.Replies {
-				packetsToWrite <- replyPacket
+				err := client.writePacket(5*time.Second, replyPacket)
+				if err != nil {
+					return
+				}
 			}
 
 			// Send mail
@@ -182,17 +128,25 @@ func EventLoop(client *FSDClient) {
 			if result.ShouldDisconnect {
 				return
 			}
-		case <-writerClosed:
-			return
-		case mailPacket := <-client.Mailbox:
-			packetsToWrite <- mailPacket
-		case s, ok := <-client.Kill:
-			if ok {
-				select {
-				case packetsToWrite <- s:
-				default:
-				}
+
+		case mailPacket := <-client.Mailbox: // Read incoming mail messages
+			err := client.writePacket(5*time.Second, mailPacket)
+			if err != nil {
+				return
 			}
+
+		case killPacket, ok := <-client.Kill: // Read incoming kill signals
+			if !ok {
+				return
+			}
+
+			// Write the kill packet
+			err := client.writePacket(5*time.Second, killPacket)
+			if err != nil {
+				return
+			}
+
+			// Close connection
 			return
 		}
 	}
@@ -203,13 +157,22 @@ func sendSyntaxError(conn *net.TCPConn) {
 }
 
 func HandleConnection(conn *net.TCPConn) {
-	defer func() {
+	// Set the linger value to 1 second
+	err := conn.SetLinger(1)
+	if err != nil {
+		log.Printf("error setting connection linger value")
+		return
+	}
+
+	// Defer connection close
+	defer func(conn *net.TCPConn) {
 		err := conn.Close()
 		if err != nil {
-			log.Printf("Error closing connection for %s\n%s", conn.RemoteAddr().String(), err.Error())
+			log.Println("error closing connection: " + err.Error())
 		}
-	}()
+	}(conn)
 
+	// Generate the initial challenge
 	initChallenge, err := vatsimauth.GenerateChallenge()
 	if err != nil {
 		log.Printf("Error generating challenge string:\n%s", err.Error())
@@ -224,15 +187,15 @@ func HandleConnection(conn *net.TCPConn) {
 	}
 	serverIdentPacket := serverIdentPDU.Serialize()
 
-	// The client has 2 seconds to log in
-	if err = conn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+	// The client has 5 seconds to log in
+	if err = conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
 		return
 	}
-	if err = conn.SetWriteDeadline(time.Now().Add(2 * time.Second)); err != nil {
+	if err = conn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
 		return
 	}
 
-	_, err = conn.Write([]byte(serverIdentPacket))
+	_, err = io.Copy(conn, bytes.NewReader([]byte(serverIdentPacket)))
 	if err != nil {
 		return
 	}
@@ -284,6 +247,46 @@ func HandleConnection(conn *net.TCPConn) {
 		return
 	}
 
+	// Handle authentication
+	var networkRating int
+	if SC.PlaintextPasswords { // Treat token field as a plaintext password
+		plaintextPassword := addPilotPDU.Token
+		networkRating = 0
+
+		userRecord, err := GetUserRecord(DB, clientIdentPDU.CID)
+		if err != nil { // Check for error
+			log.Printf("error fetching user record: " + err.Error())
+			return
+		}
+
+		if userRecord == nil {
+			conn.Write([]byte(protocol.NewGenericFSDError(protocol.InvalidLogonError).Serialize()))
+			return
+		}
+
+		if userRecord.Rating < addPilotPDU.NetworkRating {
+			conn.Write([]byte(protocol.NewGenericFSDError(protocol.RequestedLevelTooHighError).Serialize()))
+			return
+		}
+
+		err = bcrypt.CompareHashAndPassword([]byte(userRecord.Password), []byte(plaintextPassword))
+		if err != nil {
+			conn.Write([]byte(protocol.NewGenericFSDError(protocol.InvalidLogonError).Serialize()))
+			return
+		}
+	} else { // Treat token field as a JWT token
+		networkRating, err = verifyJWTToken(clientIdentPDU.CID, addPilotPDU.NetworkRating, addPilotPDU.Token)
+		if err != nil {
+			var fsdError *protocol.FSDError
+			if errors.As(err, &fsdError) {
+				conn.Write([]byte(fsdError.Serialize()))
+			} else {
+				conn.Write([]byte(protocol.NewGenericFSDError(protocol.InvalidLogonError).Serialize()))
+			}
+			return
+		}
+	}
+
 	// Verify callsign
 	switch clientIdentPDU.From {
 	case protocol.ServerCallsign, protocol.ClientQueryBroadcastRecipient, protocol.ClientQueryBroadcastRecipientPilots:
@@ -311,59 +314,17 @@ func HandleConnection(conn *net.TCPConn) {
 		return
 	}
 
-	// Validate token signature
-	claims := jwt.MapClaims{}
-	token, err := jwt.ParseWithClaims(addPilotPDU.Token, &claims, func(token *jwt.Token) (interface{}, error) {
-		return JWTKey, nil
-	})
-	if err != nil {
-		conn.Write([]byte(protocol.NewGenericFSDError(protocol.InvalidLogonError).Serialize()))
-		return
-	}
-
-	// Check for expiry
-	exp, err := token.Claims.GetExpirationTime()
-	if err != nil {
-		conn.Write([]byte(protocol.NewGenericFSDError(protocol.InvalidLogonError).Serialize()))
-		return
-	}
-	if time.Now().After(exp.Time) {
-		conn.Write([]byte(protocol.NewGenericFSDError(protocol.InvalidLogonError).Serialize()))
-		return
-	}
-
-	// Verify claimed CID
-	claimedCID, err := claims.GetSubject()
-	if err != nil {
-		conn.Write([]byte(protocol.NewGenericFSDError(protocol.InvalidLogonError).Serialize()))
-		return
-	}
-
-	cidInt, err := strconv.Atoi(claimedCID)
-	if err != nil {
-		sendSyntaxError(conn)
-		return
-	}
-
-	if cidInt != clientIdentPDU.CID {
-		conn.Write([]byte(protocol.NewGenericFSDError(protocol.InvalidLogonError).Serialize()))
-		return
-	}
-
-	// Verify controller rating
-	claimedRating, ok := claims["controller_rating"].(float64)
-	if !ok {
-		sendSyntaxError(conn)
-		return
-	}
-
-	if addPilotPDU.NetworkRating > int(claimedRating) {
-		conn.Write([]byte(protocol.NewGenericFSDError(protocol.RequestedLevelTooHighError).Serialize()))
-		return
-	}
-
 	// Configure client
+	ctx, cancelCtx := context.WithCancel(context.Background())
+
+	// Defer context close
+	defer func(cancelCtx func()) {
+		cancelCtx()
+	}(cancelCtx)
+
 	fsdClient := FSDClient{
+		Ctx:                        ctx,
+		CancelCtx:                  cancelCtx,
 		Conn:                       conn,
 		Reader:                     reader,
 		AuthVerify:                 &vatsimauth.VatsimAuth{},
@@ -371,7 +332,7 @@ func HandleConnection(conn *net.TCPConn) {
 		AuthSelf:                   &vatsimauth.VatsimAuth{},
 		Callsign:                   clientIdentPDU.From,
 		CID:                        clientIdentPDU.CID,
-		NetworkRating:              int(claimedRating),
+		NetworkRating:              networkRating,
 		SimulatorType:              addPilotPDU.SimulatorType,
 		RealName:                   addPilotPDU.RealName,
 		CurrentGeohash:             0,
@@ -381,17 +342,22 @@ func HandleConnection(conn *net.TCPConn) {
 	}
 
 	// Register callsign to the post office. End the connection if callsign already exists
-	{
-		err := PO.RegisterCallsign(clientIdentPDU.From, &fsdClient)
-		if err != nil {
-			if errors.Is(err, CallsignAlreadyRegisteredError) {
-				pdu := protocol.NewGenericFSDError(protocol.CallsignInUseError)
-				conn.Write([]byte(pdu.Serialize()))
-			}
-			return
+	err = PO.RegisterCallsign(clientIdentPDU.From, &fsdClient)
+	if err != nil {
+		if errors.Is(err, CallsignAlreadyRegisteredError) {
+			pdu := protocol.NewGenericFSDError(protocol.CallsignInUseError)
+			conn.Write([]byte(pdu.Serialize()))
 		}
+		return
 	}
-	defer PO.DeregisterCallsign(clientIdentPDU.From)
+
+	// Defer deregistration
+	defer func(callsign string) {
+		err := PO.DeregisterCallsign(callsign)
+		if err != nil {
+			log.Printf("error deregistering callsign: " + err.Error())
+		}
+	}(clientIdentPDU.From)
 
 	// Configure vatsim auth states
 	fsdClient.AuthSelf = vatsimauth.NewVatsimAuth(clientIdentPDU.ClientID, vatsimauth.Keys[clientIdentPDU.ClientID])
@@ -422,4 +388,73 @@ func HandleConnection(conn *net.TCPConn) {
 
 	// Start the event loop
 	EventLoop(&fsdClient)
+}
+
+// writePacket writes a packet to this client's connection
+// timeout sets the write deadline (relative to time.Now). No deadline will be set if timeout = -1
+func (c *FSDClient) writePacket(timeout time.Duration, packet string) error {
+	// Reset the deadline
+	if timeout > 0 {
+		err := c.Conn.SetWriteDeadline(time.Now().Add(timeout * time.Second))
+		if err != nil {
+			return err
+		}
+	}
+
+	// Attempt to write the packet
+	_, err := io.Copy(c.Conn, bytes.NewReader([]byte(packet)))
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// verifyJWTToken compares the claimed fields token `token` to cid and networkRating (from the plaintext FSD packet)
+// Returns the signed network rating on success
+func verifyJWTToken(cid, networkRating int, token string) (signedNetworkRating int, err error) {
+	// Validate token signature
+	claims := jwt.MapClaims{}
+	t, err := jwt.ParseWithClaims(token, &claims, func(token *jwt.Token) (interface{}, error) {
+		return JWTKey, nil
+	})
+	if err != nil {
+		return -1, protocol.NewGenericFSDError(protocol.InvalidLogonError)
+	}
+
+	// Check for expiry
+	exp, err := t.Claims.GetExpirationTime()
+	if err != nil {
+		return -1, protocol.NewGenericFSDError(protocol.InvalidLogonError)
+	}
+	if time.Now().After(exp.Time) {
+		return -1, protocol.NewGenericFSDError(protocol.InvalidLogonError)
+	}
+
+	// Verify claimed CID
+	claimedCID, err := claims.GetSubject()
+	if err != nil {
+		return -1, protocol.NewGenericFSDError(protocol.InvalidLogonError)
+	}
+
+	cidInt, err := strconv.Atoi(claimedCID)
+	if err != nil {
+		return -1, errors.Join(errors.New("error parsing CID"))
+	}
+
+	if cidInt != cid {
+		return -1, protocol.NewGenericFSDError(protocol.InvalidLogonError)
+	}
+
+	// Verify controller rating
+	claimedRating, ok := claims["controller_rating"].(float64)
+	if !ok {
+		return -1, protocol.NewGenericFSDError(protocol.InvalidLogonError)
+	}
+
+	if networkRating > int(claimedRating) {
+		return -1, protocol.NewGenericFSDError(protocol.RequestedLevelTooHighError)
+	}
+
+	return int(claimedRating), nil
 }

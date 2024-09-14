@@ -20,13 +20,14 @@ import (
 )
 
 type ServerConfig struct {
-	FsdListenAddr  string `env:"FSD_ADDR, default=0.0.0.0:6809"`
-	HttpListenAddr string `env:"HTTP_ADDR, default=0.0.0.0:9086"`
-	HttpsEnabled   bool   `env:"HTTPS_ENABLED, default=false"`
-	TLSCertFile    string `env:"TLS_CERT_FILE"`
-	TLSKeyFile     string `env:"TLS_KEY_FILE"`
-	DatabaseFile   string `env:"DATABASE_FILE, default=./db/fsd.db"`
-	MOTD           string `env:"MOTD, default=openfsd"`
+	FsdListenAddr      string `env:"FSD_ADDR, default=0.0.0.0:6809"`
+	HttpListenAddr     string `env:"HTTP_ADDR, default=0.0.0.0:9086"`
+	HttpsEnabled       bool   `env:"HTTPS_ENABLED, default=false"`
+	TLSCertFile        string `env:"TLS_CERT_FILE"`
+	TLSKeyFile         string `env:"TLS_KEY_FILE"`
+	DatabaseFile       string `env:"DATABASE_FILE, default=./db/fsd.db"`
+	MOTD               string `env:"MOTD, default=openfsd"`
+	PlaintextPasswords bool   `env:"PLAINTEXT_PASSWORDS, default=false"`
 }
 
 var SC *ServerConfig

@@ -15,6 +15,8 @@ type FSDUserRecord struct {
 	CreationTime time.Time `json:"creation_time"`
 }
 
+// GetUserRecord returns a user record for a given CID
+// If no user is found, this is not an error. FSDUserRecord will be nil, and error will be nil.
 func GetUserRecord(db *sql.DB, cid int) (*FSDUserRecord, error) {
 	row := db.QueryRow("SELECT * FROM users WHERE cid=? LIMIT 1", cid)
 
@@ -24,7 +26,11 @@ func GetUserRecord(db *sql.DB, cid int) (*FSDUserRecord, error) {
 	var realName string
 	var creationTime time.Time
 
-	if err := row.Scan(&cidRecord, &pwd, &rating, &realName, &creationTime); errors.Is(err, sql.ErrNoRows) {
+	err := row.Scan(&cidRecord, &pwd, &rating, &realName, &creationTime)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
 		return nil, err
 	}
 

@@ -9,10 +9,10 @@ import (
 )
 
 type ClientIdentificationPDU struct {
-	From             string `validate:"required,alphanum,max=7"`
-	To               string `validate:"required,alphanum,max=7"`
+	From             string `validate:"required,alphanum,max=16"`
+	To               string `validate:"required,alphanum,max=16"`
 	ClientID         uint16 `validate:"required"`
-	ClientName       string `validate:"required,alphanum,max=16"`
+	ClientName       string `validate:"required,max=32"`
 	MajorVersion     int    `validate:""`
 	MinorVersion     int    `validate:""`
 	CID              int    `validate:"required,min=100000,max=9999999"`

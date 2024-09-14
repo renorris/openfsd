@@ -52,7 +52,7 @@ func (m *Mail) AddRecipient(callsign string) {
 
 func (m *Mail) AddPacket(packet string) {
 	if m.Packets == nil {
-		m.Packets = make([]string, 0)
+		m.Packets = make([]string, 0, 1)
 	}
 	m.Packets = append(m.Packets, packet)
 }
@@ -113,7 +113,7 @@ func (p *PostOffice) DeregisterCallsign(callsign string) error {
 	}
 
 	// Remove client from geohash registry
-	p.removeClientFromGeohashRegistry(client, client.CurrentGeohash)
+	p.removeClientFromGeohashRegistry(client)
 
 	return nil
 }
@@ -182,11 +182,10 @@ func (p *PostOffice) SendMail(messages []Mail) {
 				}
 			}
 		}
-
 	}
 }
 
-func (p *PostOffice) removeClientFromGeohashRegistry(client *FSDClient, hash uint64) {
+func (p *PostOffice) removeClientFromGeohashRegistry(client *FSDClient) {
 	clientList, ok := p.geohashRegistry[client.CurrentGeohash]
 	if !ok {
 		return
@@ -226,7 +225,7 @@ func (p *PostOffice) SetLocation(client *FSDClient, lat, lng float64) {
 	defer p.lock.Unlock()
 
 	// Remove client from old geohash bucket
-	p.removeClientFromGeohashRegistry(client, client.CurrentGeohash)
+	p.removeClientFromGeohashRegistry(client)
 
 	// Find the new client list
 	newClientList, ok := p.geohashRegistry[hash]

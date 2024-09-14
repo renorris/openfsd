@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
-	"database/sql"
 	_ "embed"
 	"encoding/base64"
 	"encoding/json"
@@ -67,13 +66,13 @@ func fsdJwtApiHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	userRecord, userRecordErr := GetUserRecord(DB, cid)
-	if userRecordErr != nil && !errors.Is(userRecordErr, sql.ErrNoRows) {
+	if userRecordErr != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 
 	// If user not found
-	if errors.Is(userRecordErr, sql.ErrNoRows) {
+	if userRecord == nil {
 		jwtResponse := JwtResponse{
 			Success:  false,
 			Token:    "",
@@ -228,6 +227,10 @@ func userAPIHandler(w http.ResponseWriter, r *http.Request) {
 
 		userRecord, err := GetUserRecord(DB, cid)
 		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		if userRecord == nil {
 			res := UserApiResponse{
 				Success: false,
 				Message: "Error: user not found",
@@ -321,15 +324,6 @@ func userAPIHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if len(req.Password) > 0 {
-			bcryptBytes, err := bcrypt.GenerateFromPassword([]byte(req.Password), 10)
-			if err != nil {
-				w.WriteHeader(http.StatusInternalServerError)
-				return
-			}
-			req.Password = string(bcryptBytes)
-		}
-
 		err = UpdateUserRecord(DB, &req)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -421,6 +415,14 @@ func dashboardHandler(w http.ResponseWriter, r *http.Request) {
 
 	userRecord, err := GetUserRecord(DB, cid)
 	if err != nil {
+		w.Header().Add("Content-Type", "text/plain")
+		w.Header().Add("WWW-Authenticate", `Basic realm="dashboard", charset="UTF-8"`)
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("internal server error"))
+		return
+	}
+
+	if userRecord == nil {
 		w.Header().Add("Content-Type", "text/plain")
 		w.Header().Add("WWW-Authenticate", `Basic realm="dashboard", charset="UTF-8"`)
 		w.WriteHeader(http.StatusUnauthorized)

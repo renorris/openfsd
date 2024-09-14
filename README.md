@@ -17,16 +17,16 @@ A default admin user will be printed to stdout on first startup. A simple web in
 
 The server is configured via environment variables:
 
-| Variable Name   | Default Value | Description                                                |
-|-----------------|---------------|------------------------------------------------------------|
-| `FSD_ADDR`      | 0.0.0.0:6809  | FSD listen address                                         |
-| `HTTP_ADDR`     | 0.0.0.0:9086  | HTTP listen address                                        |
-| `HTTPS_ENABLED` | false         | Enable HTTPS                                               |
-| `TLS_CERT_FILE` |               | TLS certificate file path                                  |
-| `TLS_KEY_FILE`  |               | TLS key file path                                          |
-| `DATABASE_FILE` | ./fsd.db      | SQLite database file path                                  |
-| `MOTD`          | openfsd       | Message to send on FSD client login (line feeds supported) |
-
+| Variable Name         | Default Value | Description                                                                                                                       |
+|-----------------------|---------------|-----------------------------------------------------------------------------------------------------------------------------------|
+| `FSD_ADDR`            | 0.0.0.0:6809  | FSD listen address                                                                                                                |
+| `HTTP_ADDR`           | 0.0.0.0:9086  | HTTP listen address                                                                                                               |
+| `HTTPS_ENABLED`       | false         | Enable HTTPS                                                                                                                      |
+| `TLS_CERT_FILE`       |               | TLS certificate file path                                                                                                         |
+| `TLS_KEY_FILE`        |               | TLS key file path                                                                                                                 |
+| `DATABASE_FILE`       | ./fsd.db      | SQLite database file path                                                                                                         |
+| `MOTD`                | openfsd       | Message to send on FSD client login (line feeds supported)                                                                        |
+| `PLAINTEXT_PASSWORDS` | false         | Setting this to true treats the "token" field in the #AP packet to be a plaintext password, rather than a VATSIM-esque JWT token. |
 ## Overview
 
 Various clients such as [vPilot](https://vpilot.rosscarlson.dev/), [xPilot](https://docs.xpilot-project.org/) and [swift](https://swift-project.org/) are used to connect to VATSIM FSD servers.

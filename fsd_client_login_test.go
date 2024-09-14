@@ -28,11 +28,12 @@ func addUserToDatabase(t *testing.T, cid int, password string, rating int) {
 func TestFSDClientLogin(t *testing.T) {
 	// Setup config for testing environment
 	SC = &ServerConfig{
-		FsdListenAddr:  "localhost:6809",
-		HttpListenAddr: "localhost:9086",
-		HttpsEnabled:   false,
-		DatabaseFile:   "./test.db",
-		MOTD:           "motd line 1\nmotd line 2",
+		FsdListenAddr:      "localhost:6809",
+		HttpListenAddr:     "localhost:9086",
+		HttpsEnabled:       false,
+		DatabaseFile:       "./test.db",
+		MOTD:               "motd line 1\nmotd line 2",
+		PlaintextPasswords: false,
 	}
 
 	// Delete any existing database file so a new one is created
@@ -434,58 +435,6 @@ func TestFSDClientLogin(t *testing.T) {
 		assert.NotEmpty(t, serverIdent)
 
 		expectedPDU := protocol.NewGenericFSDError(protocol.InvalidLogonError)
-
-		assert.Equal(t, expectedPDU.Serialize(), responseMsg)
-		conn.Close()
-	}
-
-	// Test jibberish token
-	{
-		conn, err := net.Dial("tcp", "localhost:6809")
-		assert.Nil(t, err)
-
-		err = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-		assert.Nil(t, err)
-
-		reader := bufio.NewReader(conn)
-		serverIdent, err := reader.ReadString('\n')
-		assert.Nil(t, err)
-		assert.NotEmpty(t, serverIdent)
-		assert.True(t, strings.HasPrefix(serverIdent, "$DISERVER:CLIENT:"))
-
-		clientIdentPDU := protocol.ClientIdentificationPDU{
-			From:             "N123",
-			To:               "SERVER",
-			ClientID:         35044,
-			ClientName:       "vPilot",
-			MajorVersion:     3,
-			MinorVersion:     8,
-			CID:              1000000,
-			SysUID:           -99999,
-			InitialChallenge: "0123456789abcdef",
-		}
-
-		addPilotPDU := protocol.AddPilotPDU{
-			From:             "N123",
-			To:               "SERVER",
-			CID:              1000000,
-			Token:            "garbage",
-			NetworkRating:    1,
-			ProtocolRevision: 101,
-			SimulatorType:    2,
-			RealName:         "real name",
-		}
-
-		_, err = conn.Write([]byte(clientIdentPDU.Serialize()))
-		assert.Nil(t, err)
-		_, err = conn.Write([]byte(addPilotPDU.Serialize()))
-		assert.Nil(t, err)
-
-		responseMsg, err := reader.ReadString('\n')
-		assert.Nil(t, err)
-		assert.NotEmpty(t, serverIdent)
-
-		expectedPDU := protocol.NewGenericFSDError(protocol.SyntaxError)
 
 		assert.Equal(t, expectedPDU.Serialize(), responseMsg)
 		conn.Close()

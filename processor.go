@@ -104,7 +104,7 @@ func GetProcessor(rawPacket string) (Processor, error) {
 				return PlaneInfoResponseProcessor, nil
 			}
 		case "#TM":
-			if len(fields) > 3 {
+			if len(fields) < 3 {
 				return nil, InvalidPacketError
 			}
 			switch fields[1] {
