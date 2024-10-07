@@ -3,6 +3,7 @@ package protocol
 import (
 	"github.com/go-playground/validator/v10"
 	"github.com/stretchr/testify/assert"
+	"strings"
 	"testing"
 )
 
@@ -54,26 +55,26 @@ func TestParseAuthChallengePDU(t *testing.T) {
 		{
 			name:    "Missing From Field",
 			packet:  "$ZC:CLIENT:abcd1234ef\r\n",
-			want:    nil,
-			wantErr: NewGenericFSDError(SyntaxError),
+			want:    &AuthChallengePDU{},
+			wantErr: NewGenericFSDError(SyntaxError, "", "validation error"),
 		},
 		{
 			name:    "Missing To Field",
 			packet:  "$ZCSERVER::abcd1234ef\r\n",
-			want:    nil,
-			wantErr: NewGenericFSDError(SyntaxError),
+			want:    &AuthChallengePDU{},
+			wantErr: NewGenericFSDError(SyntaxError, "", "validation error"),
 		},
 		{
-			name:    "Invalid Challenge Length",
+			name:    "Invalid Challenge Len",
 			packet:  "$ZCSERVER:CLIENT:ab\r\n",
-			want:    nil,
-			wantErr: NewGenericFSDError(SyntaxError),
+			want:    &AuthChallengePDU{},
+			wantErr: NewGenericFSDError(SyntaxError, "", "validation error"),
 		},
 		{
 			name:    "Invalid Hexadecimal Challenge",
 			packet:  "$ZCSERVER:CLIENT:ghij7890\r\n",
-			want:    nil,
-			wantErr: NewGenericFSDError(SyntaxError),
+			want:    &AuthChallengePDU{},
+			wantErr: NewGenericFSDError(SyntaxError, "", "validation error"),
 		},
 	}
 
@@ -81,9 +82,19 @@ func TestParseAuthChallengePDU(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			result, err := ParseAuthChallengePDU(tc.packet)
-			assert.Equal(t, tc.want, result)
-			assert.Equal(t, tc.wantErr, err)
+			pdu := AuthChallengePDU{}
+			err := pdu.Parse(tc.packet)
+			assert.Equal(t, tc.want, &pdu)
+			// Check the error
+			if tc.wantErr != nil {
+				if strings.Contains(tc.wantErr.Error(), "validation error") {
+					assert.Contains(t, err.Error(), "validation error")
+				} else {
+					assert.EqualError(t, err, tc.wantErr.Error())
+				}
+			} else {
+				assert.NoError(t, err)
+			}
 		})
 	}
 }

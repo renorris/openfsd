@@ -3,6 +3,7 @@ package protocol
 import (
 	"github.com/go-playground/validator/v10"
 	"github.com/stretchr/testify/assert"
+	"strings"
 	"testing"
 )
 
@@ -37,38 +38,43 @@ func TestParseKillRequestPDU(t *testing.T) {
 		},
 		{
 			name:    "Invalid from field",
-			packet:  "$!!JOHN99999:DOE:you're banned: reason\r\n",
-			want:    nil,
-			wantErr: NewGenericFSDError(SyntaxError),
+			packet:  "$!!JOHN99999JOHN99999JOHN99999JOHN99999:DOE:you're banned: reason\r\n",
+			want:    &KillRequestPDU{},
+			wantErr: NewGenericFSDError(SyntaxError, "", "validation error"),
 		},
 		{
 			name:    "Invalid to field",
-			packet:  "$!!JOHN:DOE1234567:you're banned: reason\r\n",
-			want:    nil,
-			wantErr: NewGenericFSDError(SyntaxError),
+			packet:  "$!!JOHN:DOE1234567DOE1234567DOE1234567DOE1234567:you're banned: reason\r\n",
+			want:    &KillRequestPDU{},
+			wantErr: NewGenericFSDError(SyntaxError, "", "validation error"),
 		},
 		{
 			name:    "Missing to field",
 			packet:  "$!!JOHN::Hello, world!\r\n",
-			want:    nil,
-			wantErr: NewGenericFSDError(SyntaxError),
+			want:    &KillRequestPDU{},
+			wantErr: NewGenericFSDError(SyntaxError, "", "validation error"),
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			// Perform the parsing
-			result, err := ParseKillRequestPDU(tc.packet)
+			pdu := KillRequestPDU{}
+			err := pdu.Parse(tc.packet)
 
 			// Check the error
 			if tc.wantErr != nil {
-				assert.EqualError(t, err, tc.wantErr.Error())
+				if strings.Contains(tc.wantErr.Error(), "validation error") {
+					assert.Contains(t, err.Error(), "validation error")
+				} else {
+					assert.EqualError(t, err, tc.wantErr.Error())
+				}
 			} else {
 				assert.NoError(t, err)
 			}
 
 			// Verify the result
-			assert.Equal(t, tc.want, result)
+			assert.Equal(t, tc.want, &pdu)
 		})
 	}
 }

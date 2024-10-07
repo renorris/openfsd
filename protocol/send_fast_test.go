@@ -3,6 +3,7 @@ package protocol
 import (
 	"github.com/go-playground/validator/v10"
 	"github.com/stretchr/testify/assert"
+	"strings"
 	"testing"
 )
 
@@ -52,7 +53,7 @@ func TestParseSendFastPDU(t *testing.T) {
 		name    string
 		packet  string
 		want    *SendFastPDU
-		wantErr bool
+		wantErr error
 	}{
 		{
 			name:   "Valid packet with DoSendFast true",
@@ -62,7 +63,7 @@ func TestParseSendFastPDU(t *testing.T) {
 				To:         "CLIENT",
 				DoSendFast: true,
 			},
-			wantErr: false,
+			wantErr: nil,
 		},
 		{
 			name:   "Valid packet with DoSendFast false",
@@ -72,42 +73,52 @@ func TestParseSendFastPDU(t *testing.T) {
 				To:         "CLIENT",
 				DoSendFast: false,
 			},
-			wantErr: false,
+			wantErr: nil,
 		},
 		{
 			name:    "Packet with missing DoSendFast field",
 			packet:  "$SFSERVER:CLIENT:\r\n",
-			want:    nil,
-			wantErr: true,
+			want:    &SendFastPDU{},
+			wantErr: NewGenericFSDError(SyntaxError, "", "invalid send fast integer"),
 		},
 		{
 			name:    "Packet with invalid DoSendFast field",
 			packet:  "$SFSERVER:CLIENT:not_a_number\r\n",
-			want:    nil,
-			wantErr: true,
+			want:    &SendFastPDU{},
+			wantErr: NewGenericFSDError(SyntaxError, "not_a_number", "invalid send fast integer"),
+		},
+		{
+			name:    "out of bounds send fast integer",
+			packet:  "$SFSERVER:CLIENT:2\r\n",
+			want:    &SendFastPDU{},
+			wantErr: NewGenericFSDError(SyntaxError, "2", "send fast integer must be 1 or 0"),
 		},
 		{
 			name:    "Incorrect packet format",
 			packet:  "SFSERVERCLIENT0\r\n",
-			want:    nil,
-			wantErr: true,
+			want:    &SendFastPDU{},
+			wantErr: NewGenericFSDError(SyntaxError, "", "invalid parameter count"),
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			// Perform the parsing
-			result, err := ParseSendFastPDU(tc.packet)
+			pdu := SendFastPDU{}
+			err := pdu.Parse(tc.packet)
 
-			// Check the error
-			if tc.wantErr {
-				assert.Error(t, err)
+			if tc.wantErr != nil {
+				if strings.Contains(tc.wantErr.Error(), "validation error") {
+					assert.Contains(t, err.Error(), "validation error")
+				} else {
+					assert.EqualError(t, err, tc.wantErr.Error())
+				}
 			} else {
 				assert.NoError(t, err)
 			}
 
 			// Verify the result
-			assert.Equal(t, tc.want, result)
+			assert.Equal(t, tc.want, &pdu)
 		})
 	}
 }

@@ -13,10 +13,10 @@ type ClientIdentificationPDU struct {
 	To               string `validate:"required,alphanum,max=16"`
 	ClientID         uint16 `validate:"required"`
 	ClientName       string `validate:"required,max=32"`
-	MajorVersion     int    `validate:""`
-	MinorVersion     int    `validate:""`
-	CID              int    `validate:"required,min=100000,max=9999999"`
-	SysUID           int    `validate:"required,number"`
+	MajorVersion     int    `validate:"min=0,max=999"`
+	MinorVersion     int    `validate:"min=0,max=999"`
+	CID              int    `validate:"min=100000,max=9999999"`
+	SysUID           int    `validate:""`
 	InitialChallenge string `validate:"required,hexadecimal,min=2,max=32"`
 }
 
@@ -24,64 +24,65 @@ func (p *ClientIdentificationPDU) Serialize() string {
 	clientIDBytes := make([]byte, 2)
 	binary.BigEndian.PutUint16(clientIDBytes, p.ClientID)
 	clientIDStr := hex.EncodeToString(clientIDBytes)
-	return fmt.Sprintf("$ID%s:%s:%s:%s:%d:%d:%d:%d:%s%s", p.From, p.To, clientIDStr, p.ClientName, p.MajorVersion, p.MinorVersion, p.CID, p.SysUID, p.InitialChallenge, PacketDelimeter)
+	return fmt.Sprintf("$ID%s:%s:%s:%s:%d:%d:%d:%d:%s%s",
+		p.From, p.To, clientIDStr, p.ClientName, p.MajorVersion,
+		p.MinorVersion, p.CID, p.SysUID, p.InitialChallenge, PacketDelimiter)
 }
 
-func ParseClientIdentificationPDU(rawPacket string) (*ClientIdentificationPDU, error) {
-	rawPacket = strings.TrimSuffix(rawPacket, PacketDelimeter)
-	rawPacket = strings.TrimPrefix(rawPacket, "$ID")
-	fields := strings.Split(rawPacket, Delimeter)
-	if len(fields) != 9 {
-		return nil, NewGenericFSDError(SyntaxError)
-	}
+func (p *ClientIdentificationPDU) Parse(packet string) error {
+	packet = strings.TrimSuffix(packet, PacketDelimiter)
+	packet = strings.TrimPrefix(packet, "$ID")
 
-	// fields[2] == uint16 in hexadecimal
-	if len(fields[2]) != 4 {
-		return nil, NewGenericFSDError(SyntaxError)
-	}
-
-	clientIDBytes, err := hex.DecodeString(fields[2])
-	if err != nil || len(clientIDBytes) != 2 {
-		return nil, NewGenericFSDError(SyntaxError)
-	}
-	clientID := binary.BigEndian.Uint16(clientIDBytes)
-
-	majorVersion, err := strconv.Atoi(fields[4])
-	if err != nil {
-		return nil, NewGenericFSDError(SyntaxError)
-	}
-
-	minorVersion, err := strconv.Atoi(fields[5])
-	if err != nil {
-		return nil, NewGenericFSDError(SyntaxError)
-	}
-
-	cid, err := strconv.Atoi(fields[6])
-	if err != nil {
-		return nil, NewGenericFSDError(SyntaxError)
-	}
-
-	sysUID, err := strconv.Atoi(fields[7])
-	if err != nil {
-		return nil, NewGenericFSDError(SyntaxError)
+	var fields []string
+	if fields = strings.Split(packet, Delimiter); len(fields) != 9 {
+		return NewGenericFSDError(SyntaxError, "", "invalid parameter count")
 	}
 
 	pdu := ClientIdentificationPDU{
 		From:             fields[0],
 		To:               fields[1],
-		ClientID:         clientID,
 		ClientName:       fields[3],
-		MajorVersion:     majorVersion,
-		MinorVersion:     minorVersion,
-		CID:              cid,
-		SysUID:           sysUID,
 		InitialChallenge: fields[8],
 	}
 
-	err = V.Struct(&pdu)
-	if err != nil {
-		return nil, NewGenericFSDError(SyntaxError)
+	// fields[2] == uint16 in hexadecimal
+	if len(fields[2]) != 4 {
+		return NewGenericFSDError(SyntaxError, fields[2],
+			"client ID must be 4 hexadecimal characters")
 	}
 
-	return &pdu, nil
+	var clientIDBytes []byte
+	var err error
+	if clientIDBytes, err = hex.DecodeString(fields[2]); err != nil || len(clientIDBytes) != 2 {
+		return NewGenericFSDError(SyntaxError, fields[2], "invalid client ID")
+	}
+	pdu.ClientID = binary.BigEndian.Uint16(clientIDBytes)
+
+	if pdu.MajorVersion, err = strconv.Atoi(fields[4]); err != nil {
+		return NewGenericFSDError(SyntaxError, fields[4], "invalid major version")
+	}
+
+	if pdu.MinorVersion, err = strconv.Atoi(fields[5]); err != nil {
+		return NewGenericFSDError(SyntaxError, fields[5], "invalid minor version")
+	}
+
+	if pdu.CID, err = strconv.Atoi(fields[6]); err != nil {
+		return NewGenericFSDError(SyntaxError, fields[6], "invalid CID")
+	}
+
+	if pdu.SysUID, err = strconv.Atoi(fields[7]); err != nil {
+		return NewGenericFSDError(SyntaxError, fields[7], "invalid system UID")
+	}
+
+	if err = V.Struct(&pdu); err != nil {
+		if validatorErr := getFSDErrorFromValidatorErrors(err); err != nil {
+			return validatorErr
+		}
+		return err
+	}
+
+	// Copy new pdu into receiver
+	*p = pdu
+
+	return nil
 }

@@ -6,26 +6,26 @@ import (
 )
 
 type MetarRequestPDU struct {
-	From    string `validate:"required,alphanum,max=7"`
-	To      string `validate:"required,alphanum,max=7"`
+	From    string `validate:"required,alphanum,max=16"`
+	To      string `validate:"required,alphanum,max=16"`
 	Station string `validate:"required,alphanum,max=4"`
 }
 
 func (p *MetarRequestPDU) Serialize() string {
-	return fmt.Sprintf("$AX%s:%s:METAR:%s%s", p.From, p.To, p.Station, PacketDelimeter)
+	return fmt.Sprintf("$AX%s:%s:METAR:%s%s", p.From, p.To, p.Station, PacketDelimiter)
 }
 
-func ParseMetarRequestPDU(rawPacket string) (*MetarRequestPDU, error) {
-	rawPacket = strings.TrimSuffix(rawPacket, PacketDelimeter)
-	rawPacket = strings.TrimPrefix(rawPacket, "$AX")
-	fields := strings.Split(rawPacket, Delimeter)
+func (p *MetarRequestPDU) Parse(packet string) error {
+	packet = strings.TrimSuffix(packet, PacketDelimiter)
+	packet = strings.TrimPrefix(packet, "$AX")
 
-	if len(fields) != 4 {
-		return nil, NewGenericFSDError(SyntaxError)
+	var fields []string
+	if fields = strings.Split(packet, Delimiter); len(fields) != 4 {
+		return NewGenericFSDError(SyntaxError, "", "invalid parameter count")
 	}
 
 	if fields[2] != "METAR" {
-		return nil, NewGenericFSDError(SyntaxError)
+		return NewGenericFSDError(SyntaxError, fields[2], "third parameter must be 'METAR'")
 	}
 
 	pdu := MetarRequestPDU{
@@ -34,10 +34,15 @@ func ParseMetarRequestPDU(rawPacket string) (*MetarRequestPDU, error) {
 		Station: fields[3],
 	}
 
-	err := V.Struct(pdu)
-	if err != nil {
-		return nil, NewGenericFSDError(SyntaxError)
+	if err := V.Struct(pdu); err != nil {
+		if validatorErr := getFSDErrorFromValidatorErrors(err); err != nil {
+			return validatorErr
+		}
+		return err
 	}
 
-	return &pdu, nil
+	// Copy new pdu into receiver
+	*p = pdu
+
+	return nil
 }

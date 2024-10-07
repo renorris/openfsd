@@ -3,6 +3,7 @@ package protocol
 import (
 	"github.com/go-playground/validator/v10"
 	"github.com/stretchr/testify/assert"
+	"strings"
 	"testing"
 )
 
@@ -52,40 +53,45 @@ func TestParsePingPDU(t *testing.T) {
 		{
 			name:    "Missing fields",
 			packet:  "$PISOURCE:1609459200\r\n",
-			want:    nil,
-			wantErr: NewGenericFSDError(SyntaxError),
+			want:    &PingPDU{},
+			wantErr: NewGenericFSDError(SyntaxError, "", "invalid parameter count"),
 		},
 		{
 			name:    "Exceeds max field length",
-			packet:  "$PISOURCESOURCE:TARGETTARGET:16094592000000000000000000000000\r\n",
-			want:    nil,
-			wantErr: NewGenericFSDError(SyntaxError),
+			packet:  "$PISOURCESOURCE:TARGETTARGET:" + strings.Repeat("METAR", 1024) + "\r\n",
+			want:    &PingPDU{},
+			wantErr: NewGenericFSDError(SyntaxError, "", "validation error"),
 		},
 		{
 			name:    "Invalid From field",
-			packet:  "$PI12345678:TARGET:1609459200\r\n",
-			want:    nil,
-			wantErr: NewGenericFSDError(SyntaxError),
+			packet:  "$PI12345678123456781234567812345678:TARGET:1609459200\r\n",
+			want:    &PingPDU{},
+			wantErr: NewGenericFSDError(SyntaxError, "", "validation error"),
 		},
 		{
 			name:    "Invalid To field",
-			packet:  "$PISOURCE:12345678:1609459200\r\n",
-			want:    nil,
-			wantErr: NewGenericFSDError(SyntaxError),
+			packet:  "$PISOURCE:1234567812345678123456781234567812345678:1609459200\r\n",
+			want:    &PingPDU{},
+			wantErr: NewGenericFSDError(SyntaxError, "", "validation error"),
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			result, err := ParsePingPDU(tc.packet)
+			pdu := PingPDU{}
+			err := pdu.Parse(tc.packet)
 
 			if tc.wantErr != nil {
-				assert.EqualError(t, err, tc.wantErr.Error())
+				if strings.Contains(tc.wantErr.Error(), "validation error") {
+					assert.Contains(t, err.Error(), "validation error")
+				} else {
+					assert.EqualError(t, err, tc.wantErr.Error())
+				}
 			} else {
 				assert.NoError(t, err)
 			}
 
-			assert.Equal(t, tc.want, result)
+			assert.Equal(t, tc.want, &pdu)
 		})
 	}
 }

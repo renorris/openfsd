@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/go-playground/validator/v10"
@@ -28,61 +29,66 @@ func TestParsePlaneInfoRequestPDU(t *testing.T) {
 		{
 			name:    "Last element not PIR",
 			packet:  "#SBPILOT:ATC:PI\r\n",
-			want:    nil,
-			wantErr: NewGenericFSDError(SyntaxError),
+			want:    &PlaneInfoRequestPDU{},
+			wantErr: NewGenericFSDError(SyntaxError, "PI", "third parameter must be 'PIR'"),
 		},
 		{
 			name:    "Missing To field",
 			packet:  "#SBPILOT::PIR\r\n",
-			want:    nil,
-			wantErr: NewGenericFSDError(SyntaxError),
+			want:    &PlaneInfoRequestPDU{},
+			wantErr: NewGenericFSDError(SyntaxError, "", "validation error"),
 		},
 		{
 			name:    "Missing From field",
 			packet:  "#SB:ATC:PIR\r\n",
-			want:    nil,
-			wantErr: NewGenericFSDError(SyntaxError),
+			want:    &PlaneInfoRequestPDU{},
+			wantErr: NewGenericFSDError(SyntaxError, "", "validation error"),
 		},
 		{
 			name:    "Extra fields",
 			packet:  "#SBPILOT:ATC:EXTRA:PIR\r\n",
-			want:    nil,
-			wantErr: NewGenericFSDError(SyntaxError),
+			want:    &PlaneInfoRequestPDU{},
+			wantErr: NewGenericFSDError(SyntaxError, "", "invalid parameter count"),
 		},
 		{
 			name:    "Invalid From field (non-alphanumerical)",
 			packet:  "#SBP!@#$:ATC:PIR\r\n",
-			want:    nil,
-			wantErr: NewGenericFSDError(SyntaxError),
+			want:    &PlaneInfoRequestPDU{},
+			wantErr: NewGenericFSDError(SyntaxError, "", "validation error"),
 		},
 		{
 			name:    "Invalid To field (too long)",
-			packet:  "#SBPILOT:12345678:PIR\r\n",
-			want:    nil,
-			wantErr: NewGenericFSDError(SyntaxError),
+			packet:  "#SBPILOT:1234567812345678123456781234567812345678:PIR\r\n",
+			want:    &PlaneInfoRequestPDU{},
+			wantErr: NewGenericFSDError(SyntaxError, "", "validation error"),
 		},
 		{
 			name:    "Input with incorrect prefix",
 			packet:  "$DIPILOT:ATC:PIR\r\n",
-			want:    nil,
-			wantErr: NewGenericFSDError(SyntaxError),
+			want:    &PlaneInfoRequestPDU{},
+			wantErr: NewGenericFSDError(SyntaxError, "", "validation error"),
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			// Perform the parsing
-			result, err := ParsePlaneInfoRequestPDU(tc.packet)
+			pdu := PlaneInfoRequestPDU{}
+			err := pdu.Parse(tc.packet)
 
 			// Check the error
 			if tc.wantErr != nil {
-				assert.EqualError(t, err, tc.wantErr.Error())
+				if strings.Contains(tc.wantErr.Error(), "validation error") {
+					assert.Contains(t, err.Error(), "validation error")
+				} else {
+					assert.EqualError(t, err, tc.wantErr.Error())
+				}
 			} else {
 				assert.NoError(t, err)
 			}
 
 			// Verify the result
-			assert.Equal(t, tc.want, result)
+			assert.Equal(t, tc.want, &pdu)
 		})
 	}
 }

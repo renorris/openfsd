@@ -3,3 +3,7 @@
 *.db
 .envrc
 *.sqlite
+**/jwtprivatekey*
+release
+build.sh
+changelog

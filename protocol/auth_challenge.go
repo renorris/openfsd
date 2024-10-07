@@ -6,22 +6,22 @@ import (
 )
 
 type AuthChallengePDU struct {
-	From      string `validate:"required,alphanum,max=7"`
-	To        string `validate:"required,alphanum,max=7"`
+	From      string `validate:"required,alphanum,max=16"`
+	To        string `validate:"required,alphanum,max=16"`
 	Challenge string `validate:"required,hexadecimal,min=4,max=32"`
 }
 
 func (p *AuthChallengePDU) Serialize() string {
-	return fmt.Sprintf("$ZC%s:%s:%s%s", p.From, p.To, p.Challenge, PacketDelimeter)
+	return fmt.Sprintf("$ZC%s:%s:%s%s", p.From, p.To, p.Challenge, PacketDelimiter)
 }
 
-func ParseAuthChallengePDU(rawPacket string) (*AuthChallengePDU, error) {
-	rawPacket = strings.TrimSuffix(rawPacket, PacketDelimeter)
-	rawPacket = strings.TrimPrefix(rawPacket, "$ZC")
-	fields := strings.Split(rawPacket, Delimeter)
+func (p *AuthChallengePDU) Parse(packet string) error {
+	packet = strings.TrimSuffix(packet, PacketDelimiter)
+	packet = strings.TrimPrefix(packet, "$ZC")
 
-	if len(fields) != 3 {
-		return nil, NewGenericFSDError(SyntaxError)
+	var fields []string
+	if fields = strings.Split(packet, Delimiter); len(fields) != 3 {
+		return NewGenericFSDError(SyntaxError, "", "invalid parameter count")
 	}
 
 	pdu := AuthChallengePDU{
@@ -30,10 +30,15 @@ func ParseAuthChallengePDU(rawPacket string) (*AuthChallengePDU, error) {
 		Challenge: fields[2],
 	}
 
-	err := V.Struct(pdu)
-	if err != nil {
-		return nil, NewGenericFSDError(SyntaxError)
+	if err := V.Struct(&pdu); err != nil {
+		if validatorErr := getFSDErrorFromValidatorErrors(err); err != nil {
+			return validatorErr
+		}
+		return err
 	}
 
-	return &pdu, nil
+	// Copy new pdu into receiver
+	*p = pdu
+
+	return nil
 }

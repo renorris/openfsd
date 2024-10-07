@@ -1,16 +1,42 @@
 services:
-  fsd:
-    build:
-      context: "."
+  db:
+    image: docker.io/mysql:latest
+    restart: unless-stopped
+    expose:
+      - "3306:3306/tcp"
+    networks:
+      - openfsd-net
+    environment:
+      MYSQL_ROOT_PASSWORD: supersecretpassword
+      MYSQL_DATABASE: openfsd
+      MYSQL_ROOT_HOST: '%'
+    healthcheck:
+      test: mysqladmin ping -h 127.0.0.1 -u $$MYSQL_USER --password=$$MYSQL_PASSWORD
+      start_period: 5s
+      interval: 5s
+      timeout: 15s
+      retries: 8
+
+  openfsd:
+    image: docker.io/renorris/openfsd:latest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
     ports:
       - "6809:6809/tcp"
-      - "9086:9086/tcp"
-    volumes:
-      - ./db:/openfsd/db
+      - "8080:8080/tcp"
+    networks:
+      - openfsd-net
     environment:
-      FSD_ADDR: "0.0.0.0:6809"
-      HTTP_ADDR: "0.0.0.0:9086"
-      HTTPS_ENABLED: false
-      DATABASE_FILE: "./db/fsd.db"
-      MOTD: "openfsd"
-    restart: unless-stopped
+      GOMAXPROCS: 1
+      PLAINTEXT_PASSWORDS: true
+      MYSQL_USER: root
+      MYSQL_PASS: supersecretpassword
+      MYSQL_NET: tcp
+      MYSQL_ADDR: db:3306
+      MYSQL_DBNAME: openfsd
+
+networks:
+  openfsd-net:
+    driver: bridge

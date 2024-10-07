@@ -1,0 +1,37 @@
+{{ template "layout.html" . }}
+
+{{ define "title" }} Login {{ end }}
+
+{{ define "content" }}
+<div class="container-fluid mt-3">
+    <form id="login-form" action="/login" method="POST">
+    <div class="row">
+        <div class="col-sm-4">
+            <div class="mb-3">
+                <input type="number" class="form-control-sm" id="cid" name="cid" placeholder="CID" required>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-sm-8">
+            <div class="mb-3">
+                <input type="password" class="form-control-sm" id="password" name="password" placeholder="Password" required>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <div id="alert"></div>
+    </div>
+
+    <div class="row">
+        <div class="mb-3">
+            <button type="submit" class="form-control-sm btn-sm btn-outline-dark" id="submit">Login</button>
+        </div>
+    </div>
+    </form>
+
+    <script src="/static/js/login.js"></script>
+</div>
+{{ end }}

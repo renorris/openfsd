@@ -3,6 +3,7 @@ package protocol
 import (
 	"github.com/go-playground/validator/v10"
 	"github.com/stretchr/testify/assert"
+	"strings"
 	"testing"
 )
 
@@ -44,56 +45,60 @@ func TestParsePlaneInfoResponsePDU(t *testing.T) {
 		{
 			"Invalid - Missing EQUIPMENT Prefix",
 			"#SBATC:PILOT:PI:GEN:A320:LIVERY=Standard\r\n",
-			nil,
-			NewGenericFSDError(SyntaxError),
+			&PlaneInfoResponsePDU{},
+			NewGenericFSDError(SyntaxError, "A320", "invalid EQUIPMENT= field"),
 		},
 		{
 			"Invalid - Wrong HEADER Prefix",
 			"$SBATC:PILOT:PI:GEN:EQUIPMENT=A320\r\n",
-			nil,
-			NewGenericFSDError(SyntaxError),
+			&PlaneInfoResponsePDU{},
+			NewGenericFSDError(SyntaxError, "", "validation error"),
 		},
 		{
 			"Invalid - Field Count Less",
 			"#SBATC:PILOT:PI:GEN\r\n",
-			nil,
-			NewGenericFSDError(SyntaxError),
+			&PlaneInfoResponsePDU{},
+			NewGenericFSDError(SyntaxError, "", "invalid parameter count"),
 		},
 		{
 			"Invalid - Field Count More",
 			"#SBATC:PILOT:PI:GEN:EQUIPMENT=A320:AIRLINE=Delta:LIVERY=Standard:CSL=ModelABC:ExtraField\r\n",
-			nil,
-			NewGenericFSDError(SyntaxError),
+			&PlaneInfoResponsePDU{},
+			NewGenericFSDError(SyntaxError, "", "invalid parameter count"),
 		},
 		{
 			"Invalid - No From Field",
 			"#SB:PILOT:PI:GEN:EQUIPMENT=A320\r\n",
-			nil,
-			NewGenericFSDError(SyntaxError),
+			&PlaneInfoResponsePDU{},
+			NewGenericFSDError(SyntaxError, "", "validation error"),
 		},
 		{
 			"Invalid - No To Field",
 			"#SBATC::PI:GEN:EQUIPMENT=A320\r\n",
-			nil,
-			NewGenericFSDError(SyntaxError),
+			&PlaneInfoResponsePDU{},
+			NewGenericFSDError(SyntaxError, "", "validation error"),
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			// Perform the parsing
-			result, err := ParsePlaneInfoResponsePDU(tc.packet)
+			pdu := PlaneInfoResponsePDU{}
+			err := pdu.Parse(tc.packet)
 
 			// Check the error
 			if tc.wantErr != nil {
-				assert.Error(t, err)
-				assert.EqualError(t, err, tc.wantErr.Error())
+				if strings.Contains(tc.wantErr.Error(), "validation error") {
+					assert.Contains(t, err.Error(), "validation error")
+				} else {
+					assert.EqualError(t, err, tc.wantErr.Error())
+				}
 			} else {
 				assert.NoError(t, err)
 			}
 
 			// Verify the result
-			assert.Equal(t, tc.want, result)
+			assert.Equal(t, tc.want, &pdu)
 		})
 	}
 }

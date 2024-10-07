@@ -3,6 +3,7 @@ package protocol
 import (
 	"github.com/go-playground/validator/v10"
 	"github.com/stretchr/testify/assert"
+	"strings"
 	"testing"
 )
 
@@ -40,49 +41,54 @@ func TestParseClientQueryResponsePDU(t *testing.T) {
 		{
 			"Invalid QueryType",
 			"$CRFROM:TO:XYZ\r\n",
-			nil,
-			NewGenericFSDError(SyntaxError),
+			&ClientQueryResponsePDU{},
+			NewGenericFSDError(SyntaxError, "XYZ", "invalid query type"),
 		},
 		{
 			"From field too long",
-			"$CRFROMFROM:TO:WH\r\n",
-			nil,
-			NewGenericFSDError(SyntaxError),
+			"$CRFROMFROMFROMFROMFROMFROMFROM:TO:WH\r\n",
+			&ClientQueryResponsePDU{},
+			NewGenericFSDError(SyntaxError, "", "validation error"),
 		},
 		{
 			"Missing QueryType",
 			"$CRFROM:TO:\r\n",
-			nil,
-			NewGenericFSDError(SyntaxError),
+			&ClientQueryResponsePDU{},
+			NewGenericFSDError(SyntaxError, "", "validation error"),
 		},
 		{
 			"Empty packet",
 			"\r\n",
-			nil,
-			NewGenericFSDError(SyntaxError),
+			&ClientQueryResponsePDU{},
+			NewGenericFSDError(SyntaxError, "", "invalid parameter count"),
 		},
 		{
 			"Missing From field",
 			"$CR:TO:WH\r\n",
-			nil,
-			NewGenericFSDError(SyntaxError),
+			&ClientQueryResponsePDU{},
+			NewGenericFSDError(SyntaxError, "", "validation error"),
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			// Perform the parsing
-			result, err := ParseClientQueryResponsePDU(tc.packet)
+			pdu := ClientQueryResponsePDU{}
+			err := pdu.Parse(tc.packet)
 
 			// Check the error
 			if tc.wantErr != nil {
-				assert.EqualError(t, err, tc.wantErr.Error())
+				if strings.Contains(tc.wantErr.Error(), "validation error") {
+					assert.Contains(t, err.Error(), "validation error")
+				} else {
+					assert.EqualError(t, err, tc.wantErr.Error())
+				}
 			} else {
 				assert.NoError(t, err)
 			}
 
 			// Verify the result
-			assert.Equal(t, tc.want, result)
+			assert.Equal(t, tc.want, &pdu)
 		})
 	}
 }

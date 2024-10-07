@@ -6,12 +6,12 @@ import (
 )
 
 type PlaneInfoResponsePDU struct {
-	From      string `validate:"required,alphanum,max=7"`
-	To        string `validate:"required,alphanum,max=7"`
-	Equipment string `validate:"required,max=32"`
-	Airline   string `validate:"max=32"`
-	Livery    string `validate:"max=32"`
-	CSL       string `validate:"max=32"`
+	From      string `validate:"required,alphanum,max=16"`
+	To        string `validate:"required,alphanum,max=16"`
+	Equipment string `validate:"required,max=64"`
+	Airline   string `validate:"max=64"`
+	Livery    string `validate:"max=64"`
+	CSL       string `validate:"max=64"`
 }
 
 func (p *PlaneInfoResponsePDU) Serialize() string {
@@ -26,63 +26,67 @@ func (p *PlaneInfoResponsePDU) Serialize() string {
 		str += fmt.Sprintf(":CSL=%s", p.CSL)
 	}
 
-	str += PacketDelimeter
+	str += PacketDelimiter
 	return str
 }
 
-func ParsePlaneInfoResponsePDU(rawPacket string) (*PlaneInfoResponsePDU, error) {
-	rawPacket = strings.TrimSuffix(rawPacket, PacketDelimeter)
-	rawPacket = strings.TrimPrefix(rawPacket, "#SB")
-	fields := strings.Split(rawPacket, Delimeter)
-	if len(fields) < 5 || len(fields) > 8 {
-		return nil, NewGenericFSDError(SyntaxError)
+func (p *PlaneInfoResponsePDU) Parse(packet string) error {
+	packet = strings.TrimSuffix(packet, PacketDelimiter)
+	packet = strings.TrimPrefix(packet, "#SB")
+
+	var fields []string
+	if fields = strings.Split(packet, Delimiter); len(fields) < 5 || len(fields) > 8 {
+		return NewGenericFSDError(SyntaxError, "", "invalid parameter count")
 	}
 
 	if fields[2] != "PI" || fields[3] != "GEN" {
-		return nil, NewGenericFSDError(SyntaxError)
+		return NewGenericFSDError(SyntaxError, fields[2], "third parameter must be 'PI'")
 	}
 
-	var equipment, airline, livery, csl string
+	if fields[3] != "GEN" {
+		return NewGenericFSDError(SyntaxError, fields[3], "fourth parameter must be 'GEN'")
+	}
+
+	pdu := PlaneInfoResponsePDU{
+		From: fields[0],
+		To:   fields[1],
+	}
 
 	if !strings.HasPrefix(fields[4], "EQUIPMENT=") || len(fields[4]) < len("EQUIPMENT=")+1 {
-		return nil, NewGenericFSDError(SyntaxError)
+		return NewGenericFSDError(SyntaxError, fields[4], "invalid EQUIPMENT= field")
 	}
-	equipment = strings.SplitN(fields[4], "=", 2)[1]
+	pdu.Equipment = strings.SplitN(fields[4], "=", 2)[1]
 
 	if len(fields) > 5 {
 		if !strings.HasPrefix(fields[5], "AIRLINE=") || len(fields[5]) < len("AIRLINE=")+1 {
-			return nil, NewGenericFSDError(SyntaxError)
+			return NewGenericFSDError(SyntaxError, fields[5], "invalid AIRLINE= field")
 		}
-		airline = strings.SplitN(fields[5], "=", 2)[1]
+		pdu.Airline = strings.SplitN(fields[5], "=", 2)[1]
 	}
 
 	if len(fields) > 6 {
 		if !strings.HasPrefix(fields[6], "LIVERY=") || len(fields[6]) < len("LIVERY=")+1 {
-			return nil, NewGenericFSDError(SyntaxError)
+			return NewGenericFSDError(SyntaxError, fields[6], "invalid LIVERY= field")
 		}
-		livery = strings.SplitN(fields[6], "=", 2)[1]
+		pdu.Livery = strings.SplitN(fields[6], "=", 2)[1]
 	}
 
 	if len(fields) > 7 {
 		if !strings.HasPrefix(fields[7], "CSL=") || len(fields[6]) < len("CSL=")+1 {
-			return nil, NewGenericFSDError(SyntaxError)
+			return NewGenericFSDError(SyntaxError, fields[7], "invalid CSL= field")
 		}
-		csl = strings.SplitN(fields[7], "=", 2)[1]
+		pdu.CSL = strings.SplitN(fields[7], "=", 2)[1]
 	}
 
-	pdu := &PlaneInfoResponsePDU{
-		From:      fields[0],
-		To:        fields[1],
-		Equipment: equipment,
-		Airline:   airline,
-		Livery:    livery,
-		CSL:       csl,
+	if err := V.Struct(pdu); err != nil {
+		if validatorErr := getFSDErrorFromValidatorErrors(err); err != nil {
+			return validatorErr
+		}
+		return err
 	}
 
-	err := V.Struct(pdu)
-	if err != nil {
-		return nil, NewGenericFSDError(SyntaxError)
-	}
+	// Copy new pdu into receiver
+	*p = pdu
 
-	return pdu, nil
+	return nil
 }

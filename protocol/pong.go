@@ -6,22 +6,22 @@ import (
 )
 
 type PongPDU struct {
-	From      string `validate:"required,alphanum,max=7"`
-	To        string `validate:"required,alphanum,max=7"`
-	Timestamp string `validate:"required,max=32"`
+	From      string `validate:"required,alphanum,max=16"`
+	To        string `validate:"required,alphanum,max=16"`
+	Timestamp string `validate:"required,max=64"`
 }
 
 func (p *PongPDU) Serialize() string {
-	return fmt.Sprintf("$PO%s:%s:%s%s", p.From, p.To, p.Timestamp, PacketDelimeter)
+	return fmt.Sprintf("$PO%s:%s:%s%s", p.From, p.To, p.Timestamp, PacketDelimiter)
 }
 
-func ParsePongPDU(rawPacket string) (*PongPDU, error) {
-	rawPacket = strings.TrimSuffix(rawPacket, PacketDelimeter)
-	rawPacket = strings.TrimPrefix(rawPacket, "$PO")
-	fields := strings.Split(rawPacket, Delimeter)
+func (p *PongPDU) Parse(packet string) error {
+	packet = strings.TrimSuffix(packet, PacketDelimiter)
+	packet = strings.TrimPrefix(packet, "$PO")
 
-	if len(fields) != 3 {
-		return nil, NewGenericFSDError(SyntaxError)
+	var fields []string
+	if fields = strings.Split(packet, Delimiter); len(fields) != 3 {
+		return NewGenericFSDError(SyntaxError, "", "invalid parameter count")
 	}
 
 	pdu := PongPDU{
@@ -30,10 +30,15 @@ func ParsePongPDU(rawPacket string) (*PongPDU, error) {
 		Timestamp: fields[2],
 	}
 
-	err := V.Struct(pdu)
-	if err != nil {
-		return nil, NewGenericFSDError(SyntaxError)
+	if err := V.Struct(pdu); err != nil {
+		if validatorErr := getFSDErrorFromValidatorErrors(err); err != nil {
+			return validatorErr
+		}
+		return err
 	}
 
-	return &pdu, nil
+	// Copy new pdu into receiver
+	*p = pdu
+
+	return nil
 }

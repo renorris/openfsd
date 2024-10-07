@@ -1,19 +1,43 @@
-FROM golang:1.22.2-bullseye as build
+# Fetch UPX
+FROM alpine:latest AS upx
+WORKDIR /
+RUN apk update && apk add ca-certificates && \
+    arch=$(arch | sed s/aarch64/arm64/ | sed s/x86_64/amd64/) && echo "ARCHITECTURE=${arch}" && \
+    wget "https://github.com/upx/upx/releases/download/v4.2.4/upx-4.2.4-${arch}_linux.tar.xz" && \
+    tar -xf upx-4.2.4-${arch}_linux.tar.xz &&  \
+    cd upx-4.2.4-${arch}_linux && \
+    mv upx /bin/upx
 
-ENV CGO_ENABLED=1
+# Build openfsd
+FROM golang:1.23.2-bookworm AS build
 
-WORKDIR /build
+# Precompile the entire go standard library into the first Docker cache layer
+RUN CGO_ENABLED=0 GOOS=linux go install -v -a std
+
+WORKDIR /go/src/openfsd
+
+# Download and precompile all third party libraries
+COPY go.mod .
+COPY go.sum .
+RUN go mod download -x
+RUN go list -m all | tail -n +2 | cut -f 1 -d " " | awk 'NF{print $0 "/..."}' | CGO_ENABLED=0 GOOS=linux xargs -n1 go build -v; echo done
+
+# Add the sources
 COPY . .
 
-RUN go mod download
-RUN go mod verify
+# Compile
+RUN CGO_ENABLED=0 GOOS=linux go build -v -o openfsd -ldflags "-s -w" main.go
 
-RUN go build -ldflags='-extldflags "-static"' -o main .
+# Move UPX into /bin
+COPY --from=upx /bin/upx /bin/upx
 
-FROM gcr.io/distroless/static-debian11
+# Compress with upx
+RUN /bin/upx -v -9 openfsd
 
-WORKDIR /openfsd
+FROM gcr.io/distroless/static-debian12
 
-COPY --from=build /build/main .
+WORKDIR /app
+COPY --from=build --chown=nonroot:nonroot /go/src/openfsd /app
+USER nonroot:nonroot
 
-CMD ["./main"]
+ENTRYPOINT ["/app/openfsd"]

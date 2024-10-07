@@ -1,58 +1,152 @@
 # openfsd
 
-**openfsd** is an experimental FSD server, implementing the `Vatsim2022` protocol revision ([Velocity](https://forums.vatsim.net/topic/32619-vatsim-announces-velocity-release-date-and-rollout-plan/)) for pilot clients.
+[![license](https://img.shields.io/github/license/renorris/openfsd)](https://github.com/renorris/openfsd/blob/main/LICENSE)
+&nbsp;[![docker](https://img.shields.io/docker/image-size/renorris/openfsd/latest)](https://hub.docker.com/repository/docker/renorris/openfsd)
+
+**openfsd** is a multiplayer flight simulation server implementing the protocol colloquially known as "FSD" (Flight Sim Daemon).
+It is specifically modelled to reflect the VATSIM [Velocity](https://forums.vatsim.net/topic/32619-vatsim-announces-velocity-release-date-and-rollout-plan/) protocol revision for pilot clients.
 
 ## About
 
-FSD (Flight Sim Daemon) is the software/protocol responsible for connecting home flight simulator clients to a single, shared multiplayer world on hobbyist networks such as [VATSIM](https://vatsim.net/docs/about/about-vatsim).
-FSD was originally written in the late 90's by [Marty Bochane](https://github.com/kuroneko/fsd) for [SATCO](https://web.archive.org/web/20000619145015/http://www.satco.org/), later to be forked and taken closed-source by VATSIM in 2001. As of April 2024, FSD is still used to facilitate over 140,000 active members connecting their flight simulators to the [network](https://map.vatsim.net).
+FSD is the software/protocol responsible for connecting home flight simulator clients to a single, shared multiplayer world on hobbyist networks such as [VATSIM](https://vatsim.net/docs/about/about-vatsim) and [IVAO](https://www.ivao.aero/).
+FSD was originally written in the late 90's by [Marty Bochane](https://github.com/kuroneko/fsd) for [SATCO](https://web.archive.org/web/20000619145015/http://www.satco.org/), later to be forked and taken closed-source by VATSIM in 2001. 
+As of October 2024, FSD is still used to facilitate over 140,000 active members connecting their flight simulators to the [network](https://vatsim-radar.com/).
 
-## Building
+## Docker
+
+[Prebuilt images](https://hub.docker.com/r/renorris/openfsd) are available for x86_64 and arm64.
+
+Example:
+
 ```
-go mod download
-go build -o fsd .
+docker run -e IN_MEMORY_DB=true -e PLAINTEXT_PASSWORDS=true \
+-p 6809:6809 -p 8080:8080 renorris/openfsd:latest
 ```
 
-A default admin user will be printed to stdout on first startup. A simple web interface can be accessed using these credentials to add more users at `/dashboard`
+Also see the example [docker-compose.yml](https://github.com/renorris/openfsd/blob/main/docker-compose.yml).
 
-The server is configured via environment variables:
+## Manual Build
+```
+git clone https://github.com/renorris/openfsd && cd openfsd/
+go build -o openfsd .
+```
 
-| Variable Name         | Default Value | Description                                                                                                                       |
-|-----------------------|---------------|-----------------------------------------------------------------------------------------------------------------------------------|
-| `FSD_ADDR`            | 0.0.0.0:6809  | FSD listen address                                                                                                                |
-| `HTTP_ADDR`           | 0.0.0.0:9086  | HTTP listen address                                                                                                               |
-| `HTTPS_ENABLED`       | false         | Enable HTTPS                                                                                                                      |
-| `TLS_CERT_FILE`       |               | TLS certificate file path                                                                                                         |
-| `TLS_KEY_FILE`        |               | TLS key file path                                                                                                                 |
-| `DATABASE_FILE`       | ./fsd.db      | SQLite database file path                                                                                                         |
-| `MOTD`                | openfsd       | Message to send on FSD client login (line feeds supported)                                                                        |
-| `PLAINTEXT_PASSWORDS` | false         | Setting this to true treats the "token" field in the #AP packet to be a plaintext password, rather than a VATSIM-esque JWT token. |
-## Overview
+## Setup
+
+Persistent storage utilizes MySQL. You will need a MySQL server to point openfsd at.
+
+Use the following environment variables to configure the server:
+
+| Variable Name         | Default Value | Description                                                                                                                                                                             |
+|-----------------------|---------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `FSD_ADDR`            | 0.0.0.0:6809  | FSD listen address                                                                                                                                                                      |
+| `HTTP_ADDR`           | 0.0.0.0:8080  | HTTP listen address                                                                                                                                                                     |
+| `TLS_CERT_FILE`       |               | TLS certificate file path (setting this enables HTTPS. otherwise, plaintext HTTP will be used.)                                                                                         |
+| `TLS_KEY_FILE`        |               | TLS key file path                                                                                                                                                                       |
+| `IN_MEMORY_DB`        | false         | Enables an ephemeral in-memory database in place of a real MySQL server.<br>This should only be used for testing.                                                                       |
+| `MYSQL_USER`          |               | MySQL username                                                                                                                                                                          |
+| `MYSQL_PASS`          |               | MySQL password                                                                                                                                                                          |
+| `MYSQL_NET`           |               | MySQL network protocol e.g. `tcp`                                                                                                                                                       |
+| `MYSQL_ADDR`          |               | MySQL network address e.g. `127.0.0.1:3306`                                                                                                                                             |
+| `MYSQL_DBNAME`        |               | MySQL database name                                                                                                                                                                     |
+| `MOTD`                | openfsd       | "Message of the Day." This text is sent as a chat message to each client upon successful login to FSD.                                                                                  |
+| `PLAINTEXT_PASSWORDS` | false         | Setting this flag disables JSON web token authentication over FSD and instead treats the token field in the #AP packet as a plaintext password.<br>See below for further configuration. |
+
+For 99.9% of use cases, it is also recommended to set:
+```
+GOMAXPROCS=1
+```
+This environment variable limits the number of operating system threads that can execute user-level Go code simultaneously.
+Scaling to multiple threads will generally only make the process slower.
+
+openfsd supports "fsd-jwt" authentication over HTTP, assuming `PLAINTEXT_PASSWORDS=false` is set.
+VATSIM uses this standard; clients first obtain a login token by POSTing to `/api/fsd-jwt` with:
+
+```json
+{
+   "cid": "9999999",
+   "password": "supersecretpassword"
+}
+```
+
+A token is returned. That token is placed in the 
+token/password field of the `#AP` FSD login packet.
+To use a vanilla VATSIM client with openfsd,
+(except Swift, see below) it will need to be modified to point to openfsd's "fsd-jwt" endpoint:
+```
+/api/v1/fsd-jwt
+```
+
+### Credentials
+
+A default administrator user will be printed to stdout on first startup:
+```
+    DEFAULT ADMINISTRATOR USER:
+    CID:              100000
+    PRIMARY PASSWORD: <primary password>
+    FSD PASSWORD:     <FSD password>
+```
+Two unique passwords are stored for each user since FSD runs over an insecure channel.
+Use the primary password over a secure channel if possible (web interface over HTTPS) to perform sensitive account-related management. 
+Use the FSD password in your pilot client to connect to FSD.
+
+### Web Interface
+
+One can access their account via the web interface served by the HTTP endpoint.
+Administrators and supervisors can create/mutate user records via the administrator dashboard.
+
+### Available HTTP calls
+
+- `/api/v1/users` (See [documentation](https://github.com/renorris/openfsd/tree/main/web))
+- `/api/v1/data/openfsd-data.json` VATSIM-esque [data feed](https://github.com/renorris/openfsd/blob/main/web/DATAFEED.md)
+- `/login ... etc` front-end interface
+
+## Connecting
 
 Various clients such as [vPilot](https://vpilot.rosscarlson.dev/), [xPilot](https://docs.xpilot-project.org/) and [swift](https://swift-project.org/) are used to connect to VATSIM FSD servers.
 
-This project does not currently support air traffic control clients.
+Although it is possible to use vPilot with openfsd, the binary would need to be modified directly.
+To use xPilot, one would need to manually recompile with the correct JWT token endpoint and FSD server addresses.
 
-At its core, FSD is a message forwarder. Other than a few direct client/server transactions, the main purpose of the FSD server is to facilitate the passing of messages between flight simulator clients. Albeit, none of this is P2P—all messages are forwarded via a centralized server.
+The Swift pilot client works out of the box if openfsd is configured with the `PLAINTEXT_PASSWORDS=true` environment variable option.
 
-### Protocol
+**Swift Instructions:**
 
-The protocol is entirely plaintext, and can be easily sniffed using packet capture tools such as Wireshark. FSD conventionally listens on TCP port 6809. You can use telnet to interact with an FSD server, try it out:
+1. In the Settings > Servers menu: Make a new server entry for openfsd with the correct address and port.
+2. Select **FSD (Private)** for the "Eco." field
+3. Select **FSD [VATSIM]** for the "Type" field.
+4. In the FSD tab, enable the following flags (send and receive to TRUE):
+   - "Parts"
+   - "Gnd. flag"
+   - "Fast pos"
+   - "Send visual pos."
+
+## Protocol Details
+
+At its core, FSD is a message forwarder.
+Other than a few direct client/server transactions, the main purpose of the FSD server is to facilitate the passing of messages between flight simulator clients.
+Albeit, none of this is P2P—all messages are forwarded via a centralized server.
+The protocol is entirely plaintext, and can be easily sniffed using packet capture tools such as Wireshark.
+It conventionally listens on TCP port 6809.
+One can use telnet to interact with an FSD server, try it out:
 
 ```
-telnet fsd.connect.vatsim.net 6809
+telnet <FSD server address> 6809
 ```
 
 The few mainstream implementations of FSD have their own nuances within their respective protocols. This project attempts to replicate VATSIM-specific behavior (which differs from other implementations such as [IVAO](https://www.ivao.aero/)).
 
-Throughout this project, I often refer to FSD messages as "packets" or "lines." The term "packet" is referring to the application-layer implementation of FSD, and has nothing to do with any transport or IP layers.
+Throughout this project, FSD messages are referred to as "packets" or "lines." The term "packet" is referring to the application-layer implementation of FSD and has nothing to do with any transport or IP layers.
 
 FSD packets are plaintext MS-DOS-style lines that end with (CR/LF) characters.
-Each line starts with a packet identifier, which is either 1 or 3 characters in length. Each field within the packet is delimited by a colon `:` character. All numerical values are represented as base-10 (or rarely base-16) encoded ASCII strings. There are no "binary" encodings in the protocol.
+Each line starts with a packet identifier, which is either 1 or 3 characters in length.
+Each field within the packet is delimited by a colon `:` character.
+All numerical values are represented as base-10 (or rarely base-16) encoded ASCII strings.
+Nothing is encoded as raw binary.
 
 Clients are addressed by their plaintext aviation callsigns, e.g. N7938C. FSD packets generally have "From" and "To" fields, where the "From" field can be thought of as a source address (or source callsign, in this case) and the "To" field being a recipient address/callsign. Depending on the packet type, the "To" field can be either a single client address (representing a "Direct Message" of sorts), or another special identifier representing several clients.
 
-For example, the following is a verbatim "Server Identification" message represented as a go string:
+For example, the following is a "Server Identification" FSD packet represented as a string:
 
 ```go
 "$DISERVER:CLIENT:VATSIM FSD V3.43:d95f57db664f\r\n"
@@ -97,10 +191,8 @@ This includes the source callsign again, the cert ID again, the login token prev
 
 
 ```go
-"#TMserver:N12345:Welcome to VATSIM! Need help getting started? Visit https://vats.im/plc for excellent resources.\r\n"
+"#TMSERVER:N12345:openfsd\r\n"
 ```
-
-VATSIM's FSD implementation sends a lowercase '`server`' identifier for this specific message. I have no idea why this is the case. Inconsistencies like this are common across FSD.
 
 ### Post-Login
 

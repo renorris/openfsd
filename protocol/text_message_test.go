@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/go-playground/validator/v10"
 	"github.com/stretchr/testify/assert"
+	"strings"
 	"testing"
 )
 
@@ -28,44 +29,49 @@ func TestParseTextMessagePDU(t *testing.T) {
 		},
 		{
 			name:    "Invalid from field",
-			packet:  "#TMJOHN99999:DOE:Hello, world!\r\n",
-			want:    nil,
-			wantErr: NewGenericFSDError(SyntaxError),
+			packet:  "#TMJOHN99999JOHN99999JOHN99999JOHN99999:DOE:Hello, world!\r\n",
+			want:    &TextMessagePDU{},
+			wantErr: NewGenericFSDError(SyntaxError, "", "validation error"),
 		},
 		{
 			name:    "Invalid to field",
-			packet:  "#TMJOHN:DOE1234567:Hello, world!\r\n",
-			want:    nil,
-			wantErr: NewGenericFSDError(SyntaxError),
+			packet:  "#TMJOHN:DOE1234567DOE1234567DOE1234567DOE1234567:Hello, world!\r\n",
+			want:    &TextMessagePDU{},
+			wantErr: NewGenericFSDError(SyntaxError, "", "validation error"),
 		},
 		{
 			name:    "Missing to field",
 			packet:  "#TMJOHN::Hello, world!\r\n",
-			want:    nil,
-			wantErr: NewGenericFSDError(SyntaxError),
+			want:    &TextMessagePDU{},
+			wantErr: NewGenericFSDError(SyntaxError, "", "validation error"),
 		},
 		{
 			name:    "Missing message",
 			packet:  "#TMJOHN:DOE:\r\n",
-			want:    nil,
-			wantErr: NewGenericFSDError(SyntaxError),
+			want:    &TextMessagePDU{},
+			wantErr: NewGenericFSDError(SyntaxError, "", "validation error"),
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			// Perform the parsing
-			result, err := ParseTextMessagePDU(tc.packet)
+			pdu := TextMessagePDU{}
+			err := pdu.Parse(tc.packet)
 
 			// Check the error
 			if tc.wantErr != nil {
-				assert.EqualError(t, err, tc.wantErr.Error())
+				if strings.Contains(tc.wantErr.Error(), "validation error") {
+					assert.Contains(t, err.Error(), "validation error")
+				} else {
+					assert.EqualError(t, err, tc.wantErr.Error())
+				}
 			} else {
 				assert.NoError(t, err)
 			}
 
 			// Verify the result
-			assert.Equal(t, tc.want, result)
+			assert.Equal(t, tc.want, &pdu)
 		})
 	}
 }

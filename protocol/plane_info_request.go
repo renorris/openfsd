@@ -6,35 +6,41 @@ import (
 )
 
 type PlaneInfoRequestPDU struct {
-	From string `validate:"required,alphanum,max=7"`
-	To   string `validate:"required,alphanum,max=7"`
+	From string `validate:"required,alphanum,max=16"`
+	To   string `validate:"required,alphanum,max=16"`
 }
 
 func (p *PlaneInfoRequestPDU) Serialize() string {
-	return fmt.Sprintf("#SB%s:%s:PIR%s", p.From, p.To, PacketDelimeter)
+	return fmt.Sprintf("#SB%s:%s:PIR%s", p.From, p.To, PacketDelimiter)
 }
 
-func ParsePlaneInfoRequestPDU(rawPacket string) (*PlaneInfoRequestPDU, error) {
-	rawPacket = strings.TrimSuffix(rawPacket, PacketDelimeter)
-	rawPacket = strings.TrimPrefix(rawPacket, "#SB")
-	fields := strings.Split(rawPacket, Delimeter)
-	if len(fields) != 3 {
-		return nil, NewGenericFSDError(SyntaxError)
+func (p *PlaneInfoRequestPDU) Parse(packet string) error {
+	packet = strings.TrimSuffix(packet, PacketDelimiter)
+	packet = strings.TrimPrefix(packet, "#SB")
+
+	var fields []string
+	if fields = strings.Split(packet, Delimiter); len(fields) != 3 {
+		return NewGenericFSDError(SyntaxError, "", "invalid parameter count")
 	}
 
 	if fields[2] != "PIR" {
-		return nil, NewGenericFSDError(SyntaxError)
+		return NewGenericFSDError(SyntaxError, fields[2], "third parameter must be 'PIR'")
 	}
 
-	pdu := &PlaneInfoRequestPDU{
+	pdu := PlaneInfoRequestPDU{
 		From: fields[0],
 		To:   fields[1],
 	}
 
-	err := V.Struct(pdu)
-	if err != nil {
-		return nil, NewGenericFSDError(SyntaxError)
+	if err := V.Struct(&pdu); err != nil {
+		if validatorErr := getFSDErrorFromValidatorErrors(err); err != nil {
+			return validatorErr
+		}
+		return err
 	}
 
-	return pdu, nil
+	// Copy new pdu into receiver
+	*p = pdu
+
+	return nil
 }

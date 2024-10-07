@@ -1,0 +1,231 @@
+{{ template "layout.html" . }}
+
+{{ define "title" }} Admin Dashboard {{ end }}
+
+{{ define "content" }}
+<!-- User fetch modal -->
+<div class="modal" id="user-fetch-modal" tabindex="-1" data-bs-target="user-fetch-modal">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-body">
+                <div class="row">
+                    <div class="col-auto d-flex align-items-center text-center">
+                        <label for="user-fetch-cid">CID</label>
+                    </div>
+                    <div class="col-auto">
+                        <input class="form-control" id="user-fetch-cid" type="number" placeholder="Enter CID">
+                    </div>
+                    <div class="col-auto d-flex align-items-center">
+                        <button type="submit" id="user-fetch-initiate" class="btn btn-primary">Fetch</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- User view/edit modal -->
+<div class="modal" id="user-edit-modal" tabindex="-1" data-bs-target="user-edit-modal">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-body">
+                <div class="row">
+                    <div class="col-12 mb-2">
+                        <h3>
+                            <span class="fw-normal">Editing CID </span><span id="user-edit-cid-header" class="fw-normal"></span>
+                        </h3>
+                    </div>
+                </div>
+                <div class="row">
+                    <div class="col-12 mb-2">
+                        <label for="user-edit-email">Email</label>
+                        <input class="form-control" id="user-edit-email" type="text" placeholder="Not set">
+                    </div>
+                </div>
+                <div class="row">
+                    <div class="col-sm-6 mb-2">
+                        <label for="user-edit-firstname">First Name</label>
+                        <input class="form-control" id="user-edit-firstname" type="text" placeholder="Not set">
+                    </div>
+                    <div class="col-sm-6 mb-2">
+                        <label for="user-edit-lastname">Last Name</label>
+                        <input class="form-control" id="user-edit-lastname" type="text" placeholder="Not set">
+                    </div>
+                </div>
+                <div class="row">
+                    <div class="col-sm-6 mb-2">
+                        <label for="user-edit-networkrating">Network Rating</label>
+                        <select class="form-control" id="user-edit-networkrating">
+                            <option value=-1>Inactive</option>
+                            <option value=0>Suspended</option>
+                            <option value=1>OBS</option>
+                            <option value=2>S1</option>
+                            <option value=3>S2</option>
+                            <option value=4>S3</option>
+                            <option value=5>C1</option>
+                            <option value=6>C2</option>
+                            <option value=7>C3</option>
+                            <option value=8>I1</option>
+                            <option value=9>I2</option>
+                            <option value=10>I3</option>
+                            <option value=11>Supervisor</option>
+                            <option value=12>Administrator</option>
+                        </select>
+                    </div>
+                    <div class="col-sm-6 mb-2">
+                        <label for="user-edit-pilotrating">Pilot Rating</label>
+                        <select class="form-control" id="user-edit-pilotrating">
+                            <option value=0>Basic Member</option>
+                            <option value=1>Private Pilot License</option>
+                            <option value=3>Instrument Rating</option>
+                            <option value=7>Commercial Multi-Engine License</option>
+                            <option value=15>Airline Transport Pilot License</option>
+                            <option value=31>Flight Instructor</option>
+                            <option value=63>Flight Examiner</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="row">
+                    <div class="col-sm-6 mb-2">
+                        <label for="user-edit-firstname">Password</label>
+                        <input class="form-control" id="user-edit-password" type="password" placeholder="Edit to change">
+                    </div>
+                    <div class="col-sm-6 mb-2">
+                        <label for="user-edit-lastname">FSD Password</label>
+                        <input class="form-control" id="user-edit-fsdpassword" type="password" placeholder="Edit to change">
+                    </div>
+                </div>
+                <div class="row mt-1 mb-3">
+                    <div class="col-auto m-0">
+                        <pre class="mb-0">Last updated at <span id="user-edit-lastupdated"></span></pre>
+                        <pre class="mb-0">Created at <span id="user-edit-createdat"></span></pre>
+                    </div>
+                </div>
+                <div class="row mt-1">
+                    <div class="col-auto mb-2">
+                        <button class="btn btn-success" id="user-edit-updatebutton">Update</button>
+                        <button class="ms-1 btn btn-danger" id="user-edit-deletebutton">Delete</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- User create modal -->
+<div class="modal" id="user-create-modal" tabindex="-1" data-bs-target="user-create-modal">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-body">
+                <div class="row">
+                    <div class="col-12 mb-2">
+                        <h3>
+                            <span class="fw-normal">Creating New User</span>
+                        </h3>
+                    </div>
+                </div>
+                <div class="row">
+                    <div class="col-12 mb-2">
+                        <label for="user-create-email">Email</label>
+                        <input class="form-control" id="user-create-email" type="text" placeholder="Not set">
+                    </div>
+                </div>
+                <div class="row">
+                    <div class="col-sm-6 mb-2">
+                        <label for="user-create-firstname">First Name</label>
+                        <input class="form-control" id="user-create-firstname" type="text" placeholder="Not set">
+                    </div>
+                    <div class="col-sm-6 mb-2">
+                        <label for="user-create-lastname">Last Name</label>
+                        <input class="form-control" id="user-create-lastname" type="text" placeholder="Not set">
+                    </div>
+                </div>
+                <div class="row">
+                    <div class="col-sm-6 mb-2">
+                        <label for="user-create-networkrating">Network Rating</label>
+                        <select class="form-control" id="user-create-networkrating">
+                            <option value=-1>Inactive</option>
+                            <option value=0>Suspended</option>
+                            <option value=1 selected="selected">OBS</option>
+                            <option value=2>S1</option>
+                            <option value=3>S2</option>
+                            <option value=4>S3</option>
+                            <option value=5>C1</option>
+                            <option value=6>C2</option>
+                            <option value=7>C3</option>
+                            <option value=8>I1</option>
+                            <option value=9>I2</option>
+                            <option value=10>I3</option>
+                            <option value=11>Supervisor</option>
+                            <option value=12>Administrator</option>
+                        </select>
+                    </div>
+                    <div class="col-sm-6 mb-2">
+                        <label for="user-create-pilotrating">Pilot Rating</label>
+                        <select class="form-control" id="user-create-pilotrating">
+                            <option value=0>Basic Member</option>
+                            <option value=1>Private Pilot License</option>
+                            <option value=3>Instrument Rating</option>
+                            <option value=7>Commercial Multi-Engine License</option>
+                            <option value=15>Airline Transport Pilot License</option>
+                            <option value=31>Flight Instructor</option>
+                            <option value=63>Flight Examiner</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="row">
+                    <div class="col-sm-6 mb-2">
+                        <label for="user-create-firstname">Password</label>
+                        <input class="form-control" id="user-create-password" type="password" placeholder="Auto-generate">
+                    </div>
+                    <div class="col-sm-6 mb-2">
+                        <label for="user-edit-lastname">FSD Password</label>
+                        <input class="form-control" id="user-create-fsdpassword" type="password" placeholder="Auto-generate">
+                    </div>
+                </div>
+                <div class="row mt-1">
+                    <div class="col-auto mb-2">
+                        <button class="btn btn-primary" id="user-create-submitbutton">Create</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="container-fluid mt-2">
+    <div class="row ms-0">
+        <div class="col-sm-6">
+            <div class="row">
+                <div class="col-auto d-flex align-items-center justify-content-center g-2">
+                    <span class="fw-medium">User</span>
+                </div>
+                <div class="col-auto g-2">
+                    <div class="btn-group" role="group">
+                        <button type="button" id="user-fetch-button" class="btn btn-outline-dark">Fetch</button>
+                        <button type="button" id="user-create-button" class="btn btn-outline-dark">Create New</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="responseToast" class="toast" role="alert" data-bs-autohide="false" aria-live="assertive" aria-atomic="true" style="position: absolute; top: 1rem; right: 1rem; z-index: 7000;">
+    <div class="toast-header">
+        <strong class="me-auto">Response</strong>
+        <span class="fw-light" id="toast-copy-banner"></span>
+        <button class="btn btn-sm d-flex align-items-center" id="toast-clipboard-button" title="Copy to clipboard">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-clipboard" viewBox="0 0 16 16">
+                <path d="M4 1.5H3a2 2 0 0 0-2 2V14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V3.5a2 2 0 0 0-2-2h-1v1h1a1 1 0 0 1 1 1V14a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V3.5a1 1 0 0 1 1-1h1z"/>
+                <path d="M9.5 1a.5.5 0 0 1 .5.5v1a.5.5 0 0 1-.5.5h-3a.5.5 0 0 1-.5-.5v-1a.5.5 0 0 1 .5-.5zm-3-1A1.5 1.5 0 0 0 5 1.5v1A1.5 1.5 0 0 0 6.5 4h3A1.5 1.5 0 0 0 11 2.5v-1A1.5 1.5 0 0 0 9.5 0z"/>
+            </svg>
+        </button>
+        <button type="button" class="btn-close" data-bs-dismiss="toast" aria-label="Close"></button>
+    </div>
+    <div class="toast-body">
+        <pre id="responseBody" style="white-space: pre-wrap"></pre>
+    </div>
+</div>
+<script src="/static/js/admin_dashboard.js"></script>
+{{ end }}

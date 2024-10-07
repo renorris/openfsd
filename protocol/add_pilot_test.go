@@ -3,6 +3,7 @@ package protocol
 import (
 	"github.com/go-playground/validator/v10"
 	"github.com/stretchr/testify/assert"
+	"strings"
 	"testing"
 )
 
@@ -67,55 +68,60 @@ func TestParseAddPilotPDU(t *testing.T) {
 		{
 			"Invalid CID length",
 			"#APCLIENT:SERVER:12345:eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2F1dGgudmF0c2ltLm5ldC9hcGkvZnNkLWp3dCIsInN1YiI6IjEwMDAwMDAiLCJhdWQiOlsiZnNkLWxpdmUiXSwiZXhwIjoxNzExOTA4OTM4LCJuYmYiOjE3MTE5MDgzOTgsImlhdCI6MTcxMTkwODUxOCwianRpIjoiRDFCS1BPdUdKelAzZE5NdnV6d1JNZz09IiwiY29udHJvbGxlcl9yYXRpbmciOjAsInBpbG90X3JhdGluZyI6MH0.kg23HhANM6aUI9mRUUGX-Vx8HKjTpzkDxOXlvWkjnC8:5:2:3:John Smith\r\n",
-			nil,
-			NewGenericFSDError(SyntaxError),
+			&AddPilotPDU{},
+			NewGenericFSDError(SyntaxError, "", "validation error"),
 		},
 		{
 			"Invalid CID format",
 			"#APCLIENT:SERVER:ABCDE12:eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2F1dGgudmF0c2ltLm5ldC9hcGkvZnNkLWp3dCIsInN1YiI6IjEwMDAwMDAiLCJhdWQiOlsiZnNkLWxpdmUiXSwiZXhwIjoxNzExOTA4OTM4LCJuYmYiOjE3MTE5MDgzOTgsImlhdCI6MTcxMTkwODUxOCwianRpIjoiRDFCS1BPdUdKelAzZE5NdnV6d1JNZz09IiwiY29udHJvbGxlcl9yYXRpbmciOjAsInBpbG90X3JhdGluZyI6MH0.kg23HhANM6aUI9mRUUGX-Vx8HKjTpzkDxOXlvWkjnC8:5:2:3:John Smith\r\n",
-			nil,
-			NewGenericFSDError(SyntaxError),
+			&AddPilotPDU{},
+			NewGenericFSDError(SyntaxError, "ABCDE12", "invalid CID"),
 		},
 		{
-			"Invalid Network Rating",
+			"Invalid Network NetworkRating",
 			"#APCLIENT:SERVER:1234567:eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2F1dGgudmF0c2ltLm5ldC9hcGkvZnNkLWp3dCIsInN1YiI6IjEwMDAwMDAiLCJhdWQiOlsiZnNkLWxpdmUiXSwiZXhwIjoxNzExOTA4OTM4LCJuYmYiOjE3MTE5MDgzOTgsImlhdCI6MTcxMTkwODUxOCwianRpIjoiRDFCS1BPdUdKelAzZE5NdnV6d1JNZz09IiwiY29udHJvbGxlcl9yYXRpbmciOjAsInBpbG90X3JhdGluZyI6MH0.kg23HhANM6aUI9mRUUGX-Vx8HKjTpzkDxOXlvWkjnC8:13:2:3:John Smith\r\n",
-			nil,
-			NewGenericFSDError(SyntaxError),
+			&AddPilotPDU{},
+			NewGenericFSDError(SyntaxError, "", "validation error"),
 		},
 		{
 			"Invalid Simulator Type",
-			"#APCLIENT:SERVER:1234567:eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2F1dGgudmF0c2ltLm5ldC9hcGkvZnNkLWp3dCIsInN1YiI6IjEwMDAwMDAiLCJhdWQiOlsiZnNkLWxpdmUiXSwiZXhwIjoxNzExOTA4OTM4LCJuYmYiOjE3MTE5MDgzOTgsImlhdCI6MTcxMTkwODUxOCwianRpIjoiRDFCS1BPdUdKelAzZE5NdnV6d1JNZz09IiwiY29udHJvbGxlcl9yYXRpbmciOjAsInBpbG90X3JhdGluZyI6MH0.kg23HhANM6aUI9mRUUGX-Vx8HKjTpzkDxOXlvWkjnC8:5:2:7:John Smith\r\n",
-			nil,
-			NewGenericFSDError(SyntaxError),
+			"#APCLIENT:SERVER:1234567:eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2F1dGgudmF0c2ltLm5ldC9hcGkvZnNkLWp3dCIsInN1YiI6IjEwMDAwMDAiLCJhdWQiOlsiZnNkLWxpdmUiXSwiZXhwIjoxNzExOTA4OTM4LCJuYmYiOjE3MTE5MDgzOTgsImlhdCI6MTcxMTkwODUxOCwianRpIjoiRDFCS1BPdUdKelAzZE5NdnV6d1JNZz09IiwiY29udHJvbGxlcl9yYXRpbmciOjAsInBpbG90X3JhdGluZyI6MH0.kg23HhANM6aUI9mRUUGX-Vx8HKjTpzkDxOXlvWkjnC8:5:2:999:John Smith\r\n",
+			&AddPilotPDU{},
+			NewGenericFSDError(SyntaxError, "", "validation error"),
 		},
 		{
 			"Real name too long",
-			"#APCLIENT:SERVER:1234567:eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2F1dGgudmF0c2ltLm5ldC9hcGkvZnNkLWp3dCIsInN1YiI6IjEwMDAwMDAiLCJhdWQiOlsiZnNkLWxpdmUiXSwiZXhwIjoxNzExOTA4OTM4LCJuYmYiOjE3MTE5MDgzOTgsImlhdCI6MTcxMTkwODUxOCwianRpIjoiRDFCS1BPdUdKelAzZE5NdnV6d1JNZz09IiwiY29udHJvbGxlcl9yYXRpbmciOjAsInBpbG90X3JhdGluZyI6MH0.kg23HhANM6aUI9mRUUGX-Vx8HKjTpzkDxOXlvWkjnC8:5:2:3:This Is Way Too Long For A Full Real Name\r\n",
-			nil,
-			NewGenericFSDError(SyntaxError),
+			"#APCLIENT:SERVER:1234567:eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2F1dGgudmF0c2ltLm5ldC9hcGkvZnNkLWp3dCIsInN1YiI6IjEwMDAwMDAiLCJhdWQiOlsiZnNkLWxpdmUiXSwiZXhwIjoxNzExOTA4OTM4LCJuYmYiOjE3MTE5MDgzOTgsImlhdCI6MTcxMTkwODUxOCwianRpIjoiRDFCS1BPdUdKelAzZE5NdnV6d1JNZz09IiwiY29udHJvbGxlcl9yYXRpbmciOjAsInBpbG90X3JhdGluZyI6MH0.kg23HhANM6aUI9mRUUGX-Vx8HKjTpzkDxOXlvWkjnC8:5:2:3:" + strings.Repeat("John Appleseed ", 128) + "\r\n",
+			&AddPilotPDU{},
+			NewGenericFSDError(SyntaxError, "", "validation error"),
 		},
 		{
 			"Missing Delimeters",
 			"APCLIENTSERVER1234567eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2F1dGgudmF0c2ltLm5ldC9hcGkvZnNkLWp3dCIsInN1YiI6IjEwMDAwMDAiLCJhdWQiOlsiZnNkLWxpdmUiXSwiZXhwIjoxNzExOTA4OTM4LCJuYmYiOjE3MTE5MDgzOTgsImlhdCI6MTcxMTkwODUxOCwianRpIjoiRDFCS1BPdUdKelAzZE5NdnV6d1JNZz09IiwiY29udHJvbGxlcl9yYXRpbmciOjAsInBpbG90X3JhdGluZyI6MH0.kg23HhANM6aUI9mRUUGX-Vx8HKjTpzkDxOXlvWkjnC8523John Smith",
-			nil,
-			NewGenericFSDError(SyntaxError),
+			&AddPilotPDU{},
+			NewGenericFSDError(SyntaxError, "", "invalid parameter count"),
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			// Perform the parsing
-			result, err := ParseAddPilotPDU(tc.packet)
+			p := AddPilotPDU{}
+			err := p.Parse(tc.packet)
 
 			// Check the error
 			if tc.wantErr != nil {
-				assert.EqualError(t, err, tc.wantErr.Error())
+				if strings.Contains(tc.wantErr.Error(), "validation error") {
+					assert.Contains(t, err.Error(), "validation error")
+				} else {
+					assert.EqualError(t, err, tc.wantErr.Error())
+				}
 			} else {
 				assert.NoError(t, err)
 			}
 
 			// Verify the result
-			assert.Equal(t, tc.want, result)
+			assert.Equal(t, tc.want, &p)
 		})
 	}
 }

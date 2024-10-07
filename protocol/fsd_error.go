@@ -1,7 +1,9 @@
 package protocol
 
 import (
+	"errors"
 	"fmt"
+	"github.com/go-playground/validator/v10"
 	"strconv"
 	"strings"
 )
@@ -33,7 +35,7 @@ const (
 
 var genericErrorMessage = map[ErrorCode]string{
 	OkError:                                  "OK",
-	CallsignInUseError:                       "Callsign already in use",
+	CallsignInUseError:                       "callsign already in use",
 	CallsignInvalidError:                     "Invalid callsign",
 	AlreadyRegisteredError:                   "Already registered",
 	SyntaxError:                              "Syntax error",
@@ -61,24 +63,24 @@ type FSDError struct {
 }
 
 func (e *FSDError) Error() string {
-	return genericErrorMessage[e.Code]
+	return e.Serialize()
 }
 
 func (e *FSDError) Serialize() string {
-	return fmt.Sprintf("$ER%s:%s:%03d:%s:%s%s", e.From, e.To, e.Code, e.Param, e.Message, PacketDelimeter)
+	return fmt.Sprintf("$ER%s:%s:%03d:%s:%s%s", e.From, e.To, e.Code, e.Param, e.Message, PacketDelimiter)
 }
 
 func ParseNetworkErrorPDU(rawPacket string) (*FSDError, error) {
-	rawPacket = strings.TrimSuffix(rawPacket, PacketDelimeter)
+	rawPacket = strings.TrimSuffix(rawPacket, PacketDelimiter)
 	rawPacket = strings.TrimPrefix(rawPacket, "$ER")
-	fields := strings.SplitN(rawPacket, Delimeter, 5)
+	fields := strings.SplitN(rawPacket, Delimiter, 5)
 	if len(fields) < 5 {
-		return nil, NewGenericFSDError(SyntaxError)
+		return nil, NewGenericFSDError(SyntaxError, "", "invalid field count")
 	}
 
 	errCode, err := strconv.Atoi(fields[2])
 	if err != nil {
-		return nil, NewGenericFSDError(SyntaxError)
+		return nil, NewGenericFSDError(SyntaxError, fields[2], "invalid error code")
 	}
 
 	return &FSDError{
@@ -90,12 +92,29 @@ func ParseNetworkErrorPDU(rawPacket string) (*FSDError, error) {
 	}, nil
 }
 
-func NewGenericFSDError(code ErrorCode) *FSDError {
+func NewGenericFSDError(code ErrorCode, param string, messageContext string) *FSDError {
+	msg := genericErrorMessage[code]
+	if messageContext != "" {
+		msg += fmt.Sprintf(": %s", messageContext)
+	}
+
 	return &FSDError{
 		From:    "server",
 		To:      "unknown",
 		Code:    code,
-		Param:   "",
-		Message: genericErrorMessage[code],
+		Param:   param,
+		Message: msg,
 	}
+}
+
+func getFSDErrorFromValidatorErrors(err error) *FSDError {
+	var validationErrors validator.ValidationErrors
+	if errors.As(err, &validationErrors) {
+		if len(validationErrors) < 1 {
+			return nil
+		}
+		return NewGenericFSDError(SyntaxError, "", "validation error: "+validationErrors[0].Error())
+	}
+
+	return nil
 }

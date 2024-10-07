@@ -1,0 +1,166 @@
+{{ template "layout.html" . }}
+
+{{ define "title" }} Dashboard {{ end }}
+
+{{ define "content" }}
+<div id="change-primary-password-modal" class="modal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Change Primary Password</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form id="change-primary-password-form" action="/changepassword" method="POST">
+                <div class="modal-body">
+                    <div class="mb-3">
+                    <span class="fw-light">
+                        To change the password used for connecting to FSD, navigate back
+                        and choose "Change" for <span class="fw-medium">Password (FSD)</span>.
+                    </span>
+                    </div>
+                    <div class="mb-3">
+                        <label for="old-password-primary" class="form-label">Old Password</label>
+                        <div class="input-group">
+                            <input type="password" class="form-control" id="old-password-primary" name="old-password-primary" placeholder="Old Password">
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="new-password-primary" class="form-label">New Password</label>
+                        <div class="input-group">
+                            <input type="password" class="form-control" id="new-password-primary" name="new-password-primary" placeholder="New Password">
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="new-password-confirm-primary" class="form-label">Confirm</label>
+                        <div class="input-group">
+                            <input type="password" class="form-control" id="new-password-confirm-primary" name="new-password-confirm-primary" placeholder="Confirm">
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="submit" class="btn btn-primary">Submit</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<div id="change-fsd-password-modal" class="modal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Change FSD Password</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form id="change-fsd-password-form" action="/changepassword" method="POST">
+                <div class="modal-body">
+                    <div class="mb-3">
+                    <span class="fw-light">
+                        Your FSD password is used exclusively for connecting your simulator to the FSD server.
+                        To change your primary password, navigate back
+                        and choose "Change" for <span class="fw-medium">Password (primary)</span>.
+                    </span>
+                    </div>
+                    <div class="mb-3">
+                        <label for="new-password-fsd" class="form-label">New FSD Password</label>
+                        <div class="input-group">
+                            <input type="password" class="form-control" id="new-password-fsd" name="new-password-fsd" placeholder="New Password">
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="new-password-confirm-fsd" class="form-label">Confirm</label>
+                        <div class="input-group">
+                            <input type="password" class="form-control" id="new-password-confirm-fsd" name="new-password-confirm-fsd" placeholder="Confirm">
+                        </div>
+                    </div>
+
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="submit" class="btn btn-primary">Submit</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<div class="container-fluid mt-2">
+    <div class="row g-2 align-items-center">
+        <div class="col-8">
+            Your Account:
+        </div>
+        <div class="col-4 text-end">
+            <button class="btn btn-sm btn-outline-dark" onclick="logout()">Logout</button>
+        </div>
+    </div>
+
+    <div class="row g-2 align-items-center mt-1">
+        <div class="col-md-6">
+            <table class="table table-striped">
+                <tbody>
+                <tr>
+                    <th scope="row">CID</th>
+                    <td><pre class="mb-0">{{ .UserRecord.CID }}</pre></td>
+                </tr>
+                <tr>
+                    <th scope="row">Email</th>
+                    <td><pre class="mb-0">{{ .UserRecord.Email }}</pre></td>
+                </tr>
+                <tr>
+                    <th scope="row">First Name</th>
+                    <td><pre class="mb-0">{{ .UserRecord.FirstName }}</pre></td>
+                </tr>
+                <tr>
+                    <th scope="row">Last Name</th>
+                    <td><pre class="mb-0">{{ .UserRecord.LastName }}</pre></td>
+                </tr>
+                <tr>
+                    <th scope="row">Rating</th>
+                    <td><pre class="mb-0">{{ .UserRecord.NetworkRating.String }}</pre></td>
+                </tr>
+                <tr>
+                    <th scope="row">Password (primary) <a href="#" style="text-decoration:none" data-bs-toggle="tooltip" data-bs-placement="top" data-bs-title="Used exclusively for logging into this web portal">?</a></th>
+                    <td><button class="btn btn-sm btn-primary" onclick="showModal('change-primary-password-modal')">Change</button></td>
+                </tr>
+                <tr>
+                    <th scope="row">Password (FSD) <a href="#" style="text-decoration:none" data-bs-toggle="tooltip" data-bs-placement="top" data-bs-title="Used exclusively for connecting your simulator to FSD">?</a></th>
+                    <td>
+                        <button class="btn btn-sm btn-primary" onclick="showModal('change-fsd-password-modal')">Change</button>
+                    </td>
+                </tr>
+                </tbody>
+            </table>
+        </div>
+
+        {{ if .UserRecord.NetworkRating.IsSupervisorOrAbove }}
+        <div class="col-md-6 d-flex justify-content-center align-items-center">
+            <button type="button" class="btn btn-outline-primary" onclick="window.location.assign('/admin_dashboard')">Admin Dashboard</button>
+        </div>
+        {{ end }}
+    </div>
+</div>
+
+<div id="responseToast" class="toast" role="alert" data-bs-autohide="false" aria-live="assertive" aria-atomic="true" style="position: absolute; top: 1rem; right: 1rem; z-index: 7000;">
+    <div class="toast-header">
+        <strong class="me-auto">Response</strong>
+        <button type="button" class="btn-close" data-bs-dismiss="toast" aria-label="Close"></button>
+    </div>
+    <div class="toast-body">
+        <pre id="responseBody" style="white-space: pre-wrap"></pre>
+    </div>
+</div>
+
+<script src="/static/js/logout.js"></script>
+<script src="/static/js/modal.js"></script>
+<script src="/static/js/dashboard.js"></script>
+<script>
+    // enable tooltips
+    const tooltipTriggerList = document.querySelectorAll('[data-bs-toggle="tooltip"]')
+    const tooltipList = [...tooltipTriggerList].map(tooltipTriggerEl => new bootstrap.Tooltip(tooltipTriggerEl))
+
+    // enable popovers
+    const popoverTriggerList = document.querySelectorAll('[data-bs-toggle="popover"]')
+    const popoverList = [...popoverTriggerList].map(popoverTriggerEl => new bootstrap.Popover(popoverTriggerEl))
+</script>
+{{ end }}

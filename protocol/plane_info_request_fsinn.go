@@ -6,31 +6,32 @@ import (
 )
 
 type PlaneInfoRequestFsinnPDU struct {
-	From                     string `validate:"required,alphanum,max=7"`
-	To                       string `validate:"required,alphanum,max=7"`
-	AirlineICAO              string `validate:"alphanum,max=4"`
-	AircraftICAO             string `validate:"alphanum,max=4"`
-	AircraftICAOCombinedType string `validate:"alphanum,max=4"`
-	SendMModel               string `validate:"max=128"`
+	From                     string `validate:"required,alphanum,max=16"`
+	To                       string `validate:"required,alphanum,max=16"`
+	AirlineICAO              string `validate:"min=0,max=4"`
+	AircraftICAO             string `validate:"min=0,max=4"`
+	AircraftICAOCombinedType string `validate:"min=0,max=4"`
+	SendMModel               string `validate:"max=256"`
 }
 
 func (p *PlaneInfoRequestFsinnPDU) Serialize() string {
-	return fmt.Sprintf("#SB%s:%s:FSIPIR:0:%s:%s:::::%s:%s%s", p.From, p.To, p.AirlineICAO, p.AircraftICAO, p.AircraftICAOCombinedType, p.SendMModel, PacketDelimeter)
+	return fmt.Sprintf("#SB%s:%s:FSIPIR:0:%s:%s:::::%s:%s%s", p.From, p.To, p.AirlineICAO, p.AircraftICAO, p.AircraftICAOCombinedType, p.SendMModel, PacketDelimiter)
 }
 
-func ParsePlaneInfoRequestFsinnPDU(rawPacket string) (*PlaneInfoRequestFsinnPDU, error) {
-	rawPacket = strings.TrimSuffix(rawPacket, PacketDelimeter)
-	rawPacket = strings.TrimPrefix(rawPacket, "#SB")
-	fields := strings.Split(rawPacket, Delimeter)
-	if len(fields) != 12 {
-		return nil, NewGenericFSDError(SyntaxError)
+func (p *PlaneInfoRequestFsinnPDU) Parse(packet string) error {
+	packet = strings.TrimSuffix(packet, PacketDelimiter)
+	packet = strings.TrimPrefix(packet, "#SB")
+
+	var fields []string
+	if fields = strings.Split(packet, Delimiter); len(fields) != 12 {
+		return NewGenericFSDError(SyntaxError, "", "invalid parameter count")
 	}
 
 	if fields[2] != "FSIPIR" {
-		return nil, NewGenericFSDError(SyntaxError)
+		return NewGenericFSDError(SyntaxError, fields[2], "third parameter must be 'FSIPIR'")
 	}
 
-	pdu := &PlaneInfoRequestFsinnPDU{
+	pdu := PlaneInfoRequestFsinnPDU{
 		From:                     fields[0],
 		To:                       fields[1],
 		AirlineICAO:              fields[4],
@@ -39,10 +40,15 @@ func ParsePlaneInfoRequestFsinnPDU(rawPacket string) (*PlaneInfoRequestFsinnPDU,
 		SendMModel:               fields[11],
 	}
 
-	err := V.Struct(pdu)
-	if err != nil {
-		return nil, NewGenericFSDError(SyntaxError)
+	if err := V.Struct(&pdu); err != nil {
+		if validatorErr := getFSDErrorFromValidatorErrors(err); err != nil {
+			return validatorErr
+		}
+		return err
 	}
 
-	return pdu, nil
+	// Copy new pdu into receiever
+	*p = pdu
+
+	return nil
 }

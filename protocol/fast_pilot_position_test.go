@@ -3,6 +3,7 @@ package protocol
 import (
 	"github.com/go-playground/validator/v10"
 	"github.com/stretchr/testify/assert"
+	"strings"
 	"testing"
 )
 
@@ -72,26 +73,26 @@ func TestParseFastPilotPositionPDU(t *testing.T) {
 		{
 			"Invalid Type",
 			"?PILOT:12.345678:98.765432:300.00:50.00:4177408112:123.4567:345.6789:-234.5678:111.2222:-333.4444:555.6666:90.00\r\n",
-			nil,
-			NewGenericFSDError(SyntaxError),
+			&FastPilotPositionPDU{},
+			NewGenericFSDError(SyntaxError, "", "invalid packet prefix"),
 		},
 		{
 			"Out of range value",
 			"^PILOT:92.000000:678.765432:300.00:50.00:4177408112:123.4567:345.6789:-234.5678:111.2222:-333.4444:555.6666:90.00\r\n",
-			nil,
-			NewGenericFSDError(SyntaxError),
+			&FastPilotPositionPDU{},
+			NewGenericFSDError(SyntaxError, "", "validation error"),
 		},
 		{
 			"Missing field",
 			"^PILOT:12.345678:98.765432:300.00:50.00:4177408112:123.4567:345.6789:-234.5678:111.2222:-333.4444\r\n",
-			nil,
-			NewGenericFSDError(SyntaxError),
+			&FastPilotPositionPDU{},
+			NewGenericFSDError(SyntaxError, "", "invalid parameter count"),
 		},
 		{
 			"Mismatched type with fields",
 			"#STPILOT:12.345678:98.765432:300.00:50.00:4177408112:123.4567:345.6789:-234.5678:111.2222:-333.4444:555.6666:90.00\n\r\n",
-			nil,
-			NewGenericFSDError(SyntaxError),
+			&FastPilotPositionPDU{},
+			NewGenericFSDError(SyntaxError, "", "invalid parameter count"),
 		},
 		{
 			"Valid Stopped Type",
@@ -125,34 +126,39 @@ func TestParseFastPilotPositionPDU(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			// Perform the parsing
-			result, err := ParseFastPilotPositionPDU(tc.packet)
+			pdu := FastPilotPositionPDU{}
+			err := pdu.Parse(tc.packet)
 
 			// Check the error
 			if tc.wantErr != nil {
-				assert.EqualError(t, err, tc.wantErr.Error())
+				if strings.Contains(tc.wantErr.Error(), "validation error") {
+					assert.Contains(t, err.Error(), "validation error")
+				} else {
+					assert.EqualError(t, err, tc.wantErr.Error())
+				}
 			} else {
 				assert.NoError(t, err)
 			}
 
 			// Verify the result
 			if tc.want != nil {
-				assert.Equal(t, tc.want.From, result.From)
-				assert.InDelta(t, tc.want.Lat, result.Lat, 1e-6)
-				assert.InDelta(t, tc.want.Lng, result.Lng, 1e-6)
-				assert.InDelta(t, tc.want.AltitudeTrue, result.AltitudeTrue, 1e-2)
-				assert.InDelta(t, tc.want.AltitudeAgl, result.AltitudeAgl, 1e-2)
-				assert.InDelta(t, tc.want.Pitch, result.Pitch, 1)
-				assert.InDelta(t, tc.want.Bank, result.Bank, 1)
-				assert.InDelta(t, tc.want.Heading, result.Heading, 1)
-				assert.InDelta(t, tc.want.PositionalVelocityVector.X, result.PositionalVelocityVector.X, 1e-4)
-				assert.InDelta(t, tc.want.PositionalVelocityVector.Y, result.PositionalVelocityVector.Y, 1e-4)
-				assert.InDelta(t, tc.want.PositionalVelocityVector.Z, result.PositionalVelocityVector.Z, 1e-4)
-				assert.InDelta(t, tc.want.RotationalVelocityVector.X, result.RotationalVelocityVector.X, 1e-4)
-				assert.InDelta(t, tc.want.RotationalVelocityVector.Y, result.RotationalVelocityVector.Y, 1e-4)
-				assert.InDelta(t, tc.want.RotationalVelocityVector.Z, result.RotationalVelocityVector.Z, 1e-4)
-				assert.InDelta(t, tc.want.NoseGearAngle, result.NoseGearAngle, 1e-2)
+				assert.Equal(t, tc.want.From, pdu.From)
+				assert.InDelta(t, tc.want.Lat, pdu.Lat, 1e-6)
+				assert.InDelta(t, tc.want.Lng, pdu.Lng, 1e-6)
+				assert.InDelta(t, tc.want.AltitudeTrue, pdu.AltitudeTrue, 1e-2)
+				assert.InDelta(t, tc.want.AltitudeAgl, pdu.AltitudeAgl, 1e-2)
+				assert.InDelta(t, tc.want.Pitch, pdu.Pitch, 1)
+				assert.InDelta(t, tc.want.Bank, pdu.Bank, 1)
+				assert.InDelta(t, tc.want.Heading, pdu.Heading, 1)
+				assert.InDelta(t, tc.want.PositionalVelocityVector.X, pdu.PositionalVelocityVector.X, 1e-4)
+				assert.InDelta(t, tc.want.PositionalVelocityVector.Y, pdu.PositionalVelocityVector.Y, 1e-4)
+				assert.InDelta(t, tc.want.PositionalVelocityVector.Z, pdu.PositionalVelocityVector.Z, 1e-4)
+				assert.InDelta(t, tc.want.RotationalVelocityVector.X, pdu.RotationalVelocityVector.X, 1e-4)
+				assert.InDelta(t, tc.want.RotationalVelocityVector.Y, pdu.RotationalVelocityVector.Y, 1e-4)
+				assert.InDelta(t, tc.want.RotationalVelocityVector.Z, pdu.RotationalVelocityVector.Z, 1e-4)
+				assert.InDelta(t, tc.want.NoseGearAngle, pdu.NoseGearAngle, 1e-2)
 			} else {
-				assert.Nil(t, result)
+				assert.Nil(t, &pdu)
 			}
 		})
 	}

@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en" data-bs-theme="light">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>openfsd - {{block "title" .}}{{end}}</title>
+    <link href="/static/css/bootstrap.min.css" rel="stylesheet">
+    <script src="/static/js/jquery-3.7.1.min.js"></script>
+    <script src="/static/js/popper.min.js"></script>
+    <script src="/static/js/bootstrap.min.js"></script>
+</head>
+<body>
+    <div class="header">
+        <div class="container-fluid border-bottom">
+            <div class="row">
+                <div class="col-8 d-flex justify-content-start align-items-center">
+                    <span class="fs-2 fw-medium">{{block "title" .}}{{end}}</span>
+                </div>
+                <div class="col-4 d-flex justify-content-end align-items-center">
+                    <span class="me-2 fw-light">openfsd</span>
+                    <svg xmlns="http://www.w3.org/2000/svg" height="32" width="32" viewBox="0 0 500 500">
+                        <g transform="matrix(0 -1 1 0 .75 500.75)">
+                            <polygon points="200 225 80 225 30 150 10 150 30 240 30 260 10 350 30 350 80 275 200 275 140 490 170 490 320 275 450 275 490 250 450 225 320 225 170 10 140 10"/>
+                            <ellipse d="m 491,250 c 0,13.25483 -22.38576,24 -50,24 -27.61424,0 -50,-10.74517 -50,-24 0,-13.25483 22.38576,-24 50,-24 27.61424,0 50,10.74517 50,24 z" cx="441" rx="50" ry="24" stroke="#000" cy="250"/>
+                        </g>
+                    </svg>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="main">{{block "content" . }}{{end}}</div>
+</body>
+</html>

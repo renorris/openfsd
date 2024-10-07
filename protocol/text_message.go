@@ -6,22 +6,22 @@ import (
 )
 
 type TextMessagePDU struct {
-	From    string `validate:"required,alphanum,max=7"`
-	To      string `validate:"required,max=7"`
+	From    string `validate:"required,alphanum,max=16"`
+	To      string `validate:"required,max=16"`
 	Message string `validate:"required"`
 }
 
 func (p *TextMessagePDU) Serialize() string {
-	return fmt.Sprintf("#TM%s:%s:%s%s", p.From, p.To, p.Message, PacketDelimeter)
+	return fmt.Sprintf("#TM%s:%s:%s%s", p.From, p.To, p.Message, PacketDelimiter)
 }
 
-func ParseTextMessagePDU(rawPacket string) (*TextMessagePDU, error) {
-	rawPacket = strings.TrimSuffix(rawPacket, PacketDelimeter)
-	rawPacket = strings.TrimPrefix(rawPacket, "#TM")
-	fields := strings.SplitN(rawPacket, Delimeter, 3)
+func (p *TextMessagePDU) Parse(packet string) error {
+	packet = strings.TrimSuffix(packet, PacketDelimiter)
+	packet = strings.TrimPrefix(packet, "#TM")
 
-	if len(fields) < 3 {
-		return nil, NewGenericFSDError(SyntaxError)
+	var fields []string
+	if fields = strings.SplitN(packet, Delimiter, 3); len(fields) < 3 {
+		return NewGenericFSDError(SyntaxError, "", "invalid parameter count")
 	}
 
 	pdu := TextMessagePDU{
@@ -30,10 +30,15 @@ func ParseTextMessagePDU(rawPacket string) (*TextMessagePDU, error) {
 		Message: fields[2],
 	}
 
-	err := V.Struct(pdu)
-	if err != nil {
-		return nil, NewGenericFSDError(SyntaxError)
+	if err := V.Struct(pdu); err != nil {
+		if validatorErr := getFSDErrorFromValidatorErrors(err); err != nil {
+			return validatorErr
+		}
+		return err
 	}
 
-	return &pdu, nil
+	// Copy new pdu into receiver
+	*p = pdu
+
+	return nil
 }

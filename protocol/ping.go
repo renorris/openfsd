@@ -6,22 +6,22 @@ import (
 )
 
 type PingPDU struct {
-	From      string `validate:"required,alphanum,max=7"`
-	To        string `validate:"required,alphanum,max=7"`
+	From      string `validate:"required,alphanum,max=16"`
+	To        string `validate:"required,alphanum,max=16"`
 	Timestamp string `validate:"required,max=32"`
 }
 
 func (p *PingPDU) Serialize() string {
-	return fmt.Sprintf("$PI%s:%s:%s%s", p.From, p.To, p.Timestamp, PacketDelimeter)
+	return fmt.Sprintf("$PI%s:%s:%s%s", p.From, p.To, p.Timestamp, PacketDelimiter)
 }
 
-func ParsePingPDU(rawPacket string) (*PingPDU, error) {
-	rawPacket = strings.TrimSuffix(rawPacket, PacketDelimeter)
-	rawPacket = strings.TrimPrefix(rawPacket, "$PI")
-	fields := strings.Split(rawPacket, Delimeter)
+func (p *PingPDU) Parse(packet string) error {
+	packet = strings.TrimSuffix(packet, PacketDelimiter)
+	packet = strings.TrimPrefix(packet, "$PI")
 
-	if len(fields) != 3 {
-		return nil, NewGenericFSDError(SyntaxError)
+	var fields []string
+	if fields = strings.Split(packet, Delimiter); len(fields) != 3 {
+		return NewGenericFSDError(SyntaxError, "", "invalid parameter count")
 	}
 
 	pdu := PingPDU{
@@ -30,10 +30,15 @@ func ParsePingPDU(rawPacket string) (*PingPDU, error) {
 		Timestamp: fields[2],
 	}
 
-	err := V.Struct(pdu)
-	if err != nil {
-		return nil, NewGenericFSDError(SyntaxError)
+	if err := V.Struct(pdu); err != nil {
+		if validatorErr := getFSDErrorFromValidatorErrors(err); err != nil {
+			return validatorErr
+		}
+		return err
 	}
 
-	return &pdu, nil
+	// Copy new pdu into receiver
+	*p = pdu
+
+	return nil
 }

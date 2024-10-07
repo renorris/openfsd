@@ -39,49 +39,54 @@ func TestParseMetarResponsePDU(t *testing.T) {
 		{
 			"Missing To field",
 			"$ARSERVER::KSEE 091847Z 25007KT 10SM SKC 24/04 A3006\r\n",
-			nil,
-			NewGenericFSDError(SyntaxError),
+			&MetarResponsePDU{},
+			NewGenericFSDError(SyntaxError, "", "validation error"),
 		},
 		{
 			"From Field too long",
-			"$ARSERVERTOLONG:CLIENT:KSEE 091847Z 25007KT 10SM SKC 24/04 A3006\r\n",
-			nil,
-			NewGenericFSDError(SyntaxError),
+			"$ARSERVERTOLONGSERVERTOLONGSERVERTOLONG:CLIENT:KSEE 091847Z 25007KT 10SM SKC 24/04 A3006\r\n",
+			&MetarResponsePDU{},
+			NewGenericFSDError(SyntaxError, "", "validation error"),
 		},
 		{
 			"Metar too long",
-			"$ARSERVER:CLIENT:" + strings.Repeat("A", 257) + "\r\n",
-			nil,
-			NewGenericFSDError(SyntaxError),
+			"$ARSERVER:CLIENT:" + strings.Repeat("A", 1024) + "\r\n",
+			&MetarResponsePDU{},
+			NewGenericFSDError(SyntaxError, "", "validation error"),
 		},
 		{
 			"Incomplete packet format",
 			"$ARSERVER:CLIENT\r\n",
-			nil,
-			NewGenericFSDError(SyntaxError),
+			&MetarResponsePDU{},
+			NewGenericFSDError(SyntaxError, "", "invalid parameter count"),
 		},
 		{
 			"Empty metar field",
 			"$ARSERVER:CLIENT:\r\n",
-			nil,
-			NewGenericFSDError(SyntaxError),
+			&MetarResponsePDU{},
+			NewGenericFSDError(SyntaxError, "", "validation error"),
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			// Perform the parsing
-			result, err := ParseMetarResponsePDU(tc.packet)
+			pdu := MetarResponsePDU{}
+			err := pdu.Parse(tc.packet)
 
 			// Check the error
 			if tc.wantErr != nil {
-				assert.EqualError(t, err, tc.wantErr.Error())
+				if strings.Contains(tc.wantErr.Error(), "validation error") {
+					assert.Contains(t, err.Error(), "validation error")
+				} else {
+					assert.EqualError(t, err, tc.wantErr.Error())
+				}
 			} else {
 				assert.NoError(t, err)
 			}
 
 			// Verify the result
-			assert.Equal(t, tc.want, result)
+			assert.Equal(t, tc.want, &pdu)
 		})
 	}
 }

@@ -3,6 +3,7 @@ package protocol
 import (
 	"github.com/go-playground/validator/v10"
 	"github.com/stretchr/testify/assert"
+	"strings"
 	"testing"
 )
 
@@ -28,44 +29,44 @@ func TestMetarRequestPDU_SerializationAndParsing(t *testing.T) {
 		{
 			"Invalid From (too long)",
 			nil,
-			"$AXPILOT123:ATC01:METAR:KJFK\r\n",
-			NewGenericFSDError(SyntaxError),
+			"$AXPILOT123PILOT123PILOT123PILOT123PILOT123:ATC01:METAR:KJFK\r\n",
+			NewGenericFSDError(SyntaxError, "", "validation error"),
 		},
 		{
 			"Invalid To (not alphanumeric)",
 			nil,
 			"$AXPILOT1:AT*C1:METAR:KJFK\r\n",
-			NewGenericFSDError(SyntaxError),
+			NewGenericFSDError(SyntaxError, "", "validation error"),
 		},
 		{
 			"Invalid Station (too long)",
 			nil,
 			"$AXPILOT1:ATC01:METAR:KJFKKK\r\n",
-			NewGenericFSDError(SyntaxError),
+			NewGenericFSDError(SyntaxError, "", "validation error"),
 		},
 		{
 			"Missing Station",
 			nil,
 			"$AXPILOT1:ATC01:METAR:\r\n",
-			NewGenericFSDError(SyntaxError),
+			NewGenericFSDError(SyntaxError, "", "validation error"),
 		},
 		{
 			"Invalid Command",
 			nil,
 			"$AXPILOT1:ATC01:NOTAM:KJFK\r\n",
-			NewGenericFSDError(SyntaxError),
+			NewGenericFSDError(SyntaxError, "NOTAM", "third parameter must be 'METAR'"),
 		},
 		{
 			"Extra fields",
 			nil,
 			"$AXPILOT1:ATC01:METAR:KJFK:EXTRA\r\n",
-			NewGenericFSDError(SyntaxError),
+			NewGenericFSDError(SyntaxError, "", "invalid parameter count"),
 		},
 		{
 			"Missing Delimiters",
 			nil,
 			"PILOT1ATC01METARKJFK\r\n",
-			NewGenericFSDError(SyntaxError),
+			NewGenericFSDError(SyntaxError, "", "invalid parameter count"),
 		},
 	}
 
@@ -78,18 +79,23 @@ func TestMetarRequestPDU_SerializationAndParsing(t *testing.T) {
 			}
 
 			// Perform parsing
-			result, err := ParseMetarRequestPDU(tc.rawPacket)
+			pdu := MetarRequestPDU{}
+			err := pdu.Parse(tc.rawPacket)
 
 			// Check the error
 			if tc.expectedError != nil {
-				assert.EqualError(t, err, tc.expectedError.Error(), "errors should match expected output for case '%s'", tc.name)
+				if strings.Contains(tc.expectedError.Error(), "validation error") {
+					assert.Contains(t, err.Error(), "validation error")
+				} else {
+					assert.EqualError(t, err, tc.expectedError.Error())
+				}
 			} else {
-				assert.NoError(t, err, "no error should occur for case '%s'", tc.name)
+				assert.NoError(t, err)
 			}
 
 			// Verify the result
 			if tc.pduInstance != nil {
-				assert.Equal(t, tc.pduInstance, result, "parsed result should match expected PDU for case '%s'", tc.name)
+				assert.Equal(t, tc.pduInstance, &pdu, "parsed result should match expected PDU for case '%s'", tc.name)
 			}
 		})
 	}

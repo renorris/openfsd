@@ -6,43 +6,47 @@ import (
 )
 
 type ClientQueryPDU struct {
-	From      string `validate:"required,alphanum,max=7"`
+	From      string `validate:"required,alphanum,max=16"`
 	To        string `validate:"required,max=7"`
-	QueryType string `validate:"required,ascii,min=2,max=7"`
+	QueryType string `validate:"required,ascii,min=2,max=16"`
 	Payload   string `validate:""`
 }
 
 func (p *ClientQueryPDU) Serialize() string {
 	if p.Payload == "" {
-		return fmt.Sprintf("$CQ%s:%s:%s%s", p.From, p.To, p.QueryType, PacketDelimeter)
+		return fmt.Sprintf("$CQ%s:%s:%s%s",
+			p.From, p.To, p.QueryType, PacketDelimiter)
 	} else {
-		return fmt.Sprintf("$CQ%s:%s:%s:%s%s", p.From, p.To, p.QueryType, p.Payload, PacketDelimeter)
+		return fmt.Sprintf("$CQ%s:%s:%s:%s%s",
+			p.From, p.To, p.QueryType, p.Payload, PacketDelimiter)
 	}
 }
 
-func ParseClientQueryPDU(rawPacket string) (*ClientQueryPDU, error) {
-	rawPacket = strings.TrimSuffix(rawPacket, PacketDelimeter)
-	rawPacket = strings.TrimPrefix(rawPacket, "$CQ")
-	fields := strings.SplitN(rawPacket, Delimeter, 4)
-	if len(fields) < 3 {
-		return nil, NewGenericFSDError(SyntaxError)
-	}
+func (p *ClientQueryPDU) Parse(packet string) error {
+	packet = strings.TrimSuffix(packet, PacketDelimiter)
+	packet = strings.TrimPrefix(packet, "$CQ")
 
-	payload := ""
-	if len(fields) == 4 {
-		payload = fields[3]
+	// Extract fields
+	var fields []string
+	if fields = strings.SplitN(packet, Delimiter, 4); len(fields) < 3 {
+		return NewGenericFSDError(SyntaxError, "", "invalid parameter count")
 	}
 
 	pdu := ClientQueryPDU{
 		From:      fields[0],
 		To:        fields[1],
 		QueryType: fields[2],
-		Payload:   payload,
 	}
 
-	err := V.Struct(pdu)
-	if err != nil {
-		return nil, NewGenericFSDError(SyntaxError)
+	if len(fields) == 4 {
+		pdu.Payload = fields[3]
+	}
+
+	if err := V.Struct(&pdu); err != nil {
+		if validatorErr := getFSDErrorFromValidatorErrors(err); err != nil {
+			return validatorErr
+		}
+		return err
 	}
 
 	switch pdu.QueryType {
@@ -57,8 +61,11 @@ func ParseClientQueryPDU(rawPacket string) (*ClientQueryPDU, error) {
 		"NEWINFO", "NEWATIS", "EST",
 		"GD":
 	default:
-		return nil, NewGenericFSDError(SyntaxError)
+		return NewGenericFSDError(SyntaxError, fields[2], "invalid query type")
 	}
 
-	return &pdu, nil
+	// Copy new pdu into receiver
+	*p = pdu
+
+	return nil
 }

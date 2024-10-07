@@ -3,6 +3,7 @@ package protocol
 import (
 	"github.com/go-playground/validator/v10"
 	"github.com/stretchr/testify/assert"
+	"strings"
 	"testing"
 )
 
@@ -54,26 +55,26 @@ func TestParseAuthChallengeResponsePDU(t *testing.T) {
 		{
 			name:    "Missing From Field",
 			packet:  "$ZR:CLIENT:0c4a96fa1cab961018620f120988cdf9\r\n",
-			want:    nil,
-			wantErr: NewGenericFSDError(SyntaxError),
+			want:    &AuthChallengeResponsePDU{},
+			wantErr: NewGenericFSDError(SyntaxError, "", "validation error"),
 		},
 		{
 			name:    "Missing To Field",
 			packet:  "$ZRSERVER::0c4a96fa1cab961018620f120988cdf9\r\n",
-			want:    nil,
-			wantErr: NewGenericFSDError(SyntaxError),
+			want:    &AuthChallengeResponsePDU{},
+			wantErr: NewGenericFSDError(SyntaxError, "", "validation error"),
 		},
 		{
 			name:    "Challenge response not md5",
 			packet:  "$ZRSERVER:CLIENT:0c4a96fa1cab9610\r\n",
-			want:    nil,
-			wantErr: NewGenericFSDError(SyntaxError),
+			want:    &AuthChallengeResponsePDU{},
+			wantErr: NewGenericFSDError(SyntaxError, "", "validation error"),
 		},
 		{
 			name:    "Invalid Hexadecimal",
 			packet:  "$ZRSERVER:CLIENT:ghij7890\r\n",
-			want:    nil,
-			wantErr: NewGenericFSDError(SyntaxError),
+			want:    &AuthChallengeResponsePDU{},
+			wantErr: NewGenericFSDError(SyntaxError, "", "validation error"),
 		},
 	}
 
@@ -81,9 +82,20 @@ func TestParseAuthChallengeResponsePDU(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			result, err := ParseAuthChallengeResponsePDU(tc.packet)
-			assert.Equal(t, tc.want, result)
-			assert.Equal(t, tc.wantErr, err)
+			pdu := AuthChallengeResponsePDU{}
+			err := pdu.Parse(tc.packet)
+			assert.Equal(t, tc.want, &pdu)
+
+			// Check the error
+			if tc.wantErr != nil {
+				if strings.Contains(tc.wantErr.Error(), "validation error") {
+					assert.Contains(t, err.Error(), "validation error")
+				} else {
+					assert.EqualError(t, err, tc.wantErr.Error())
+				}
+			} else {
+				assert.NoError(t, err)
+			}
 		})
 	}
 }

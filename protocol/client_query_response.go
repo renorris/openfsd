@@ -6,50 +6,67 @@ import (
 )
 
 type ClientQueryResponsePDU struct {
-	From      string `validate:"required,alphanum,max=7"`
-	To        string `validate:"required,max=7"`
+	From      string `validate:"required,alphanum,max=16"`
+	To        string `validate:"required,max=16"`
 	QueryType string `validate:"required,ascii,min=2,max=7"`
 	Payload   string `validate:""`
 }
 
 func (p *ClientQueryResponsePDU) Serialize() string {
 	if p.Payload == "" {
-		return fmt.Sprintf("$CR%s:%s:%s%s", p.From, p.To, p.QueryType, PacketDelimeter)
+		return fmt.Sprintf("$CR%s:%s:%s%s",
+			p.From, p.To, p.QueryType, PacketDelimiter)
 	} else {
-		return fmt.Sprintf("$CR%s:%s:%s:%s%s", p.From, p.To, p.QueryType, p.Payload, PacketDelimeter)
+		return fmt.Sprintf("$CR%s:%s:%s:%s%s",
+			p.From, p.To, p.QueryType, p.Payload, PacketDelimiter)
 	}
 }
 
-func ParseClientQueryResponsePDU(rawPacket string) (*ClientQueryResponsePDU, error) {
-	rawPacket = strings.TrimSuffix(rawPacket, PacketDelimeter)
-	rawPacket = strings.TrimPrefix(rawPacket, "$CR")
-	fields := strings.SplitN(rawPacket, Delimeter, 4)
-	if len(fields) < 3 {
-		return nil, NewGenericFSDError(SyntaxError)
-	}
+func (p *ClientQueryResponsePDU) Parse(packet string) error {
+	packet = strings.TrimSuffix(packet, PacketDelimiter)
+	packet = strings.TrimPrefix(packet, "$CR")
 
-	payload := ""
-	if len(fields) == 4 {
-		payload = fields[3]
+	// Extract fields
+	var fields []string
+	if fields = strings.SplitN(packet, Delimiter, 4); len(fields) < 3 {
+		return NewGenericFSDError(SyntaxError, "",
+			"invalid parameter count")
 	}
 
 	pdu := ClientQueryResponsePDU{
 		From:      fields[0],
 		To:        fields[1],
 		QueryType: fields[2],
-		Payload:   payload,
 	}
 
-	err := V.Struct(pdu)
-	if err != nil {
-		return nil, NewGenericFSDError(SyntaxError)
+	if len(fields) == 4 {
+		pdu.Payload = fields[3]
+	}
+
+	if err := V.Struct(&pdu); err != nil {
+		if validatorErr := getFSDErrorFromValidatorErrors(err); err != nil {
+			return validatorErr
+		}
+		return err
 	}
 
 	switch pdu.QueryType {
-	case "ATC", "CAPS", "C?", "RN", "SV", "ATIS", "IP", "INF", "FP", "IPC", "BY", "HI", "HLP", "NOHLP", "WH", "IT", "HT", "DR", "FA", "TA", "BC", "SC", "VT", "ACC", "NEWINFO", "NEWATIS", "EST", "GD":
+	case "ATC", "CAPS", "C?",
+		"RN", "SV", "ATIS",
+		"IP", "INF", "FP",
+		"IPC", "BY", "HI",
+		"HLP", "NOHLP", "WH",
+		"IT", "HT", "DR",
+		"FA", "TA", "BC",
+		"SC", "VT", "ACC",
+		"NEWINFO", "NEWATIS", "EST",
+		"GD":
 	default:
-		return nil, NewGenericFSDError(SyntaxError)
+		return NewGenericFSDError(SyntaxError, fields[2], "invalid query type")
 	}
 
-	return &pdu, nil
+	// Copy new pdu into receiver
+	*p = pdu
+
+	return nil
 }

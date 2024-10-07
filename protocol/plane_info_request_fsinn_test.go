@@ -3,6 +3,7 @@ package protocol
 import (
 	"github.com/go-playground/validator/v10"
 	"github.com/stretchr/testify/assert"
+	"strings"
 	"testing"
 )
 
@@ -30,50 +31,49 @@ func TestParsePlaneInfoRequestFsinnPDU(t *testing.T) {
 		},
 		{
 			"Invalid From",
-			"#SB12345678:ATC:FSIPIR:0:UAL:A320:::::A20N:United Airbus A320neo\r\n",
-			nil,
-			NewGenericFSDError(SyntaxError),
+			"#SB1234567812345678123456781234567812345678:ATC:FSIPIR:0:UAL:A320:::::A20N:United Airbus A320neo\r\n",
+			&PlaneInfoRequestFsinnPDU{},
+			NewGenericFSDError(SyntaxError, "", "validation error"),
 		},
 		{
 			"Invalid To",
-			"#SBPILOT:CONTROLLER123:FSIPIR:0:LUF:B77W:::::B77W:Lufthansa Boeing 777\r\n",
-			nil,
-			NewGenericFSDError(SyntaxError),
+			"#SBPILOT:CONTROLLER123CONTROLLER123CONTROLLER123CONTROLLER123CONTROLLER123:FSIPIR:0:LUF:B77W:::::B77W:Lufthansa Boeing 777\r\n",
+			&PlaneInfoRequestFsinnPDU{},
+			NewGenericFSDError(SyntaxError, "", "validation error"),
 		},
 		{
 			"Extra delimiter",
-			"#SBPILOT:ATC:FSIPIR:0:DLH:::A343:::A343:Lufthansa Airbus A340-300\r\n",
-			nil,
-			NewGenericFSDError(SyntaxError),
-		},
-		{
-			"Missing ICAO code",
-			"#SBPILOT:ATC:FSIPIR:0::7378:::::B738:Ryanair Boeing 737-800\r\n",
-			nil,
-			NewGenericFSDError(SyntaxError),
+			"#SBPILOT:ATC:FSIPIR:0:DLH::::A343:::A343:Lufthansa Airbus A340-300\r\n",
+			&PlaneInfoRequestFsinnPDU{},
+			NewGenericFSDError(SyntaxError, "", "invalid parameter count"),
 		},
 		{
 			"Invalid PDU type",
 			"#SBPILOT:ATC:FOOBAR:0:SWR:A333:::::A333:Swiss Airbus A330-300\r\n",
-			nil,
-			NewGenericFSDError(SyntaxError),
+			&PlaneInfoRequestFsinnPDU{},
+			NewGenericFSDError(SyntaxError, "FOOBAR", "third parameter must be 'FSIPIR'"),
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			// Perform the parsing
-			result, err := ParsePlaneInfoRequestFsinnPDU(tc.packet)
+			pdu := PlaneInfoRequestFsinnPDU{}
+			err := pdu.Parse(tc.packet)
 
 			// Check the error
 			if tc.wantErr != nil {
-				assert.EqualError(t, err, tc.wantErr.Error())
+				if strings.Contains(tc.wantErr.Error(), "validation error") {
+					assert.Contains(t, err.Error(), "validation error")
+				} else {
+					assert.EqualError(t, err, tc.wantErr.Error())
+				}
 			} else {
 				assert.NoError(t, err)
 			}
 
 			// Verify the result
-			assert.Equal(t, tc.want, result)
+			assert.Equal(t, tc.want, &pdu)
 		})
 	}
 }

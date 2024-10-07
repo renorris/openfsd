@@ -8,8 +8,8 @@ var V *validator.Validate
 const (
 	ClientQueryBroadcastRecipient       = "@94835"
 	ClientQueryBroadcastRecipientPilots = "@94386"
-	Delimeter                           = ":"
-	PacketDelimeter                     = "\r\n"
+	Delimiter                           = ":"
+	PacketDelimiter                     = "\r\n"
 	ServerCallsign                      = "SERVER"
 )
 
@@ -21,22 +21,6 @@ const (
 	NetworkFacilityTWR
 	NetworkFacilityAPP
 	NetworkFacilityCTR
-)
-
-const (
-	NetworkRatingUnknown = iota
-	NetworkRatingOBS
-	NetworkRatingS1
-	NetworkRatingS2
-	NetworkRatingS3
-	NetworkRatingC1
-	NetworkRatingC2
-	NetworkRatingC3
-	NetworkRatingI1
-	NetworkRatingI2
-	NetworkRatingI3
-	NetworkRatingSUP
-	NetworkRatingADM
 )
 
 const (
@@ -99,5 +83,6 @@ const (
 )
 
 type PDU interface {
+	Parse(string) error
 	Serialize() string
 }
