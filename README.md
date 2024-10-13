@@ -37,19 +37,21 @@ Persistent storage utilizes MySQL. You will need a MySQL server to point openfsd
 
 Use the following environment variables to configure the server:
 
-| Variable Name         | Default Value | Description                                                                                                                                                                             |
-|-----------------------|---------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `FSD_ADDR`            | 0.0.0.0:6809  | FSD listen address                                                                                                                                                                      |
-| `HTTP_ADDR`           | 0.0.0.0:8080  | HTTP listen address                                                                                                                                                                     |
-| `TLS_CERT_FILE`       |               | TLS certificate file path (setting this enables HTTPS. otherwise, plaintext HTTP will be used.)                                                                                         |
-| `TLS_KEY_FILE`        |               | TLS key file path                                                                                                                                                                       |
-| `IN_MEMORY_DB`        | false         | Enables an ephemeral in-memory database in place of a real MySQL server.<br>This should only be used for testing.                                                                       |
-| `MYSQL_USER`          |               | MySQL username                                                                                                                                                                          |
-| `MYSQL_PASS`          |               | MySQL password                                                                                                                                                                          |
-| `MYSQL_NET`           |               | MySQL network protocol e.g. `tcp`                                                                                                                                                       |
-| `MYSQL_ADDR`          |               | MySQL network address e.g. `127.0.0.1:3306`                                                                                                                                             |
-| `MYSQL_DBNAME`        |               | MySQL database name                                                                                                                                                                     |
-| `MOTD`                | openfsd       | "Message of the Day." This text is sent as a chat message to each client upon successful login to FSD.                                                                                  |
+| Variable Name   | Default Value | Description                                                                                                                                                                                                                           |
+|-----------------|---------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `FSD_ADDR`      | 0.0.0.0:6809  | FSD listen address                                                                                                                                                                                                                    |
+| `HTTP_ADDR`     | 0.0.0.0:8080  | HTTP listen address                                                                                                                                                                                                                   |
+| `DOMAIN_NAME`   |               | Server domain name. This is required to properly set status.txt content.<br>e.g. `myopenfsdserver.com`<br>Optionally use `HTTP_DOMAIN_NAME` and `FSD_DOMAIN_NAME` for more granularity if required.                                   |
+| `TLS_ENABLED`   | false         | Whether to **flag** that TLS is enabled somewhere between openfsd and the client, so the status.txt API will format properly. This will **not** enable TLS for the internal HTTP server. Use TLS_CERT_FILE and TLS_KEY_FILE for that. |
+| `TLS_CERT_FILE` |               | TLS certificate file path (setting this enables HTTPS. otherwise, plaintext HTTP will be used.)                                                                                                                                       |
+| `TLS_KEY_FILE`  |               | TLS key file path                                                                                                                                                                                                                     |
+| `IN_MEMORY_DB`  | false         | Enables an ephemeral in-memory database in place of a real MySQL server.<br>This should only be used for testing.                                                                                                                     |
+| `MYSQL_USER`    |               | MySQL username                                                                                                                                                                                                                        |
+| `MYSQL_PASS`    |               | MySQL password                                                                                                                                                                                                                        |
+| `MYSQL_NET`     |               | MySQL network protocol e.g. `tcp`                                                                                                                                                                                                     |
+| `MYSQL_ADDR`    |               | MySQL network address e.g. `127.0.0.1:3306`                                                                                                                                                                                           |
+| `MYSQL_DBNAME`  |               | MySQL database name                                                                                                                                                                                                                   |
+| `MOTD`          | openfsd       | "Message of the Day." This text is sent as a chat message to each client upon successful login to FSD.                                                                                                                                |
 
 For 99.9% of use cases, it is also recommended to set:
 ```
@@ -97,6 +99,9 @@ Administrators and supervisors can create/mutate user records via the administra
 
 - `/api/v1/users` (See [documentation](https://github.com/renorris/openfsd/tree/main/web))
 - `/api/v1/data/openfsd-data.json` VATSIM-esque [data feed](https://github.com/renorris/openfsd/blob/main/web/DATAFEED.md)
+- `/api/v1/data/status.txt` VATSIM-esque [status.txt](https://status.vatsim.net)
+- `/api/v1/data/servers.txt` VATSIM-esque [servers.txt](https://data.vatsim.net/vatsim-servers.txt)
+- `/api/v1/data/servers.json` VATSIM-esque [servers.json](https://data.vatsim.net/v3/vatsim-servers.json)
 - `/login ... etc` front-end interface
 
 ## Connecting

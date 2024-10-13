@@ -54,17 +54,21 @@ func DataFeed() *datafeed.DataFeed {
 }
 
 type ServerConfig struct {
-	FSDListenAddress  string `env:"FSD_ADDR, default=0.0.0.0:6809"`  // FSD network frontend/port
-	HTTPListenAddress string `env:"HTTP_ADDR, default=0.0.0.0:8080"` // HTTP network frontend/port
-	TLSCertFile       string `env:"TLS_CERT_FILE"`                   // TLS certificate file path
-	TLSKeyFile        string `env:"TLS_KEY_FILE"`                    // TLS key file path
-	MySQLUser         string `env:"MYSQL_USER"`                      // MySQL username
-	MySQLPass         string `env:"MYSQL_PASS"`                      // MySQL password
-	MySQLNet          string `env:"MYSQL_NET"`                       // MySQL network protocol e.g. tcp, unix, etc
-	MySQLAddr         string `env:"MYSQL_ADDR"`                      // MySQL network address e.g. 127.0.0.1:3306
-	MySQLDBName       string `env:"MYSQL_DBNAME"`                    // MySQL database name
-	InMemoryDB        bool   `env:"IN_MEMORY_DB, default=false"`     // Whether to use an ephemeral in-memory DB instead of a real MySQL server
-	MOTD              string `env:"MOTD, default=openfsd"`           // Server "Message of the Day"
+	FSDListenAddress  string `env:"FSD_ADDR, default=0.0.0.0:6809"`                           // FSD network frontend/port
+	HTTPListenAddress string `env:"HTTP_ADDR, default=0.0.0.0:8080"`                          // HTTP network frontend/port
+	TLSEnabled        bool   `env:"TLS_ENABLED"`                                              // Whether to **flag** that TLS is enabled somewhere between openfsd and the client
+	TLSCertFile       string `env:"TLS_CERT_FILE"`                                            // TLS certificate file path
+	TLSKeyFile        string `env:"TLS_KEY_FILE"`                                             // TLS key file path
+	DomainName        string `env:"DOMAIN_NAME, default=INCORRECT_DOMAIN_NAME_CONFIGURATION"` // Server domain name e.g. myserver.com
+	HTTPDomainName    string `env:"HTTP_DOMAIN_NAME"`                                         // HTTP domain name e.g. web.myserver.com (overrides DOMAIN_NAME for HTTP services if set)
+	FSDDomainName     string `env:"FSD_DOMAIN_NAME"`                                          // FSD domain name e.g. fsd.myserver.com (overrides DOMAIN_NAME for FSD services if set)
+	MySQLUser         string `env:"MYSQL_USER"`                                               // MySQL username
+	MySQLPass         string `env:"MYSQL_PASS"`                                               // MySQL password
+	MySQLNet          string `env:"MYSQL_NET"`                                                // MySQL network protocol e.g. tcp, unix, etc
+	MySQLAddr         string `env:"MYSQL_ADDR"`                                               // MySQL network address e.g. 127.0.0.1:3306
+	MySQLDBName       string `env:"MYSQL_DBNAME"`                                             // MySQL database name
+	InMemoryDB        bool   `env:"IN_MEMORY_DB, default=false"`                              // Whether to use an ephemeral in-memory DB instead of a real MySQL server
+	MOTD              string `env:"MOTD, default=openfsd"`                                    // Server "Message of the Day"
 }
 
 type ServerContext struct {
@@ -99,6 +103,11 @@ func New() *ServerContext {
 
 		server.config.MySQLUser = ""
 		server.config.MySQLPass = ""
+	}
+
+	// Ensure TLSEnabled is set if TLS for the internal HTTP server is enabled
+	if server.config.TLSCertFile != "" {
+		server.config.TLSEnabled = true
 	}
 
 	// Load the JWT private key

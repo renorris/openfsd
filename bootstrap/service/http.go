@@ -51,6 +51,11 @@ func (s *HTTPService) boot(ctx context.Context, listener net.Listener) (err erro
 	// data feed
 	mux.HandleFunc("GET /api/v1/data/openfsd-data.json", web.DataFeedHandler)
 
+	// status.txt, servers.txt, servers.json
+	mux.HandleFunc("GET /api/v1/data/status.txt", web.StatusTxtHandler)
+	mux.HandleFunc("GET /api/v1/data/servers.txt", web.ServerListTxtHandler)
+	mux.HandleFunc("GET /api/v1/data/servers.json", web.ServerListJsonHandler)
+
 	// favicon
 	mux.HandleFunc("/favicon.ico", web.FaviconHandler)
 

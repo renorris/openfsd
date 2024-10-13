@@ -3,6 +3,7 @@ package web
 import (
 	"bytes"
 	"crypto/rand"
+	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
 	"io"
@@ -23,4 +24,10 @@ func generateRandomPassword() (string, error) {
 	}
 
 	return hex.EncodeToString(randBytes), nil
+}
+
+func getEtag(str string) string {
+	sum := sha1.Sum([]byte(str))
+	sumSlice := sum[:]
+	return hex.EncodeToString(sumSlice)
 }
