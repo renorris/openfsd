@@ -37,7 +37,13 @@ func formatStatusTxt() string {
 		openfsdAddress += servercontext.Config().DomainName
 	}
 
-	return strings.Replace(statusFormat, "{OPENFSD_ADDRESS}", openfsdAddress, -1)
+	// Format string with {OPENFSD_ADDRESS}
+	formatted := strings.Replace(statusFormat, "{OPENFSD_ADDRESS}", openfsdAddress, -1)
+
+	// Ensure all line feeds also have carriage returns
+	formatted = strings.Replace(formatted, "\n", "\r\n", -1)
+
+	return formatted
 }
 
 var formattedStatusTxtEtag string

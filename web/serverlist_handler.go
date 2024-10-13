@@ -37,7 +37,14 @@ func formatServerListTxt() string {
 	}
 
 	serversList := fmt.Sprintf("OPENFSD:%s:Everywhere:OPENFSD:1:", domainName)
-	return strings.Replace(serverlistTextFormat, "{SERVERS_LIST}", serversList, -1)
+
+	// Format with built server list
+	formatted := strings.Replace(serverlistTextFormat, "{SERVERS_LIST}", serversList, -1)
+
+	// Ensure all line feeds also have carriage returns
+	formatted = strings.Replace(formatted, "\n", "\r\n", -1)
+
+	return formatted
 }
 
 var formattedServerListTxtEtag string
