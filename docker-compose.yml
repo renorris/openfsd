@@ -30,7 +30,8 @@ services:
       - openfsd-net
     environment:
       GOMAXPROCS: 1
-      PLAINTEXT_PASSWORDS: true
+
+      DOMAIN_NAME: myopenfsdserver.com
       MYSQL_USER: root
       MYSQL_PASS: supersecretpassword
       MYSQL_NET: tcp
