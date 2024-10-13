@@ -106,12 +106,12 @@ Administrators and supervisors can create/mutate user records via the administra
 
 ## Connecting
 
-Various clients such as [vPilot](https://vpilot.rosscarlson.dev/), [xPilot](https://docs.xpilot-project.org/) and [swift](https://swift-project.org/) are used to connect to VATSIM FSD servers.
+Various clients such as [xPilot](https://docs.xpilot-project.org/), [vPilot](https://vpilot.rosscarlson.dev/) and [swift](https://swift-project.org/) are used to connect to VATSIM FSD servers. 
+To connect to openfsd:
 
-Although it is possible to use vPilot with openfsd, the binary would need to be modified directly.
-To use xPilot, one would need to manually recompile with the correct JWT token endpoint and FSD server addresses.
-
-The Swift pilot client works out of the box.
+- xPilot: one would need to manually recompile the client with the correct JWT token endpoint and FSD server addresses.
+- vPilot: see [here](https://github.com/renorris/vpilot-patch-utility).
+- Swift: works out of the box. See below.
 
 **Swift Instructions:**
 
