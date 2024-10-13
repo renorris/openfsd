@@ -1,6 +1,6 @@
 ## Datafeed Schema
 
-```json
+```txt
 {
   "general": {
     "version": 0, // Major version of data feed
@@ -14,7 +14,7 @@
     "name": "John Doe", 
     "pilot_rating": 1,
     "latitude": 32.5,
-    "longitude", -117.5,
+    "longitude": -117.5,
     "altitude": 4502,
     "groundspeed": 92,
     "transponder": "2000",
