@@ -19,7 +19,7 @@ As of October 2024, FSD is still used to facilitate over 140,000 active members 
 Example:
 
 ```
-docker run -e IN_MEMORY_DB=true -e PLAINTEXT_PASSWORDS=true \
+docker run -e IN_MEMORY_DB=true \
 -p 6809:6809 -p 8080:8080 renorris/openfsd:latest
 ```
 
@@ -50,7 +50,6 @@ Use the following environment variables to configure the server:
 | `MYSQL_ADDR`          |               | MySQL network address e.g. `127.0.0.1:3306`                                                                                                                                             |
 | `MYSQL_DBNAME`        |               | MySQL database name                                                                                                                                                                     |
 | `MOTD`                | openfsd       | "Message of the Day." This text is sent as a chat message to each client upon successful login to FSD.                                                                                  |
-| `PLAINTEXT_PASSWORDS` | false         | Setting this flag disables JSON web token authentication over FSD and instead treats the token field in the #AP packet as a plaintext password.<br>See below for further configuration. |
 
 For 99.9% of use cases, it is also recommended to set:
 ```
@@ -59,7 +58,7 @@ GOMAXPROCS=1
 This environment variable limits the number of operating system threads that can execute user-level Go code simultaneously.
 Scaling to multiple threads will generally only make the process slower.
 
-openfsd supports "fsd-jwt" authentication over HTTP, assuming `PLAINTEXT_PASSWORDS=false` is set.
+openfsd supports "fsd-jwt" authentication over HTTP.
 VATSIM uses this standard; clients first obtain a login token by POSTing to `/api/fsd-jwt` with:
 
 ```json
@@ -69,8 +68,7 @@ VATSIM uses this standard; clients first obtain a login token by POSTing to `/ap
 }
 ```
 
-A token is returned. That token is placed in the 
-token/password field of the `#AP` FSD login packet.
+A token is returned and placed in the token/password field of the `#AP` FSD login packet.
 To use a vanilla VATSIM client with openfsd,
 (except Swift, see below) it will need to be modified to point to openfsd's "fsd-jwt" endpoint:
 ```
@@ -108,7 +106,7 @@ Various clients such as [vPilot](https://vpilot.rosscarlson.dev/), [xPilot](http
 Although it is possible to use vPilot with openfsd, the binary would need to be modified directly.
 To use xPilot, one would need to manually recompile with the correct JWT token endpoint and FSD server addresses.
 
-The Swift pilot client works out of the box if openfsd is configured with the `PLAINTEXT_PASSWORDS=true` environment variable option.
+The Swift pilot client works out of the box.
 
 **Swift Instructions:**
 
@@ -167,7 +165,7 @@ Hex representation:
 1. **Server Identification packet:** Once the TCP connection has been established, the server identifies itself with a "Server Identification" message, as seen in the example above. The packet identifier is `$DI` (Server Identification). The first field is the "From" field: `SERVER`. The second field is the "To" field: `CLIENT` (`CLIENT` is used here as a generic recipient callsign because the client hasn't announced itself yet.) The third field is the server version identifier. The fourth field is a random hexadecimal string used later for 'VatsimAuth' client verification (see fsd/vatsimauth) 
 
 
-2. **Login Token request:** Up until 2022, user's passwords were sent in plaintext over FSD (yikes.) Now, login tokens are obtained over HTTPS via `auth.vatsim.net/api/fsd-jwt` (implemented in http_server.go.) Now, logging into FSD, this token is sent in place where the old password used to be... in plaintext (still yikes.)
+2. **Login Token request:** Up until 2022, user's passwords were sent in plaintext over FSD (yikes.) Now, login tokens are obtained over HTTPS via `auth.vatsim.net/api/fsd-jwt` (implemented in http_server.go.) Now, logging into FSD, this token is sent in place where the old password used to be... in plaintext (still yikes.) Note that openfsd dynamically supports both options. A client can send either an obtained JWT token or their plaintext password.
 
 
 3. **Client Identification packet:** The client identifies itself in its first message:

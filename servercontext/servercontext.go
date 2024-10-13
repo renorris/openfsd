@@ -54,18 +54,17 @@ func DataFeed() *datafeed.DataFeed {
 }
 
 type ServerConfig struct {
-	FSDListenAddress   string `env:"FSD_ADDR, default=0.0.0.0:6809"`     // FSD network frontend/port
-	HTTPListenAddress  string `env:"HTTP_ADDR, default=0.0.0.0:8080"`    // HTTP network frontend/port
-	TLSCertFile        string `env:"TLS_CERT_FILE"`                      // TLS certificate file path
-	TLSKeyFile         string `env:"TLS_KEY_FILE"`                       // TLS key file path
-	MySQLUser          string `env:"MYSQL_USER"`                         // MySQL username
-	MySQLPass          string `env:"MYSQL_PASS"`                         // MySQL password
-	MySQLNet           string `env:"MYSQL_NET"`                          // MySQL network protocol e.g. tcp, unix, etc
-	MySQLAddr          string `env:"MYSQL_ADDR"`                         // MySQL network address e.g. 127.0.0.1:3306
-	MySQLDBName        string `env:"MYSQL_DBNAME"`                       // MySQL database name
-	InMemoryDB         bool   `env:"IN_MEMORY_DB, default=false"`        // Whether to use an ephemeral in-memory DB instead of a real MySQL server
-	MOTD               string `env:"MOTD, default=openfsd"`              // Server "Message of the Day"
-	PlaintextPasswords bool   `env:"PLAINTEXT_PASSWORDS, default=false"` // Whether to enable plaintext FSD passwords
+	FSDListenAddress  string `env:"FSD_ADDR, default=0.0.0.0:6809"`  // FSD network frontend/port
+	HTTPListenAddress string `env:"HTTP_ADDR, default=0.0.0.0:8080"` // HTTP network frontend/port
+	TLSCertFile       string `env:"TLS_CERT_FILE"`                   // TLS certificate file path
+	TLSKeyFile        string `env:"TLS_KEY_FILE"`                    // TLS key file path
+	MySQLUser         string `env:"MYSQL_USER"`                      // MySQL username
+	MySQLPass         string `env:"MYSQL_PASS"`                      // MySQL password
+	MySQLNet          string `env:"MYSQL_NET"`                       // MySQL network protocol e.g. tcp, unix, etc
+	MySQLAddr         string `env:"MYSQL_ADDR"`                      // MySQL network address e.g. 127.0.0.1:3306
+	MySQLDBName       string `env:"MYSQL_DBNAME"`                    // MySQL database name
+	InMemoryDB        bool   `env:"IN_MEMORY_DB, default=false"`     // Whether to use an ephemeral in-memory DB instead of a real MySQL server
+	MOTD              string `env:"MOTD, default=openfsd"`           // Server "Message of the Day"
 }
 
 type ServerContext struct {

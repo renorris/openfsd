@@ -261,8 +261,8 @@ func (c *Connection) attemptLogin() (fsdClient *FSDClient, err error) {
 	var initChallenge string
 	if initChallenge, err = vatsimauth.GenerateChallenge(); err != nil {
 		log.Println("error calling vatsimauth.GenerateChallenge(): " + err.Error())
-		fsdErr := protocol.NewGenericFSDError(protocol.SyntaxError, "", "internal server error (error generating initial challenge)")
-		return nil, fsdErr
+		err = protocol.NewGenericFSDError(protocol.SyntaxError, "", "internal server error (error generating initial challenge)")
+		return
 	}
 
 	// Generate server identification packet
@@ -276,27 +276,27 @@ func (c *Connection) attemptLogin() (fsdClient *FSDClient, err error) {
 
 	// Write server identification packet
 	if err = c.WritePacketImmediately(serverIdentPacket); err != nil {
-		fsdErr := protocol.NewGenericFSDError(protocol.SyntaxError, "", "internal server error (error writing $DI server identification packet)")
-		return nil, fsdErr
+		err = protocol.NewGenericFSDError(protocol.SyntaxError, "", "internal server error (error writing $DI server identification packet)")
+		return
 	}
 
 	// Read the first expected packet: client identification
 	var packet string
 	if packet, err = c.ReadPacket(); err != nil {
-		fsdErr := protocol.NewGenericFSDError(protocol.SyntaxError, "", "error reading $ID client identification packet")
-		return nil, fsdErr
+		err = protocol.NewGenericFSDError(protocol.SyntaxError, "", "error reading $ID client identification packet")
+		return
 	}
 
 	// Parse it
 	var clientIdentPDU protocol.ClientIdentificationPDU
 	if err = clientIdentPDU.Parse(packet); err != nil {
-		return nil, err
+		return
 	}
 
 	// Read the second expected packet: add pilot
 	if packet, err = c.ReadPacket(); err != nil {
-		fsdErr := protocol.NewGenericFSDError(protocol.SyntaxError, "", "error reading #AP add pilot packet")
-		return nil, fsdErr
+		err = protocol.NewGenericFSDError(protocol.SyntaxError, "", "error reading #AP add pilot packet")
+		return
 	}
 
 	var addPilotPDU protocol.AddPilotPDU
@@ -307,74 +307,75 @@ func (c *Connection) attemptLogin() (fsdClient *FSDClient, err error) {
 	// Handle authentication
 	var networkRating protocol.NetworkRating
 	var pilotRating protocol.PilotRating
-	if servercontext.Config().PlaintextPasswords { // Treat token field as a plaintext password
-		if networkRating, pilotRating, err = verifyPassword(clientIdentPDU.CID, addPilotPDU.Token); err != nil {
-			fsdErr := protocol.NewGenericFSDError(protocol.InvalidLogonError, "", "invalid CID and/or password")
-			return nil, fsdErr
-		}
+	if networkRating, pilotRating, err = handleAuthentication(addPilotPDU.CID, addPilotPDU.Token); err != nil {
+		return
+	}
 
-		// Check if the account is suspended or inactive
-		if addPilotPDU.NetworkRating <= protocol.NetworkRatingSUS {
-			fsdErr := protocol.NewGenericFSDError(protocol.InvalidLogonError, strconv.Itoa(int(addPilotPDU.NetworkRating)), "account suspended/inactive")
-			return nil, fsdErr
-		}
-
-		// Check if the requested PDU rating exceeds their user record
-		if addPilotPDU.NetworkRating > networkRating {
-			fsdErr := protocol.NewGenericFSDError(protocol.RequestedLevelTooHighError, strconv.Itoa(int(addPilotPDU.NetworkRating)), "try again at or below your assigned rating")
-			return nil, fsdErr
-		}
-
-	} else { // Treat token field as a JWT token
-		var token *jwt.Token
-		var verifier auth2.DefaultVerifier
-		if token, err = verifier.VerifyJWT(addPilotPDU.Token); err != nil {
-			fsdErr := protocol.NewGenericFSDError(protocol.InvalidLogonError, "", "invalid token")
-			return nil, fsdErr
-		}
-
-		claims := auth2.FSDJWTClaims{}
-		if err = claims.Parse(token); err != nil {
-			fsdErr := protocol.NewGenericFSDError(protocol.InvalidLogonError, "", "invalid token claims")
-			return nil, fsdErr
-		}
-
-		if claims.CID() != clientIdentPDU.CID {
-			fsdErr := protocol.NewGenericFSDError(protocol.InvalidLogonError, "", "invalid token claims (CID)")
-			return nil, fsdErr
-		}
-
-		if claims.ControllerRating() < addPilotPDU.NetworkRating {
-			fsdErr := protocol.NewGenericFSDError(protocol.RequestedLevelTooHighError, strconv.Itoa(int(claims.ControllerRating())), "try again at or below your assigned rating")
-			return nil, fsdErr
-		}
-
-		networkRating = claims.ControllerRating()
-		pilotRating = claims.PilotRating()
+	// Check for valid network rating
+	if addPilotPDU.NetworkRating > networkRating {
+		err = protocol.NewGenericFSDError(protocol.RequestedLevelTooHighError, strconv.Itoa(int(networkRating)), "try again at or below your assigned rating")
+		return
 	}
 
 	// Check for disallowed callsign
 	switch clientIdentPDU.From {
 	case protocol.ServerCallsign, protocol.ClientQueryBroadcastRecipient, protocol.ClientQueryBroadcastRecipientPilots:
-		fsdErr := protocol.NewGenericFSDError(protocol.CallsignInvalidError, clientIdentPDU.From, "forbidden callsign")
-		return nil, fsdErr
+		err = protocol.NewGenericFSDError(protocol.CallsignInvalidError, clientIdentPDU.From, "forbidden callsign")
+		return
 	}
 
 	// Verify protocol revision
 	if addPilotPDU.ProtocolRevision != protocol.ProtoRevisionVatsim2022 {
-		fsdErr := protocol.NewGenericFSDError(protocol.InvalidProtocolRevisionError, strconv.Itoa(addPilotPDU.ProtocolRevision), "please connect with a client that supports the Vatsim2022 (101) protocol revision")
-		return nil, fsdErr
+		err = protocol.NewGenericFSDError(protocol.InvalidProtocolRevisionError, strconv.Itoa(addPilotPDU.ProtocolRevision), "please connect with a client that supports the Vatsim2022 (101) protocol revision")
+		return
 	}
 
 	// Verify if this browser is supported by vatsimauth
 	if _, ok := vatsimauth.Keys[clientIdentPDU.ClientID]; !ok {
-		fsdErr := protocol.NewGenericFSDError(protocol.UnauthorizedSoftwareError, "", "provided client ID is not supported by vatsimauth")
-		return nil, fsdErr
+		err = protocol.NewGenericFSDError(protocol.UnauthorizedSoftwareError, "", "provided client ID is not supported by vatsimauth")
+		return
 	}
 
 	fsdClient = NewFSDClient(c, &clientIdentPDU, &addPilotPDU, initChallenge, pilotRating)
 
 	return fsdClient, nil
+}
+
+func handleAuthentication(cid int, tokenField string) (networkRating protocol.NetworkRating, pilotRating protocol.PilotRating, err error) {
+	// Check if token field actually contains a JWT token, otherwise treat as plaintext password
+	err = protocol.V.Var(tokenField, "required,jwt")
+	if err == nil {
+		// Treat as JWT token
+		return verifyJWTToken(cid, tokenField)
+	} else {
+		// Treat as plaintext password
+		return verifyPassword(cid, tokenField)
+	}
+}
+
+func verifyJWTToken(cid int, tokenField string) (networkRating protocol.NetworkRating, pilotRating protocol.PilotRating, err error) {
+	var token *jwt.Token
+	var verifier auth2.DefaultVerifier
+	if token, err = verifier.VerifyJWT(tokenField); err != nil {
+		err = protocol.NewGenericFSDError(protocol.InvalidLogonError, "", "invalid token")
+		return
+	}
+
+	claims := auth2.FSDJWTClaims{}
+	if err = claims.Parse(token); err != nil {
+		err = protocol.NewGenericFSDError(protocol.InvalidLogonError, "", "invalid token claims")
+		return
+	}
+
+	if claims.CID() != cid {
+		err = protocol.NewGenericFSDError(protocol.InvalidLogonError, "", "invalid token claims (CID)")
+		return
+	}
+
+	networkRating = claims.ControllerRating()
+	pilotRating = claims.PilotRating()
+
+	return
 }
 
 // verifyPassword verifies a password in the cases when PLAINTEXT_PASSWORDS is in use.

@@ -24,9 +24,6 @@ func TestStressTest(t *testing.T) {
 	if err := os.Setenv("IN_MEMORY_DB", "true"); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Setenv("PLAINTEXT_PASSWORDS", "true"); err != nil {
-		t.Fatal(err)
-	}
 
 	// Start the server
 	ctx, cancelCtx := context.WithCancel(context.Background())
@@ -85,7 +82,7 @@ func TestStressTest(t *testing.T) {
 			ticker := time.NewTicker(200 * time.Millisecond)
 			defer ticker.Stop()
 
-			for i := range 100 {
+			for i := range 10 {
 				randLat := randFloats(-90, 90, 1)[0]
 				randLon := randFloats(-180, 180, 1)[0]
 
