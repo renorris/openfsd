@@ -11,7 +11,7 @@ services:
       MYSQL_DATABASE: openfsd
       MYSQL_ROOT_HOST: '%'
     healthcheck:
-      test: mysqladmin ping -h 127.0.0.1 -u $$MYSQL_USER --password=$$MYSQL_PASSWORD
+      test: ["CMD", "mysqladmin" ,"ping", "-h", "localhost"]
       start_period: 5s
       interval: 5s
       timeout: 15s
