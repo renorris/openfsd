@@ -11,16 +11,7 @@ RUN apk update && apk add ca-certificates && \
 # Build openfsd
 FROM golang:1.23.2-bookworm AS build
 
-# Precompile the entire go standard library into the first Docker cache layer
-RUN CGO_ENABLED=0 GOOS=linux go install -v -a std
-
 WORKDIR /go/src/openfsd
-
-# Download and precompile all third party libraries
-COPY go.mod .
-COPY go.sum .
-RUN go mod download -x
-RUN go list -m all | tail -n +2 | cut -f 1 -d " " | awk 'NF{print $0 "/..."}' | CGO_ENABLED=0 GOOS=linux xargs -n1 go build -v; echo done
 
 # Add the sources
 COPY . .
