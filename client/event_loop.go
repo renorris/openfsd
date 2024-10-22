@@ -7,6 +7,7 @@ import (
 	"github.com/renorris/openfsd/protocol"
 	"github.com/renorris/openfsd/servercontext"
 	"log"
+	"time"
 )
 
 // EventLoop runs the main event loop for a logged in client
@@ -17,6 +18,11 @@ func (c *FSDClient) EventLoop() error {
 	defer func() {
 		log.Printf("client_disconnected total_clients=%d %s", servercontext.PostOffice().NumRegistered()-1, infoStr)
 	}()
+
+	// Set up heartbeat ticker
+	heartbeatPacket := "#DLSERVER:*:0:0" + protocol.PacketDelimiter
+	heartbeatTicker := time.NewTicker(30 * time.Second)
+	defer heartbeatTicker.Stop()
 
 	// Post-login FSD client event loop
 	for {
@@ -43,6 +49,12 @@ func (c *FSDClient) EventLoop() error {
 		// Handle incoming kill signals
 		case killPacket := <-c.kill:
 			return c.connection.WritePacketImmediately(killPacket)
+
+		// Listen for heartbeat ticker
+		case <-heartbeatTicker.C:
+			if err := c.connection.WritePacket(heartbeatPacket); err != nil {
+				return err
+			}
 		}
 	}
 }

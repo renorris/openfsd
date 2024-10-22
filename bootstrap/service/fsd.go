@@ -4,15 +4,12 @@ import (
 	"context"
 	"errors"
 	"github.com/renorris/openfsd/client"
-	"github.com/renorris/openfsd/postoffice"
-	"github.com/renorris/openfsd/protocol"
 	"github.com/renorris/openfsd/servercontext"
 	"log"
 	"net"
 	"os"
 	"slices"
 	"sync"
-	"time"
 )
 
 type FSDService struct{}
@@ -49,10 +46,6 @@ func (s *FSDService) boot(ctx context.Context, listener *net.TCPListener) error 
 
 	// Track each client connection in a wait group
 	waitGroup := sync.WaitGroup{}
-
-	// Start heartbeat worker
-	waitGroup.Add(1)
-	go s.heartbeatWorker(ctx, &waitGroup)
 
 	for {
 		select {
@@ -119,26 +112,4 @@ func (s *FSDService) resolveAndListen() (listener *net.TCPListener, err error) {
 	}
 
 	return listener, nil
-}
-
-func (s *FSDService) heartbeatWorker(ctx context.Context, wg *sync.WaitGroup) {
-	defer wg.Done()
-
-	heartbeatPacket := "#DLSERVER:*:0:0" + protocol.PacketDelimiter
-
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-
-	// Send server heartbeat every 30 seconds
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			servercontext.PostOffice().ForEachRegistered(func(name string, address postoffice.Address) bool {
-				address.SendMail(heartbeatPacket)
-				return true
-			})
-		}
-	}
 }
