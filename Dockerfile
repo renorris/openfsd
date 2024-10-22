@@ -29,6 +29,8 @@ FROM gcr.io/distroless/static-debian12
 
 WORKDIR /app
 COPY --from=build --chown=nonroot:nonroot /go/src/openfsd/openfsd /app
+RUN chown -R nonroot:nonroot /go/src/openfsd
+
 USER nonroot:nonroot
 
 ENTRYPOINT ["/app/openfsd"]
