@@ -17,7 +17,7 @@ WORKDIR /go/src/openfsd
 COPY . .
 
 # Compile
-RUN CGO_ENABLED=0 GOOS=linux go build -v -o openfsd -ldflags "-s -w" main.go
+RUN mkdir -p build && CGO_ENABLED=0 GOOS=linux go build -v -o build/openfsd -ldflags "-s -w" main.go
 
 # Move UPX into /bin
 COPY --from=upx /bin/upx /bin/upx
@@ -25,11 +25,11 @@ COPY --from=upx /bin/upx /bin/upx
 # Compress with upx
 RUN /bin/upx -v -9 openfsd
 
+# Final distroless image
 FROM gcr.io/distroless/static-debian12
 
 WORKDIR /app
-COPY --from=build --chown=nonroot:nonroot /go/src/openfsd/openfsd /app
-RUN chown -R nonroot:nonroot /app
+COPY --from=build --chown=nonroot:nonroot /go/src/openfsd/build /app
 
 USER nonroot:nonroot
 
