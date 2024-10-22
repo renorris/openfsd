@@ -28,7 +28,7 @@ RUN /bin/upx -v -9 openfsd
 FROM gcr.io/distroless/static-debian12
 
 WORKDIR /app
-COPY --from=build --chown=nonroot:nonroot /go/src/openfsd /app
+COPY --from=build --chown=nonroot:nonroot /go/src/openfsd/openfsd /app
 USER nonroot:nonroot
 
 ENTRYPOINT ["/app/openfsd"]
