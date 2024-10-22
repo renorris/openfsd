@@ -16,6 +16,9 @@ WORKDIR /go/src/openfsd
 # Add the sources
 COPY . .
 
+# Download modules
+RUN go mod download
+
 # Compile
 RUN mkdir -p build && CGO_ENABLED=0 GOOS=linux go build -v -o build/openfsd -ldflags "-s -w" main.go
 
@@ -23,7 +26,7 @@ RUN mkdir -p build && CGO_ENABLED=0 GOOS=linux go build -v -o build/openfsd -ldf
 COPY --from=upx /bin/upx /bin/upx
 
 # Compress with upx
-RUN /bin/upx -v -9 openfsd
+RUN upx -v -9 build/openfsd
 
 # Final distroless image
 FROM gcr.io/distroless/static-debian12
