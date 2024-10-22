@@ -20,7 +20,7 @@ import (
 )
 
 const maxFSDPacketSize = 1536
-const writeFlushInterval = 200 * time.Millisecond
+const writeFlushInterval = 50 * time.Millisecond
 
 var AlwaysImmediate = false
 
