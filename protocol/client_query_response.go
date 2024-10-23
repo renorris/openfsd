@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -50,18 +51,7 @@ func (p *ClientQueryResponsePDU) Parse(packet string) error {
 		return err
 	}
 
-	switch pdu.QueryType {
-	case "ATC", "CAPS", "C?",
-		"RN", "SV", "ATIS",
-		"IP", "INF", "FP",
-		"IPC", "BY", "HI",
-		"HLP", "NOHLP", "WH",
-		"IT", "HT", "DR",
-		"FA", "TA", "BC",
-		"SC", "VT", "ACC",
-		"NEWINFO", "NEWATIS", "EST",
-		"GD":
-	default:
+	if _, exists := slices.BinarySearch(supportedClientQueryTypes, pdu.QueryType); !exists {
 		return NewGenericFSDError(SyntaxError, fields[2], "invalid query type")
 	}
 
