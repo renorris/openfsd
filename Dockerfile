@@ -31,9 +31,9 @@ RUN upx -v -9 build/openfsd
 # Final distroless image
 FROM gcr.io/distroless/static-debian12
 
+USER nonroot:nonroot
+
 WORKDIR /app
 COPY --from=build --chown=nonroot:nonroot /go/src/openfsd/build /app
-
-USER nonroot:nonroot
 
 ENTRYPOINT ["/app/openfsd"]
