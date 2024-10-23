@@ -75,7 +75,7 @@ func TestFSDClientLogin(t *testing.T) {
 			MajorVersion:     3,
 			MinorVersion:     8,
 			CID:              user1.CID,
-			SysUID:           -99999,
+			SysUID:           "-99999",
 			InitialChallenge: "0123456789abcdef",
 		}
 
@@ -131,7 +131,7 @@ func TestFSDClientLogin(t *testing.T) {
 			MajorVersion:     3,
 			MinorVersion:     8,
 			CID:              user1.CID,
-			SysUID:           -99999,
+			SysUID:           "-99999",
 			InitialChallenge: "0123456789abcdef",
 		}
 
@@ -181,7 +181,7 @@ func TestFSDClientLogin(t *testing.T) {
 			MajorVersion:     3,
 			MinorVersion:     8,
 			CID:              user1.CID,
-			SysUID:           -99999,
+			SysUID:           "-99999",
 			InitialChallenge: "0123456789abcdef",
 		}
 
@@ -241,7 +241,7 @@ func TestFSDClientLogin(t *testing.T) {
 			MajorVersion:     3,
 			MinorVersion:     8,
 			CID:              user1.CID,
-			SysUID:           -99999,
+			SysUID:           "-99999",
 			InitialChallenge: "0123456789abcdef",
 		}
 
@@ -316,7 +316,7 @@ func TestFSDClientLogin(t *testing.T) {
 			MajorVersion:     3,
 			MinorVersion:     8,
 			CID:              user1.CID,
-			SysUID:           -99999,
+			SysUID:           "-99999",
 			InitialChallenge: string(lotsOfNines), // <-- Make this field 4096 bytes long
 		}
 
@@ -395,7 +395,7 @@ func TestFSDClientLogin(t *testing.T) {
 			MajorVersion:     3,
 			MinorVersion:     8,
 			CID:              9999999,
-			SysUID:           -99999,
+			SysUID:           "-99999",
 			InitialChallenge: "0123456789abcdef",
 		}
 
@@ -465,7 +465,7 @@ func TestFSDClientLogin(t *testing.T) {
 			MajorVersion:     3,
 			MinorVersion:     8,
 			CID:              user1.CID,
-			SysUID:           -99999,
+			SysUID:           "-99999",
 			InitialChallenge: "0123456789abcdef",
 		}
 
@@ -534,7 +534,7 @@ func TestFSDClientLogin(t *testing.T) {
 			MajorVersion:     3,
 			MinorVersion:     8,
 			CID:              user1.CID,
-			SysUID:           -99999,
+			SysUID:           "-99999",
 			InitialChallenge: "0123456789abcdef",
 		}
 
@@ -604,7 +604,7 @@ func TestFSDClientLogin(t *testing.T) {
 			MajorVersion:     3,
 			MinorVersion:     8,
 			CID:              user1.CID,
-			SysUID:           -99999,
+			SysUID:           "-99999",
 			InitialChallenge: "0123456789abcdef",
 		}
 

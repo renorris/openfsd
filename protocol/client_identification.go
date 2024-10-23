@@ -16,7 +16,7 @@ type ClientIdentificationPDU struct {
 	MajorVersion     int    `validate:"min=0,max=999"`
 	MinorVersion     int    `validate:"min=0,max=999"`
 	CID              int    `validate:"min=100000,max=9999999"`
-	SysUID           int    `validate:""`
+	SysUID           string `validate:"required,min=1,max=64"`
 	InitialChallenge string `validate:"required,hexadecimal,min=2,max=32"`
 }
 
@@ -24,7 +24,7 @@ func (p *ClientIdentificationPDU) Serialize() string {
 	clientIDBytes := make([]byte, 2)
 	binary.BigEndian.PutUint16(clientIDBytes, p.ClientID)
 	clientIDStr := hex.EncodeToString(clientIDBytes)
-	return fmt.Sprintf("$ID%s:%s:%s:%s:%d:%d:%d:%d:%s%s",
+	return fmt.Sprintf("$ID%s:%s:%s:%s:%d:%d:%d:%s:%s%s",
 		p.From, p.To, clientIDStr, p.ClientName, p.MajorVersion,
 		p.MinorVersion, p.CID, p.SysUID, p.InitialChallenge, PacketDelimiter)
 }
@@ -42,6 +42,7 @@ func (p *ClientIdentificationPDU) Parse(packet string) error {
 		From:             fields[0],
 		To:               fields[1],
 		ClientName:       fields[3],
+		SysUID:           fields[7],
 		InitialChallenge: fields[8],
 	}
 
@@ -68,10 +69,6 @@ func (p *ClientIdentificationPDU) Parse(packet string) error {
 
 	if pdu.CID, err = strconv.Atoi(fields[6]); err != nil {
 		return NewGenericFSDError(SyntaxError, fields[6], "invalid CID")
-	}
-
-	if pdu.SysUID, err = strconv.Atoi(fields[7]); err != nil {
-		return NewGenericFSDError(SyntaxError, fields[7], "invalid system UID")
 	}
 
 	if err = V.Struct(&pdu); err != nil {
