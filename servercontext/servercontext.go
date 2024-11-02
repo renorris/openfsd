@@ -116,20 +116,16 @@ func New() *ServerContext {
 	// Instantiate protocol validator
 	protocol.V = validator.New(validator.WithRequiredStructEnabled())
 
+	// Create SQL config
+	cfg := mysql.NewConfig()
+	cfg.User = server.config.MySQLUser
+	cfg.Passwd = server.config.MySQLPass
+	cfg.Net = server.config.MySQLNet
+	cfg.Addr = server.config.MySQLAddr
+	cfg.DBName = server.config.MySQLDBName
+	cfg.Params = map[string]string{"parseTime": "true"}
+
 	// Create SQL db
-	cfg := mysql.Config{
-		User:   server.config.MySQLUser,
-		Passwd: server.config.MySQLPass,
-		Net:    server.config.MySQLNet,
-		Addr:   server.config.MySQLAddr,
-		DBName: server.config.MySQLDBName,
-		Params: map[string]string{"parseTime": "true"},
-	}
-
-	if server.config.InMemoryDB {
-		cfg.AllowNativePasswords = true
-	}
-
 	var db *sql.DB
 	var err error
 	if db, err = sql.Open("mysql", cfg.FormatDSN()); err != nil {
