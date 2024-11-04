@@ -16,11 +16,9 @@ WORKDIR /go/src/openfsd
 # Add the sources
 COPY . .
 
-# Download modules
-RUN go mod download
-
 # Compile
-RUN mkdir -p build && CGO_ENABLED=0 GOOS=linux go build -v -o build/openfsd -ldflags "-s -w" main.go
+ENV GOCACHE=/root/.cache/go-build
+RUN --mount=type=cache,target="/root/.cache/go-build" mkdir -p build && CGO_ENABLED=0 GOOS=linux go build -v -o build/openfsd -ldflags "-s -w" main.go
 
 # Move UPX into /bin
 COPY --from=upx /bin/upx /bin/upx
