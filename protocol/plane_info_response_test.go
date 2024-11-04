@@ -43,10 +43,14 @@ func TestParsePlaneInfoResponsePDU(t *testing.T) {
 			nil,
 		},
 		{
-			"Invalid - Missing EQUIPMENT Prefix",
-			"#SBATC:PILOT:PI:GEN:A320:LIVERY=Standard\r\n",
-			&PlaneInfoResponsePDU{},
-			NewGenericFSDError(SyntaxError, "A320", "invalid EQUIPMENT= field"),
+			"only livery",
+			"#SBATC:PILOT:PI:GEN:LIVERY=Standard\r\n",
+			&PlaneInfoResponsePDU{
+				From:   "ATC",
+				To:     "PILOT",
+				Livery: "Standard",
+			},
+			nil,
 		},
 		{
 			"Invalid - Wrong HEADER Prefix",

@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -8,14 +9,44 @@ import (
 type PlaneInfoResponsePDU struct {
 	From      string `validate:"required,alphanum,max=16"`
 	To        string `validate:"required,alphanum,max=16"`
-	Equipment string `validate:"required,max=64"`
+	Equipment string `validate:"max=64"`
 	Airline   string `validate:"max=64"`
 	Livery    string `validate:"max=64"`
 	CSL       string `validate:"max=64"`
 }
 
+var NoKeyFoundError = noKeyFoundError()
+
+func noKeyFoundError() error {
+	return errors.New("plane info response: no key found")
+}
+
+// findPlaneInfoValue attempts to find a given key `key` in fields `fields`
+// formatted as e.g. KEY=VALUE.
+func findPlaneInfoValue(key string, fields []string) (val string, err error) {
+	for _, field := range fields {
+		if !strings.HasPrefix(field, key) {
+			continue
+		}
+
+		var s []string
+		if s = strings.Split(field, "="); len(s) != 2 {
+			continue
+		}
+
+		val = s[1]
+		return
+	}
+
+	err = NoKeyFoundError
+	return
+}
+
 func (p *PlaneInfoResponsePDU) Serialize() string {
-	str := fmt.Sprintf("#SB%s:%s:PI:GEN:EQUIPMENT=%s", p.From, p.To, p.Equipment)
+	str := fmt.Sprintf("#SB%s:%s:PI:GEN", p.From, p.To)
+	if p.Equipment != "" {
+		str += fmt.Sprintf(":EQUIPMENT=%s", p.Equipment)
+	}
 	if p.Airline != "" {
 		str += fmt.Sprintf(":AIRLINE=%s", p.Airline)
 	}
@@ -39,7 +70,7 @@ func (p *PlaneInfoResponsePDU) Parse(packet string) error {
 		return NewGenericFSDError(SyntaxError, "", "invalid parameter count")
 	}
 
-	if fields[2] != "PI" || fields[3] != "GEN" {
+	if fields[2] != "PI" {
 		return NewGenericFSDError(SyntaxError, fields[2], "third parameter must be 'PI'")
 	}
 
@@ -52,30 +83,24 @@ func (p *PlaneInfoResponsePDU) Parse(packet string) error {
 		To:   fields[1],
 	}
 
-	if !strings.HasPrefix(fields[4], "EQUIPMENT=") || len(fields[4]) < len("EQUIPMENT=")+1 {
-		return NewGenericFSDError(SyntaxError, fields[4], "invalid EQUIPMENT= field")
-	}
-	pdu.Equipment = strings.SplitN(fields[4], "=", 2)[1]
+	// Determine number of optional fields to parse
+	numOptionalFields := len(fields) - 4
 
-	if len(fields) > 5 {
-		if !strings.HasPrefix(fields[5], "AIRLINE=") || len(fields[5]) < len("AIRLINE=")+1 {
-			return NewGenericFSDError(SyntaxError, fields[5], "invalid AIRLINE= field")
+	// Store each optional field
+	for range numOptionalFields {
+		optionalFields := fields[4:]
+		if val, err := findPlaneInfoValue("EQUIPMENT", optionalFields); err == nil {
+			pdu.Equipment = val
 		}
-		pdu.Airline = strings.SplitN(fields[5], "=", 2)[1]
-	}
-
-	if len(fields) > 6 {
-		if !strings.HasPrefix(fields[6], "LIVERY=") || len(fields[6]) < len("LIVERY=")+1 {
-			return NewGenericFSDError(SyntaxError, fields[6], "invalid LIVERY= field")
+		if val, err := findPlaneInfoValue("AIRLINE", optionalFields); err == nil {
+			pdu.Airline = val
 		}
-		pdu.Livery = strings.SplitN(fields[6], "=", 2)[1]
-	}
-
-	if len(fields) > 7 {
-		if !strings.HasPrefix(fields[7], "CSL=") || len(fields[6]) < len("CSL=")+1 {
-			return NewGenericFSDError(SyntaxError, fields[7], "invalid CSL= field")
+		if val, err := findPlaneInfoValue("LIVERY", optionalFields); err == nil {
+			pdu.Livery = val
 		}
-		pdu.CSL = strings.SplitN(fields[7], "=", 2)[1]
+		if val, err := findPlaneInfoValue("CSL", optionalFields); err == nil {
+			pdu.CSL = val
+		}
 	}
 
 	if err := V.Struct(pdu); err != nil {
