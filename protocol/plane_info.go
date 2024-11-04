@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-type PlaneInfoResponsePDU struct {
+type PlaneInfoPDU struct {
 	From      string `validate:"required,alphanum,max=16"`
 	To        string `validate:"required,alphanum,max=16"`
 	Equipment string `validate:"max=64"`
@@ -42,7 +42,7 @@ func findPlaneInfoValue(key string, fields []string) (val string, err error) {
 	return
 }
 
-func (p *PlaneInfoResponsePDU) Serialize() string {
+func (p *PlaneInfoPDU) Serialize() string {
 	str := fmt.Sprintf("#SB%s:%s:PI:GEN", p.From, p.To)
 	if p.Equipment != "" {
 		str += fmt.Sprintf(":EQUIPMENT=%s", p.Equipment)
@@ -61,7 +61,7 @@ func (p *PlaneInfoResponsePDU) Serialize() string {
 	return str
 }
 
-func (p *PlaneInfoResponsePDU) Parse(packet string) error {
+func (p *PlaneInfoPDU) Parse(packet string) error {
 	packet = strings.TrimSuffix(packet, PacketDelimiter)
 	packet = strings.TrimPrefix(packet, "#SB")
 
@@ -78,7 +78,7 @@ func (p *PlaneInfoResponsePDU) Parse(packet string) error {
 		return NewGenericFSDError(SyntaxError, fields[3], "fourth parameter must be 'GEN'")
 	}
 
-	pdu := PlaneInfoResponsePDU{
+	pdu := PlaneInfoPDU{
 		From: fields[0],
 		To:   fields[1],
 	}

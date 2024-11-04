@@ -13,13 +13,13 @@ func TestParsePlaneInfoResponsePDU(t *testing.T) {
 	tests := []struct {
 		name    string
 		packet  string
-		want    *PlaneInfoResponsePDU
+		want    *PlaneInfoPDU
 		wantErr error
 	}{
 		{
 			"Valid Info With All Fields",
 			"#SBATC:PILOT:PI:GEN:EQUIPMENT=A320:AIRLINE=Delta:LIVERY=Standard:CSL=ModelABC\r\n",
-			&PlaneInfoResponsePDU{
+			&PlaneInfoPDU{
 				From:      "ATC",
 				To:        "PILOT",
 				Equipment: "A320",
@@ -32,7 +32,7 @@ func TestParsePlaneInfoResponsePDU(t *testing.T) {
 		{
 			"Valid Info With Minimum Required Fields",
 			"#SBATC:PILOT:PI:GEN:EQUIPMENT=A320\r\n",
-			&PlaneInfoResponsePDU{
+			&PlaneInfoPDU{
 				From:      "ATC",
 				To:        "PILOT",
 				Equipment: "A320",
@@ -45,7 +45,7 @@ func TestParsePlaneInfoResponsePDU(t *testing.T) {
 		{
 			"only livery",
 			"#SBATC:PILOT:PI:GEN:LIVERY=Standard\r\n",
-			&PlaneInfoResponsePDU{
+			&PlaneInfoPDU{
 				From:   "ATC",
 				To:     "PILOT",
 				Livery: "Standard",
@@ -55,31 +55,31 @@ func TestParsePlaneInfoResponsePDU(t *testing.T) {
 		{
 			"Invalid - Wrong HEADER Prefix",
 			"$SBATC:PILOT:PI:GEN:EQUIPMENT=A320\r\n",
-			&PlaneInfoResponsePDU{},
+			&PlaneInfoPDU{},
 			NewGenericFSDError(SyntaxError, "", "validation error"),
 		},
 		{
 			"Invalid - Field Count Less",
 			"#SBATC:PILOT:PI:GEN\r\n",
-			&PlaneInfoResponsePDU{},
+			&PlaneInfoPDU{},
 			NewGenericFSDError(SyntaxError, "", "invalid parameter count"),
 		},
 		{
 			"Invalid - Field Count More",
 			"#SBATC:PILOT:PI:GEN:EQUIPMENT=A320:AIRLINE=Delta:LIVERY=Standard:CSL=ModelABC:ExtraField\r\n",
-			&PlaneInfoResponsePDU{},
+			&PlaneInfoPDU{},
 			NewGenericFSDError(SyntaxError, "", "invalid parameter count"),
 		},
 		{
 			"Invalid - No From Field",
 			"#SB:PILOT:PI:GEN:EQUIPMENT=A320\r\n",
-			&PlaneInfoResponsePDU{},
+			&PlaneInfoPDU{},
 			NewGenericFSDError(SyntaxError, "", "validation error"),
 		},
 		{
 			"Invalid - No To Field",
 			"#SBATC::PI:GEN:EQUIPMENT=A320\r\n",
-			&PlaneInfoResponsePDU{},
+			&PlaneInfoPDU{},
 			NewGenericFSDError(SyntaxError, "", "validation error"),
 		},
 	}
@@ -87,7 +87,7 @@ func TestParsePlaneInfoResponsePDU(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			// Perform the parsing
-			pdu := PlaneInfoResponsePDU{}
+			pdu := PlaneInfoPDU{}
 			err := pdu.Parse(tc.packet)
 
 			// Check the error
@@ -110,12 +110,12 @@ func TestParsePlaneInfoResponsePDU(t *testing.T) {
 func TestPlaneInfoResponsePDU_Serialize(t *testing.T) {
 	tests := []struct {
 		name    string
-		pdu     *PlaneInfoResponsePDU
+		pdu     *PlaneInfoPDU
 		wantStr string
 	}{
 		{
 			"All Fields Present",
-			&PlaneInfoResponsePDU{
+			&PlaneInfoPDU{
 				From:      "ATC",
 				To:        "PILOT",
 				Equipment: "A320",
@@ -127,7 +127,7 @@ func TestPlaneInfoResponsePDU_Serialize(t *testing.T) {
 		},
 		{
 			"Only Required Fields",
-			&PlaneInfoResponsePDU{
+			&PlaneInfoPDU{
 				From:      "ATC",
 				To:        "PILOT",
 				Equipment: "B737",
@@ -136,7 +136,7 @@ func TestPlaneInfoResponsePDU_Serialize(t *testing.T) {
 		},
 		{
 			"With Airline",
-			&PlaneInfoResponsePDU{
+			&PlaneInfoPDU{
 				From:      "CTRL",
 				To:        "PLANE",
 				Equipment: "E170",
@@ -146,7 +146,7 @@ func TestPlaneInfoResponsePDU_Serialize(t *testing.T) {
 		},
 		{
 			"With Livery",
-			&PlaneInfoResponsePDU{
+			&PlaneInfoPDU{
 				From:      "GROUND",
 				To:        "ACFT",
 				Equipment: "CRJ2",
@@ -156,7 +156,7 @@ func TestPlaneInfoResponsePDU_Serialize(t *testing.T) {
 		},
 		{
 			"With CSL",
-			&PlaneInfoResponsePDU{
+			&PlaneInfoPDU{
 				From:      "TWR",
 				To:        "JET",
 				Equipment: "CONC",

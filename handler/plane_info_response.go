@@ -5,9 +5,9 @@ import (
 	"github.com/renorris/openfsd/protocol"
 )
 
-func planeInfoResponseHandler(invoker Invoker, packet string) (result Result, err error) {
+func planeInfoHandler(invoker Invoker, packet string) (result Result, err error) {
 	// Parse packet
-	pdu := protocol.PlaneInfoResponsePDU{}
+	pdu := protocol.PlaneInfoPDU{}
 	if err = pdu.Parse(packet); err != nil {
 		return
 	}

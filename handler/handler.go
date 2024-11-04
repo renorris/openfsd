@@ -62,7 +62,7 @@ func New(packet string) (handler Handler, err error) {
 				handler = planeInfoRequestFsinnHandler
 			case "PI":
 				if len(fields) > 3 && fields[3] == "GEN" {
-					handler = planeInfoResponseHandler
+					handler = planeInfoHandler
 				}
 			}
 		case "#TM":
