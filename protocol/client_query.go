@@ -6,10 +6,18 @@ import (
 	"strings"
 )
 
-var supportedClientQueryTypes = buildSupportedClientQueryTypes()
+type QueryType string
 
-func buildSupportedClientQueryTypes() []string {
-	typesList := []string{
+// IsValid returns whether a QueryType is recognized
+func (q QueryType) IsValid() bool {
+	_, exists := slices.BinarySearch(supportedClientQueryTypesSorted, q)
+	return exists
+}
+
+var supportedClientQueryTypesSorted = buildSupportedClientQueryTypes()
+
+func buildSupportedClientQueryTypes() []QueryType {
+	typesList := []QueryType{
 		"ATC", "CAPS", "C?",
 		"RN", "SV", "ATIS",
 		"IP", "INF", "FP",
@@ -26,10 +34,10 @@ func buildSupportedClientQueryTypes() []string {
 }
 
 type ClientQueryPDU struct {
-	From      string `validate:"required,alphanum,max=16"`
-	To        string `validate:"required,max=7"`
-	QueryType string `validate:"required,ascii,min=2,max=16"`
-	Payload   string `validate:""`
+	From      string    `validate:"required,alphanum,max=16"`
+	To        string    `validate:"required,max=7"`
+	QueryType QueryType `validate:"required,ascii,min=2,max=16"`
+	Payload   string    `validate:""`
 }
 
 func (p *ClientQueryPDU) Serialize() string {
@@ -55,7 +63,7 @@ func (p *ClientQueryPDU) Parse(packet string) error {
 	pdu := ClientQueryPDU{
 		From:      fields[0],
 		To:        fields[1],
-		QueryType: fields[2],
+		QueryType: QueryType(fields[2]),
 	}
 
 	if len(fields) == 4 {
@@ -69,7 +77,7 @@ func (p *ClientQueryPDU) Parse(packet string) error {
 		return err
 	}
 
-	if _, exists := slices.BinarySearch(supportedClientQueryTypes, pdu.QueryType); !exists {
+	if !pdu.QueryType.IsValid() {
 		return NewGenericFSDError(SyntaxError, fields[2], "invalid query type")
 	}
 

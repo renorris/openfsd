@@ -2,15 +2,14 @@ package protocol
 
 import (
 	"fmt"
-	"slices"
 	"strings"
 )
 
 type ClientQueryResponsePDU struct {
-	From      string `validate:"required,alphanum,max=16"`
-	To        string `validate:"required,max=16"`
-	QueryType string `validate:"required,ascii,min=2,max=7"`
-	Payload   string `validate:""`
+	From      string    `validate:"required,alphanum,max=16"`
+	To        string    `validate:"required,max=16"`
+	QueryType QueryType `validate:"required,ascii,min=2,max=7"`
+	Payload   string    `validate:""`
 }
 
 func (p *ClientQueryResponsePDU) Serialize() string {
@@ -37,7 +36,7 @@ func (p *ClientQueryResponsePDU) Parse(packet string) error {
 	pdu := ClientQueryResponsePDU{
 		From:      fields[0],
 		To:        fields[1],
-		QueryType: fields[2],
+		QueryType: QueryType(fields[2]),
 	}
 
 	if len(fields) == 4 {
@@ -51,7 +50,7 @@ func (p *ClientQueryResponsePDU) Parse(packet string) error {
 		return err
 	}
 
-	if _, exists := slices.BinarySearch(supportedClientQueryTypes, pdu.QueryType); !exists {
+	if !pdu.QueryType.IsValid() {
 		return NewGenericFSDError(SyntaxError, fields[2], "invalid query type")
 	}
 
