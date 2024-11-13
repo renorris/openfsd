@@ -38,8 +38,8 @@ type clientStruct struct {
 	simulatorType    int
 	realName         string
 
-	preliminaryTestPackets []protocol.PDU // Packets to send after logging in, but before the next browser logs in
-	preliminaryWantPackets []protocol.PDU // Expected packets to receive before the next browser logs in
+	preliminaryTestPackets []protocol.PDU // Packets to send after logging in, but before the next client logs in
+	preliminaryWantPackets []protocol.PDU // Expected packets to receive before the next client logs in
 	testPackets            []protocol.PDU // Packets to send in normal post-login state
 	wantPackets            []protocol.PDU // Expected packets to receive
 }
@@ -894,7 +894,7 @@ func TestFSDClientLogic(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.testName, func(t *testing.T) {
 			var doneWg sync.WaitGroup
-			// Spawn each browser
+			// Spawn each client
 			for _, client := range tc.clients {
 				c := client
 				doneWg.Add(1)
@@ -905,8 +905,8 @@ func TestFSDClientLogic(t *testing.T) {
 				go func() {
 					defer doneWg.Done()
 
-					// Log in the browser.
-					// Test cases are meant to be executed after the browser has logged in.
+					// Log in the client.
+					// Test cases are meant to be executed after the client has logged in.
 					// Load a JWT token first
 					var token string
 					var err error
