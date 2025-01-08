@@ -121,8 +121,8 @@ To connect to openfsd:
 4. In the FSD tab, enable the following flags (send and receive to TRUE):
    - "Parts"
    - "Gnd. flag"
-   - "Fast pos"
    - "Send visual pos."
+5. Leave the "Fast pos" flag unchecked.
 
 ## Protocol Details
 
