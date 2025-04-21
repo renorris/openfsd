@@ -10,7 +10,7 @@ type PilotPositionPDU struct {
 	SquawkingModeC   bool    `validate:""`
 	Identing         bool    `validate:""`
 	From             string  `validate:"required,alphanum,max=16"`
-	SquawkCode       string  `validate:"len=4"`
+	SquawkCode       string  `validate:"required,min=1,max=4"`
 	NetworkRating    int     `validate:"required,min=1,max=12"`
 	Lat              float64 `validate:"min=-90.0,max=90.0"`
 	Lng              float64 `validate:"min=-180.0,max=180.0"`
