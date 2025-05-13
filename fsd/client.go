@@ -1,0 +1,110 @@
+package fsd
+
+import (
+	"bufio"
+	"context"
+	"go.uber.org/atomic"
+	"net"
+	"strconv"
+	"strings"
+)
+
+type Client struct {
+	conn      net.Conn
+	scanner   *bufio.Scanner
+	ctx       context.Context
+	cancelCtx func()
+	sendChan  chan string
+
+	latLon   [2]float64
+	visRange float64
+
+	flightPlan *atomic.String
+	beaconCode *atomic.String
+
+	facilityType int // ATC facility type. This value is only relevant for ATC
+	loginData
+
+	authState vatsimAuthState
+}
+
+func newClient(ctx context.Context, conn net.Conn, scanner *bufio.Scanner, loginData loginData) (client *Client) {
+	clientCtx, cancel := context.WithCancel(ctx)
+	return &Client{
+		conn:       conn,
+		scanner:    scanner,
+		ctx:        clientCtx,
+		cancelCtx:  cancel,
+		sendChan:   make(chan string, 32),
+		flightPlan: &atomic.String{},
+		beaconCode: &atomic.String{},
+		loginData:  loginData,
+	}
+}
+
+func (c *Client) senderWorker() {
+	defer c.conn.Close()
+	defer c.cancelCtx()
+
+	for {
+		select {
+		case packet := <-c.sendChan:
+			if _, err := c.conn.Write([]byte(packet)); err != nil {
+				return
+			}
+		case <-c.ctx.Done():
+			return
+		}
+	}
+}
+
+// sendError sends an FSD error packet to a Client with the specified code and message.
+// It returns an error if writing to the connection fails.
+func (c *Client) sendError(code int, message string) (err error) {
+	packet := strings.Builder{}
+	packet.Grow(128)
+	packet.WriteString("$ERserver:unknown:")
+	codeBuf := make([]byte, 0, 8)
+	codeBuf = strconv.AppendInt(codeBuf, int64(code), 10)
+	packet.Write(codeBuf)
+	packet.WriteString("::")
+	packet.WriteString(message)
+	packet.WriteString("\r\n")
+
+	return c.send(packet.String())
+}
+
+func (c *Client) send(packet string) (err error) {
+	select {
+	case c.sendChan <- packet:
+		return
+	case <-c.ctx.Done():
+		return c.ctx.Err()
+	}
+}
+
+func (s *Server) eventLoop(client *Client) {
+	defer client.cancelCtx()
+
+	go client.senderWorker()
+
+	for {
+		if !client.scanner.Scan() {
+			return
+		}
+
+		// Reference the next packet
+		packet := client.scanner.Bytes()
+		packet = append(packet, '\r', '\n') // Re-append delimiter
+
+		// Verify packet and obtain type
+		packetType, ok := verifyPacket(packet, client)
+		if !ok {
+			continue
+		}
+
+		// Run handler
+		handler := s.getHandler(packetType)
+		handler(client, packet)
+	}
+}

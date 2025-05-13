@@ -1,0 +1,25 @@
+{{ define "title" }}Login{{ end }}
+
+{{ define "body" }}
+<div class="container-fluid d-flex justify-content-center position-absolute top-50 start-50 translate-middle">
+    <div class="p-4 rounded border border-dark-subtle border-1">
+        <form id="login-form">
+            <div class="mb-3">
+                <label for="login-input-cid" class="form-label">CID</label>
+                <input type="number" class="form-control" id="login-input-cid" required>
+            </div>
+            <div class="mb-3">
+                <label for="login-input-password" class="form-label">Password</label>
+                <input type="password" class="form-control" id="login-input-password" required>
+            </div>
+            <div class="mb-3 form-check">
+                <input type="checkbox" class="form-check-input" id="login-form-remember-me">
+                <label class="form-check-label" for="login-form-remember-me">Remember me</label>
+            </div>
+            <button type="submit" class="btn btn-outline-dark">Log in</button>
+        </form>
+    </div>
+</div>
+
+<script src="/static/js/openfsd/login.js"></script>
+{{ end }}

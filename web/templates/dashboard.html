@@ -1,0 +1,12 @@
+{{ define "title" }}Dashboard{{ end }}
+
+{{ define "body" }}
+<div class="container-fluid d-flex flex-column justify-content-center align-items-center">
+    <div id="dashboard-real-name">Loading...</div>
+    <div>Network Rating: <span id="dashboard-network-rating">Loading...</span></div>
+    <div><span id="dashboard-connection-count"></span> users connected</div>
+    <div id="map" class="rounded" style="width: 600px; height: 400px;"></div>
+</div>
+
+<script src="/static/js/openfsd/dashboard.js" defer></script>
+{{ end }}
