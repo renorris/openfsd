@@ -71,7 +71,13 @@ func (s *Server) refreshAccessToken(c *gin.Context) {
 
 	badTokenRes := newAPIV1Failure("bad token")
 
-	refreshToken, err := fsd.ParseJwtToken(reqBody.RefreshToken, s.jwtSecret)
+	jwtSecret, err := s.dbRepo.ConfigRepo.Get(db.ConfigJwtSecretKey)
+	if err != nil {
+		writeAPIV1Response(c, http.StatusInternalServerError, &genericAPIV1InternalServerError)
+		return
+	}
+
+	refreshToken, err := fsd.ParseJwtToken(reqBody.RefreshToken, []byte(jwtSecret))
 	if err != nil {
 		writeAPIV1Response(c, http.StatusUnauthorized, &badTokenRes)
 		return
@@ -90,7 +96,7 @@ func (s *Server) refreshAccessToken(c *gin.Context) {
 		return
 	}
 
-	access, err := s.makeAccessToken(user)
+	access, err := s.makeAccessToken(user, []byte(jwtSecret))
 	if err != nil {
 		writeAPIV1Response(c, http.StatusInternalServerError, &genericAPIV1InternalServerError)
 		return
@@ -174,7 +180,13 @@ func (s *Server) getFsdJwt(c *gin.Context) {
 		return
 	}
 
-	fsdJwtTokenStr, err := fsdJwtToken.SignedString(s.jwtSecret)
+	jwtSecret, err := s.dbRepo.ConfigRepo.Get(db.ConfigJwtSecretKey)
+	if err != nil {
+		writeAPIV1Response(c, http.StatusInternalServerError, &genericAPIV1InternalServerError)
+		return
+	}
+
+	fsdJwtTokenStr, err := fsdJwtToken.SignedString([]byte(jwtSecret))
 	if err != nil {
 		resBody := ResponseBody{
 			ErrorMsg: "Internal server error",
@@ -200,13 +212,22 @@ func (s *Server) jwtBearerMiddleware(c *gin.Context) {
 	if !found {
 		res := newAPIV1Failure("bad bearer token")
 		writeAPIV1Response(c, http.StatusBadRequest, &res)
+		c.Abort()
 		return
 	}
 
-	accessToken, err := fsd.ParseJwtToken(authHeader, s.jwtSecret)
+	jwtSecret, err := s.dbRepo.ConfigRepo.Get(db.ConfigJwtSecretKey)
+	if err != nil {
+		writeAPIV1Response(c, http.StatusInternalServerError, &genericAPIV1InternalServerError)
+		c.Abort()
+		return
+	}
+
+	accessToken, err := fsd.ParseJwtToken(authHeader, []byte(jwtSecret))
 	if err != nil {
 		res := newAPIV1Failure("invalid bearer token")
 		writeAPIV1Response(c, http.StatusUnauthorized, &res)
+		c.Abort()
 		return
 	}
 
@@ -233,12 +254,17 @@ func getJwtContext(c *gin.Context) (claims *fsd.CustomClaims) {
 }
 
 func (s *Server) makeAccessRefreshTokens(user *db.User, rememberMe bool) (access string, refresh string, err error) {
-	access, err = s.makeAccessToken(user)
+	jwtSecret, err := s.dbRepo.ConfigRepo.Get(db.ConfigJwtSecretKey)
 	if err != nil {
 		return
 	}
 
-	refresh, err = s.makeRefreshToken(user, rememberMe)
+	access, err = s.makeAccessToken(user, []byte(jwtSecret))
+	if err != nil {
+		return
+	}
+
+	refresh, err = s.makeRefreshToken(user, rememberMe, []byte(jwtSecret))
 	if err != nil {
 		return
 	}
@@ -246,7 +272,7 @@ func (s *Server) makeAccessRefreshTokens(user *db.User, rememberMe bool) (access
 	return
 }
 
-func (s *Server) makeAccessToken(user *db.User) (access string, err error) {
+func (s *Server) makeAccessToken(user *db.User, jwtSecret []byte) (access string, err error) {
 	// Make access token
 	accessToken, err := fsd.MakeJwtToken(&fsd.CustomFields{
 		TokenType:     "access",
@@ -259,7 +285,7 @@ func (s *Server) makeAccessToken(user *db.User) (access string, err error) {
 		return
 	}
 
-	access, err = accessToken.SignedString(s.jwtSecret)
+	access, err = accessToken.SignedString(jwtSecret)
 	if err != nil {
 		return
 	}
@@ -267,7 +293,7 @@ func (s *Server) makeAccessToken(user *db.User) (access string, err error) {
 	return
 }
 
-func (s *Server) makeRefreshToken(user *db.User, rememberMe bool) (refresh string, err error) {
+func (s *Server) makeRefreshToken(user *db.User, rememberMe bool, jwtSecret []byte) (refresh string, err error) {
 	refreshTokenDuration := time.Hour * 24
 	if rememberMe {
 		refreshTokenDuration = time.Hour * 24 * 30
@@ -285,7 +311,7 @@ func (s *Server) makeRefreshToken(user *db.User, rememberMe bool) (refresh strin
 		return
 	}
 
-	refresh, err = refreshToken.SignedString(s.jwtSecret)
+	refresh, err = refreshToken.SignedString(jwtSecret)
 	if err != nil {
 		return
 	}

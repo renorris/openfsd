@@ -57,7 +57,7 @@ func (s *metarService) handleMetarRequest(req *metarRequest) {
 		return
 	}
 
-	bufBytes := make([]byte, 4096)
+	bufBytes := make([]byte, 512)
 	buf := bytes.NewBuffer(bufBytes)
 	if _, err = io.Copy(buf, res.Body); err != nil {
 		sendMetarServiceError(req)

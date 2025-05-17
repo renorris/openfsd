@@ -4,14 +4,15 @@ import (
 	"database/sql"
 	"errors"
 	"github.com/gin-gonic/gin"
+	"github.com/renorris/openfsd/db"
 	"github.com/renorris/openfsd/fsd"
 	"net/http"
 )
 
-// getUserInfo returns the user info of the specified CID.
+// getUserByCID returns the user info of the specified CID.
 //
 // Only >= SUP can request CIDs other than what is indicated in their bearer token.
-func (s *Server) getUserInfo(c *gin.Context) {
+func (s *Server) getUserByCID(c *gin.Context) {
 	type RequestBody struct {
 		CID int `json:"cid" binding:"min=1,required"`
 	}
@@ -61,6 +62,12 @@ func (s *Server) getUserInfo(c *gin.Context) {
 // The CID itself is immutable and cannot be changed.
 // Only >= SUP can update CIDs other than what is indicated in their bearer token.
 func (s *Server) updateUser(c *gin.Context) {
+	claims := getJwtContext(c)
+	if claims.NetworkRating < fsd.NetworkRatingSupervisor {
+		writeAPIV1Response(c, http.StatusForbidden, &genericAPIV1Forbidden)
+		return
+	}
+
 	type RequestBody struct {
 		CID           int     `json:"cid" binding:"min=1,required"`
 		Password      *string `json:"password"`
@@ -79,8 +86,6 @@ func (s *Server) updateUser(c *gin.Context) {
 		writeAPIV1Response(c, http.StatusNotFound, &genericAPIV1NotFound)
 		return
 	}
-
-	claims := getJwtContext(c)
 
 	if targetUser.NetworkRating > int(claims.NetworkRating) {
 		res := newAPIV1Failure("cannot update user with higher network rating")
@@ -144,10 +149,38 @@ func (s *Server) createUser(c *gin.Context) {
 	}
 
 	claims := getJwtContext(c)
-
-	if claims.NetworkRating < fsd.NetworkRatingSupervisor || reqBody.NetworkRating > int(claims.NetworkRating) {
+	if claims.NetworkRating < fsd.NetworkRatingSupervisor ||
+		reqBody.NetworkRating > int(claims.NetworkRating) {
 		writeAPIV1Response(c, http.StatusForbidden, &genericAPIV1Forbidden)
 		return
 	}
 
+	user := &db.User{
+		Password:      reqBody.Password,
+		FirstName:     reqBody.FirstName,
+		LastName:      reqBody.LastName,
+		NetworkRating: reqBody.NetworkRating,
+	}
+
+	if err := s.dbRepo.UserRepo.CreateUser(user); err != nil {
+		writeAPIV1Response(c, http.StatusInternalServerError, &genericAPIV1InternalServerError)
+		return
+	}
+
+	type ResponseBody struct {
+		CID           int     `json:"cid"`
+		FirstName     *string `json:"first_name"`
+		LastName      *string `json:"last_name"`
+		NetworkRating int     `json:"network_rating" binding:"min=-1,max=12,required"`
+	}
+
+	resBody := ResponseBody{
+		CID:           user.CID,
+		FirstName:     user.FirstName,
+		LastName:      user.LastName,
+		NetworkRating: user.NetworkRating,
+	}
+
+	res := newAPIV1Success(&resBody)
+	writeAPIV1Response(c, http.StatusCreated, &res)
 }

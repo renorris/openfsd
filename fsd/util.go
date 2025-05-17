@@ -194,7 +194,7 @@ func parseLatLon(packet []byte, latIndex, lonIndex int) (lat float64, lon float6
 
 // parseVisRange parses an FSD-encoded visibility range and returns the distance in meters
 func parseVisRange(packet []byte, index int) (visRange float64, ok bool) {
-	visRangeNauticalMiles, err := strconv.ParseFloat(string(getField(packet, index)), 10)
+	visRangeNauticalMiles, err := strconv.ParseFloat(string(getField(packet, index)), 64)
 	if err != nil {
 		return
 	}
@@ -220,7 +220,7 @@ func broadcastRanged(po *postOffice, client *Client, packet []byte) {
 func broadcastRangedVelocity(po *postOffice, client *Client, packet []byte) {
 	packetStr := string(packet)
 	po.search(client, func(recipient *Client) bool {
-		if client.protoRevision != 101 {
+		if recipient.protoRevision != 101 {
 			return true
 		}
 		recipient.send(packetStr)
@@ -232,7 +232,7 @@ func broadcastRangedVelocity(po *postOffice, client *Client, packet []byte) {
 func broadcastRangedAtcOnly(po *postOffice, client *Client, packet []byte) {
 	packetStr := string(packet)
 	po.search(client, func(recipient *Client) bool {
-		if !client.isAtc {
+		if !recipient.isAtc {
 			return true
 		}
 		recipient.send(packetStr)
@@ -265,7 +265,7 @@ func broadcastAllATC(po *postOffice, client *Client, packet []byte) {
 func broadcastAllSupervisors(po *postOffice, client *Client, packet []byte) {
 	packetStr := string(packet)
 	po.all(client, func(recipient *Client) bool {
-		if client.networkRating < NetworkRatingSupervisor {
+		if recipient.networkRating < NetworkRatingSupervisor {
 			return true
 		}
 		recipient.send(packetStr)
@@ -351,4 +351,8 @@ func buildBeaconCodePacket(source, recipient, targetCallsign, beaconCode string)
 	builder.WriteString("\r\n")
 
 	return builder.String()
+}
+
+func strPtr(str string) *string {
+	return &str
 }

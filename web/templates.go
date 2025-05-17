@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"embed"
 	"github.com/gin-gonic/gin"
 	"html/template"
 	"io"
@@ -9,10 +10,13 @@ import (
 	"path"
 )
 
+//go:embed templates
+var templatesFS embed.FS
+
 var basePath = path.Join(".", "templates")
 
 func loadTemplate(key string) (t *template.Template) {
-	t, err := template.ParseFiles(path.Join(basePath, "layout.html"), path.Join(basePath, key+".html"))
+	t, err := template.ParseFS(templatesFS, path.Join(basePath, "layout.html"), path.Join(basePath, key+".html"))
 	if err != nil {
 		panic(err)
 	}

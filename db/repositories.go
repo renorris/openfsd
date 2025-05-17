@@ -9,7 +9,8 @@ import (
 
 // Repositories bundles all repository interfaces
 type Repositories struct {
-	UserRepo UserRepository
+	UserRepo   UserRepository
+	ConfigRepo ConfigRepository
 }
 
 // NewUserRepository creates a UserRepository based on the database driver
@@ -24,14 +25,26 @@ func NewUserRepository(db *sql.DB) (UserRepository, error) {
 	}
 }
 
-// NewRepositories creates a Repositories bundle with implementations for the given database
-func NewRepositories(db *sql.DB) (*Repositories, error) {
-	userRepo, err := NewUserRepository(db)
-	if err != nil {
-		return nil, err
+// NewConfigRepository creates a ConfigRepository based on the database driver
+func NewConfigRepository(db *sql.DB) (ConfigRepository, error) {
+	switch db.Driver().(type) {
+	case *pq.Driver:
+		return &PostgresConfigRepository{db: db}, nil
+	case *sqlite.Driver:
+		return &SQLiteConfigRepository{db: db}, nil
+	default:
+		return nil, fmt.Errorf("unsupported database")
 	}
+}
 
-	return &Repositories{
-		UserRepo: userRepo,
-	}, nil
+// NewRepositories creates a Repositories bundle with implementations for the given database
+func NewRepositories(db *sql.DB) (repositories *Repositories, err error) {
+	repositories = &Repositories{}
+	if repositories.UserRepo, err = NewUserRepository(db); err != nil {
+		return
+	}
+	if repositories.ConfigRepo, err = NewConfigRepository(db); err != nil {
+		return
+	}
+	return
 }

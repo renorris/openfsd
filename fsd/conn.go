@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/renorris/openfsd/db"
 	"io"
 	"net"
 	"strconv"
@@ -257,8 +258,13 @@ func (s *Server) attemptAuthentication(client *Client, token string) (err error)
 
 	// Check if the provided token is actually a JWT
 	if mostLikelyJwt([]byte(token)) {
+		var jwtSecret string
+		if jwtSecret, err = s.dbRepo.ConfigRepo.Get(db.ConfigJwtSecretKey); err != nil {
+			return
+		}
+
 		var jwtToken *JwtToken
-		if jwtToken, err = ParseJwtToken(token, s.jwtSecret); err != nil {
+		if jwtToken, err = ParseJwtToken(token, []byte(jwtSecret)); err != nil {
 			err = ErrInvalidAddPacket
 			sendError(client.conn, InvalidLogonError, invalidLogonMsg)
 			return
@@ -280,6 +286,11 @@ func (s *Server) attemptAuthentication(client *Client, token string) (err error)
 		if client.networkRating > claims.NetworkRating {
 			err = ErrInvalidAddPacket
 			sendError(client.conn, RequestedLevelTooHighError, "Requested level too high")
+			return
+		}
+		if client.networkRating < NetworkRatingObserver {
+			err = ErrInvalidAddPacket
+			sendError(client.conn, CertificateSuspendedError, "Certificate inactive or suspended")
 			return
 		}
 		return
@@ -307,6 +318,11 @@ func (s *Server) attemptAuthentication(client *Client, token string) (err error)
 	if client.networkRating > NetworkRating(user.NetworkRating) {
 		err = ErrInvalidAddPacket
 		sendError(client.conn, RequestedLevelTooHighError, "Requested level too high")
+		return
+	}
+	if client.networkRating < NetworkRatingObserver {
+		err = ErrInvalidAddPacket
+		sendError(client.conn, CertificateSuspendedError, "Certificate inactive or suspended")
 		return
 	}
 
@@ -353,7 +369,32 @@ func (s *Server) broadcastDisconnectPacket(client *Client) {
 }
 
 func (s *Server) sendMotd(client *Client) (err error) {
-	packet := fmt.Sprintf("#TMserver:%s:Connected to openfsd\r\n", client.callsign)
-	_, err = client.conn.Write([]byte(packet))
+	welcomeMsg := db.GetWelcomeMessage(&s.dbRepo.ConfigRepo)
+	if welcomeMsg != "" {
+		lines := strings.Split(welcomeMsg, "\n")
+		for i := range lines {
+			if err = s.sendServerTextMessage(client, lines[i]); err != nil {
+				return
+			}
+		}
+	} else {
+		if err = s.sendServerTextMessage(client, "Connected to openfsd"); err != nil {
+			return
+		}
+	}
+	return
+}
+
+// sendServerTextMessage synchronously sends a server #TM to the client's socket
+func (s *Server) sendServerTextMessage(client *Client, msg string) (err error) {
+	packet := strings.Builder{}
+	packet.Grow(32 + len(msg))
+	packet.WriteString("#TMserver:")
+	packet.WriteString(client.callsign)
+	packet.WriteByte(':')
+	packet.WriteString(msg)
+	packet.WriteString("\r\n")
+
+	_, err = client.conn.Write([]byte(packet.String()))
 	return
 }

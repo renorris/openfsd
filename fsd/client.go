@@ -60,6 +60,8 @@ func (c *Client) senderWorker() {
 
 // sendError sends an FSD error packet to a Client with the specified code and message.
 // It returns an error if writing to the connection fails.
+//
+// This call is thread-safe
 func (c *Client) sendError(code int, message string) (err error) {
 	packet := strings.Builder{}
 	packet.Grow(128)
@@ -74,6 +76,10 @@ func (c *Client) sendError(code int, message string) (err error) {
 	return c.send(packet.String())
 }
 
+// send sends a packet string to a Client.
+// This call queues the packet in the Client's outbound send channel.
+// This call will block until the packet can be queued in the send channel.
+// Returns a context error if the Client's context has elapsed.
 func (c *Client) send(packet string) (err error) {
 	select {
 	case c.sendChan <- packet:

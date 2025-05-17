@@ -1,3 +1,11 @@
+async function doAPIRequestWithAuth(method, url, data) {
+    return doAPIRequest(method, url, true, data)
+}
+
+async function doAPIRequestNoAuth(method, url, data) {
+    return doAPIRequest(method, url, false, data)
+}
+
 async function doAPIRequest(method, url, withAuth, data) {
     return new Promise(async (resolve, reject) => {
         let accessToken = "";
@@ -15,6 +23,7 @@ async function doAPIRequest(method, url, withAuth, data) {
         }).done((res) => {
             resolve(res)
         }).fail((xhr) => {
+            logout()
             reject(xhr)
         });
     });
@@ -85,4 +94,10 @@ function decodeJwt(token) {
     }).join(''));
 
     return JSON.parse(jsonPayload);
+}
+
+function logout() {
+    localStorage.removeItem("access_token")
+    localStorage.removeItem("refresh_token")
+    window.location.href = "/login"
 }

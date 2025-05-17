@@ -1,3 +1,23 @@
+function networkRatingFromInt(val) {
+    switch (val) {
+        case -1: return "Inactive"
+        case 0: return "Suspended"
+        case 1: return "Observer"
+        case 2: return "Student 1"
+        case 3: return "Student 2"
+        case 4: return "Student 3"
+        case 5: return "Controller 1"
+        case 6: return "Controller 2"
+        case 7: return "Controller 3"
+        case 8: return "Instructor 1"
+        case 9: return "Instructor 2"
+        case 10: return "Instructor 3"
+        case 11: return "Supervisor"
+        case 12: return "Administrator"
+        default: return "Unknown"
+    }
+}
+
 $(document).ready(async () => {
     const claims = getAccessTokenClaims()
     loadUserInfo(claims.cid)
@@ -27,7 +47,15 @@ async function loadUserInfo(cid) {
         $("#dashboard-real-name").text("Welcome!")
     }
 
-    $("#dashboard-network-rating").text(res.data.network_rating)
+    $("#dashboard-network-rating").text(networkRatingFromInt(res.data.network_rating))
+    $("#dashboard-cid").text(`CID: ${res.data.cid}`)
+
+    if (res.data.network_rating >= 11) {
+        $("#dashboard-user-editor").html(`
+            <div class="mb-2"><a href="/usereditor" class="btn btn-primary">Edit Users</a></div>
+            <div class="mb-2"><a href="/configeditor" class="btn btn-primary">Configure Server</a></div>
+        `)
+    }
 }
 
 let dashboardMarkers = [];

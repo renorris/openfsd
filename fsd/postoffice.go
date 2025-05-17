@@ -143,11 +143,14 @@ func (p *postOffice) all(client *Client, callback func(recipient *Client) bool) 
 	p.clientMapLock.RUnlock()
 }
 
-const earthRadius = 6371000.0 // meters, approximate mean radius of Earth
+const (
+	earthRadius = 6371000.0 // meters, approximate mean radius of Earth
+	degToRad    = math.Pi / 180
+)
 
 func calculateBoundingBox(center [2]float64, radius float64) (min [2]float64, max [2]float64) {
-	latRad := center[0] * math.Pi / 180
-	metersPerDegreeLat := (math.Pi * earthRadius) / 180
+	latRad := center[0] * degToRad
+	const metersPerDegreeLat = (math.Pi * earthRadius) / 180
 	deltaLat := radius / metersPerDegreeLat
 	metersPerDegreeLon := metersPerDegreeLat * math.Cos(latRad)
 	deltaLon := radius / metersPerDegreeLon
@@ -165,16 +168,21 @@ func calculateBoundingBox(center [2]float64, radius float64) (min [2]float64, ma
 
 // distance calculates the great-circle distance between two points using the Haversine formula.
 func distance(lat1, lon1, lat2, lon2 float64) float64 {
-	lat1Rad := lat1 * (math.Pi / 180)
-	lon1Rad := lon1 * (math.Pi / 180)
-	lat2Rad := lat2 * (math.Pi / 180)
-	lon2Rad := lon2 * (math.Pi / 180)
+	dLat := (lat2 - lat1) * degToRad
+	dLon := (lon2 - lon1) * degToRad
 
-	dLat := lat2Rad - lat1Rad
-	dLon := lon2Rad - lon1Rad
+	sinDLat2 := math.Sin(dLat * 0.5)
+	sinDLon2 := math.Sin(dLon * 0.5)
 
-	a := math.Sin(dLat/2)*math.Sin(dLat/2) + math.Cos(lat1Rad)*math.Cos(lat2Rad)*math.Sin(dLon/2)*math.Sin(dLon/2)
-	c := 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
+	cosLat1 := math.Cos(lat1 * degToRad)
+	cosLat2 := math.Cos(lat2 * degToRad)
+
+	a := sinDLat2*sinDLat2 + cosLat1*cosLat2*sinDLon2*sinDLon2
+
+	sqrtA := math.Sqrt(a)
+	sqrt1MinusA := math.Sqrt(1 - a)
+
+	c := 2 * math.Atan2(sqrtA, sqrt1MinusA)
 
 	return earthRadius * c
 }

@@ -6,14 +6,12 @@ import (
 )
 
 type Server struct {
-	dbRepo    *db.Repositories
-	jwtSecret []byte
+	dbRepo *db.Repositories
 }
 
-func NewServer(dbRepo *db.Repositories, jwtSecret []byte) (server *Server, err error) {
+func NewServer(dbRepo *db.Repositories) (server *Server, err error) {
 	server = &Server{
-		dbRepo:    dbRepo,
-		jwtSecret: jwtSecret,
+		dbRepo: dbRepo,
 	}
 
 	return

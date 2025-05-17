@@ -15,3 +15,11 @@ func (s *Server) handleFrontendLogin(c *gin.Context) {
 func (s *Server) handleFrontendDashboard(c *gin.Context) {
 	writeTemplate(c, "dashboard", nil)
 }
+
+func (s *Server) handleFrontendUserEditor(c *gin.Context) {
+	writeTemplate(c, "usereditor", nil)
+}
+
+func (s *Server) handleFrontendConfigEditor(c *gin.Context) {
+	writeTemplate(c, "configeditor", nil)
+}

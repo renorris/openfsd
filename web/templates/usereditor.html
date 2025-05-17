@@ -1,0 +1,284 @@
+{{ define "title" }}User Editor{{ end }}
+
+{{ define "body" }}
+<div class="container mt-4">
+    <div class="row">
+        <div class="col-12 col-md-4 mb-4">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Create User</h5>
+                    <form class="mb-3" id="create-form">
+                        <div class="mb-3">
+                            <label for="create-first-name" class="form-label">First Name</label>
+                            <input type="text" class="form-control" id="create-first-name">
+                        </div>
+                        <div class="mb-3">
+                            <label for="create-last-name" class="form-label">Last Name</label>
+                            <input type="text" class="form-control" id="create-last-name">
+                        </div>
+                        <div class="mb-3">
+                            <label for="create-password" class="form-label">Password</label>
+                            <input type="password" class="form-control" id="create-password" minlength="8" required>
+                            <div class="mt-2">
+                                <label class="form-label">Password Strength</label>
+                                <div class="progress" style="height: 10px;">
+                                    <div id="create-password-strength" class="progress-bar" role="progressbar" style="width: 0%;" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
+                                </div>
+                                <small id="create-password-feedback" class="form-text text-muted"></small>
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="create-network-rating" class="form-label">Network Rating</label>
+                            <select class="form-select" id="create-network-rating" required aria-label="Select network rating">
+                                <option value="-1">Inactive</option>
+                                <option value="0">Suspended</option>
+                                <option value="1" selected>Observer</option>
+                                <option value="2">Student 1</option>
+                                <option value="3">Student 2</option>
+                                <option value="4">Student 3</option>
+                                <option value="5">Controller 1</option>
+                                <option value="6">Controller 2</option>
+                                <option value="7">Controller 3</option>
+                                <option value="8">Instructor 1</option>
+                                <option value="9">Instructor 2</option>
+                                <option value="10">Instructor 3</option>
+                                <option value="11">Supervisor</option>
+                                <option value="12">Administrator</option>
+                            </select>
+                        </div>
+                        <button type="submit" class="btn btn-primary">Create</button>
+                    </form>
+                    <div id="create-success-message" class="alert alert-success d-none" role="alert"></div>
+                </div>
+            </div>
+        </div>
+        <div class="col-12 col-md-4 mb-4">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Search for User by CID</h5>
+                    <form id="search-form">
+                        <div class="mb-3">
+                            <label for="search-cid" class="form-label">CID</label>
+                            <input type="number" class="form-control" id="search-cid" min="1" required>
+                        </div>
+                        <button type="submit" class="btn btn-primary">Search</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+        <div class="col-12 col-md-4 mb-4">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Edit User</h5>
+                    <form class="mb-3" id="edit-form">
+                        <div class="mb-3">
+                            <label for="edit-cid" class="form-label">CID</label>
+                            <input type="text" class="form-control" id="edit-cid" readonly>
+                        </div>
+                        <div class="mb-3">
+                            <label for="edit-first-name" class="form-label">First Name</label>
+                            <input type="text" class="form-control" id="edit-first-name">
+                        </div>
+                        <div class="mb-3">
+                            <label for="edit-last-name" class="form-label">Last Name</label>
+                            <input type="text" class="form-control" id="edit-last-name">
+                        </div>
+                        <div class="mb-3">
+                            <label for="edit-network-rating" class="form-label">Network Rating</label>
+                            <select class="form-select" id="edit-network-rating" aria-label="Select network rating">
+                                <option value="-1">Inactive</option>
+                                <option value="0">Suspended</option>
+                                <option value="1" selected>Observer</option>
+                                <option value="2">Student 1</option>
+                                <option value="3">Student 2</option>
+                                <option value="4">Student 3</option>
+                                <option value="5">Controller 1</option>
+                                <option value="6">Controller 2</option>
+                                <option value="7">Controller 3</option>
+                                <option value="8">Instructor 1</option>
+                                <option value="9">Instructor 2</option>
+                                <option value="10">Instructor 3</option>
+                                <option value="11">Supervisor</option>
+                                <option value="12">Administrator</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label for="edit-password" class="form-label">New Password (leave blank to keep current)</label>
+                            <input type="password" class="form-control" id="edit-password" minlength="8">
+                            <div class="mt-2">
+                                <label class="form-label">Password Strength</label>
+                                <div class="progress" style="height: 10px;">
+                                    <div id="edit-password-strength" class="progress-bar" role="progressbar" style="width: 0%;" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
+                                </div>
+                                <small id="edit-password-feedback" class="form-text text-muted"></small>
+                            </div>
+                        </div>
+                        <button type="submit" class="btn btn-primary">Update</button>
+                    </form>
+                    <div id="edit-success-message" class="alert alert-success d-none" role="alert"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal for error messages only -->
+<div class="modal fade" id="messageModal" tabindex="-1" aria-labelledby="messageModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="messageModalLabel">Error</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body" id="messageModalBody"></div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-primary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // Function to show modal for errors only
+    function showModal(message) {
+        const modal = new bootstrap.Modal(document.getElementById('messageModal'));
+        const modalBody = document.getElementById('messageModalBody');
+        modalBody.textContent = message;
+        modal.show();
+    }
+
+    // Form Handlers
+    document.getElementById('search-form').addEventListener('submit', async function(event) {
+        event.preventDefault();
+        const cid = document.getElementById('search-cid').value;
+        try {
+            const res = await doAPIRequestWithAuth('POST', '/api/v1/user/load', {cid: parseInt(cid)});
+            if (res.err) {
+                showModal(res.err);
+            } else {
+                const user = res.data;
+                document.getElementById('edit-cid').value = user.cid;
+                document.getElementById('edit-first-name').value = user.first_name || '';
+                document.getElementById('edit-last-name').value = user.last_name || '';
+                document.getElementById('edit-network-rating').value = user.network_rating;
+                document.getElementById('edit-password').value = '';
+            }
+        } catch (xhr) {
+            const errMsg = xhr.responseJSON && xhr.responseJSON.err ? xhr.responseJSON.err : 'An error occurred';
+            showModal(errMsg);
+            console.error('Request failed:', xhr);
+        }
+    });
+
+    document.getElementById('create-form').addEventListener('submit', async function(event) {
+        event.preventDefault();
+        document.getElementById('create-success-message').classList.add('d-none');
+        const firstName = document.getElementById('create-first-name').value;
+        const lastName = document.getElementById('create-last-name').value;
+        const password = document.getElementById('create-password').value;
+        const networkRating = document.getElementById('create-network-rating').value;
+        const data = {
+            password: password,
+            network_rating: parseInt(networkRating)
+        };
+        if (firstName) data.first_name = firstName;
+        if (lastName) data.last_name = lastName;
+        try {
+            const res = await doAPIRequestWithAuth('POST', '/api/v1/user/create', data);
+            if (res.err) {
+                showModal(res.err);
+            } else {
+                const successMessage = document.getElementById('create-success-message');
+                successMessage.textContent = 'User created successfully. CID: ' + res.data.cid;
+                successMessage.classList.remove('d-none');
+                document.getElementById('create-first-name').value = '';
+                document.getElementById('create-last-name').value = '';
+                document.getElementById('create-password').value = '';
+                document.getElementById('create-network-rating').value = '-1';
+            }
+        } catch (xhr) {
+            const errMsg = xhr.responseJSON && xhr.responseJSON.err ? xhr.responseJSON.err : 'An error occurred';
+            showModal(errMsg);
+            console.error('Request failed:', xhr);
+        }
+    });
+
+    document.getElementById('edit-form').addEventListener('submit', async function(event) {
+        event.preventDefault();
+        document.getElementById('edit-success-message').classList.add('d-none');
+        const cid = document.getElementById('edit-cid').value;
+        const firstName = document.getElementById('edit-first-name').value;
+        const lastName = document.getElementById('edit-last-name').value;
+        const networkRating = document.getElementById('edit-network-rating').value;
+        const password = document.getElementById('edit-password').value;
+        const data = {
+            cid: parseInt(cid),
+            first_name: firstName,
+            last_name: lastName,
+            network_rating: parseInt(networkRating)
+        };
+        if (password) data.password = password;
+        try {
+            const res = await doAPIRequestWithAuth('PATCH', '/api/v1/user/update', data);
+            if (res.err) {
+                showModal(res.err);
+            } else {
+                const successMessage = document.getElementById('edit-success-message');
+                successMessage.textContent = 'User updated successfully';
+                successMessage.classList.remove('d-none');
+            }
+        } catch (xhr) {
+            const errMsg = xhr.responseJSON && xhr.responseJSON.err ? xhr.responseJSON.err : 'An error occurred';
+            showModal(errMsg);
+            console.error('Request failed:', xhr);
+        }
+    });
+
+    document.addEventListener('DOMContentLoaded', () => {
+        const createPasswordInput = document.getElementById('create-password');
+        const createStrengthBar = document.getElementById('create-password-strength');
+        const createFeedback = document.getElementById('create-password-feedback');
+        const editPasswordInput = document.getElementById('edit-password');
+        const editStrengthBar = document.getElementById('edit-password-strength');
+        const editFeedback = document.getElementById('edit-password-feedback');
+
+        const evaluatePassword = (password, strengthBar, feedback) => {
+            if (!password) {
+                strengthBar.style.width = '0%';
+                strengthBar.className = 'progress-bar';
+                feedback.textContent = '';
+                return;
+            }
+
+            let strength = 0;
+            if (password.length >= 8) strength += 50;
+            if (/[A-Z]/.test(password)) strength += 15;
+            if (/[a-z]/.test(password)) strength += 15;
+            if (/[0-9]/.test(password)) strength += 10;
+            if (/[^A-Za-z0-9]/.test(password)) strength += 10;
+
+            strength = Math.min(strength, 100);
+            strengthBar.style.width = `${strength}%`;
+
+            if (strength < 60) {
+                strengthBar.className = 'progress-bar bg-danger';
+                feedback.textContent = 'Weak: Include uppercase, lowercase, numbers, or symbols.';
+            } else if (strength < 80) {
+                strengthBar.className = 'progress-bar bg-warning';
+                feedback.textContent = 'Moderate: Add more character types for strength.';
+            } else {
+                strengthBar.className = 'progress-bar bg-success';
+                feedback.textContent = 'Strong: Good password!';
+            }
+        };
+
+        createPasswordInput.addEventListener('input', () => {
+            evaluatePassword(createPasswordInput.value, createStrengthBar, createFeedback);
+        });
+
+        editPasswordInput.addEventListener('input', () => {
+            evaluatePassword(editPasswordInput.value, editStrengthBar, editFeedback);
+        });
+    });
+</script>
+{{ end }}

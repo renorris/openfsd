@@ -147,7 +147,7 @@ func minFields(packetType PacketType) int {
 	case PacketTypeATCPosition:
 		return 7
 	case PacketTypeDeleteATC, PacketTypeDeletePilot:
-		return 2
+		return 1
 	case PacketTypeTextMessage:
 		return 3
 	case PacketTypeProController:

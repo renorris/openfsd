@@ -1,0 +1,71 @@
+{{ define "title" }}Config Editor{{ end }}
+
+{{ define "body" }}
+<div class="container mt-4" style="max-width: 600px">
+    <div class="mb-3 card">
+        <div class="card-body">
+            <h5 class="card-title">Config Editor</h5>
+            <form id="config-form">
+                <!-- Config fields will be dynamically added here -->
+            </form>
+            <button type="button" class="btn btn-secondary mt-2" id="add-config">Add New Config</button>
+            <button type="button" class="btn btn-primary mt-2" id="save-config">Save</button>
+        </div>
+    </div>
+    <div class="card">
+        <div class="my-2 rounded text-center fs-5">
+            API Tokens
+        </div>
+        <button type="button" class="btn btn-outline-success mx-2 mb-2" id="create-new-api-key">Create</button>
+        <button type="button" class="btn btn-danger mx-2 mb-2" id="reset-jwt-secret">Reset All</button>
+    </div>
+    <!-- Create Token Modal -->
+    <div class="modal fade" id="createTokenModal" tabindex="-1" aria-labelledby="createTokenModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="createTokenModalLabel">Create New API Token</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="createTokenForm">
+                        <div class="mb-3">
+                            <label for="expiryDate" class="form-label">Expiry Date (YYYY-MM-DD, leave blank for one year from now)</label>
+                            <input type="date" class="form-control" id="expiryDate">
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" id="submitCreateToken">Create</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <!-- Message Modal -->
+    <div class="modal fade" id="messageModal" tabindex="-1" aria-labelledby="messageModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="messageModalLabel">Message</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p id="messageText"></p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-primary" data-bs-dismiss="modal">OK</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    .api-key {
+        word-break: break-all;
+    }
+</style>
+
+<script src="/static/js/openfsd/configeditor.js"></script>
+{{ end }}

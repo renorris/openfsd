@@ -21,14 +21,29 @@ func main() {
 		panic(err)
 	}
 
+	strPtr := func(str string) *string {
+		return &str
+	}
+
 	if err = dbRepo.UserRepo.CreateUser(&db.User{
+		FirstName:     strPtr("Default Administrator"),
 		Password:      "12345",
 		NetworkRating: 12,
 	}); err != nil {
 		panic(err)
 	}
 
-	server, err := NewServer(dbRepo, []byte("abcdef"))
+	err = dbRepo.ConfigRepo.Set(db.ConfigJwtSecretKey, "abcdef")
+	if err != nil {
+		panic(err)
+	}
+
+	err = dbRepo.ConfigRepo.InitDefault()
+	if err != nil {
+		panic(err)
+	}
+
+	server, err := NewServer(dbRepo)
 	if err != nil {
 		panic(err)
 	}
