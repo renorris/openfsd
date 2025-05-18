@@ -1,0 +1,23 @@
+; IMPORTANT NOTE: This file can change as data sources change. Please check at regular intervals.
+;
+; PEOPLE UTILISING THIS FEED ARE STRONGLY ENCOURAGED TO MIGRATE TO {{ .ApiServerBaseURL }}/api/v1/data/status.json
+;
+; Data formats are:
+;
+; 120128:NOTCP - used by WhazzUp only
+; json3        - JSON Data Version 3
+; url1         - URLs where servers list data files are available. Please choose one randomly every time
+;
+;
+120218:NOTCP
+;
+json3={{ .ApiServerBaseURL }}/api/v1/data/openfsd-data.json
+;
+url1={{ .ApiServerBaseURL }}/api/v1/data/openfsd-servers.txt
+;
+servers.live={{ .ApiServerBaseURL }}/api/v1/data/openfsd-servers.txt
+;
+voice0=afv
+;
+; END
+ 

@@ -9,24 +9,12 @@ type SQLiteConfigRepository struct {
 	db *sql.DB
 }
 
-func (s *SQLiteConfigRepository) InitDefault() (err error) {
-	if err = s.ensureSecretKeyExists(); err != nil {
-		return
-	}
-	return
-}
-
-func (s *SQLiteConfigRepository) ensureSecretKeyExists() (err error) {
-	secretKey, err := GenerateJwtSecretKey()
-	if err != nil {
-		return
-	}
-
+func (s *SQLiteConfigRepository) SetIfNotExists(key string, value string) (err error) {
 	querystr := `
 		INSERT INTO config (key, value) VALUES (?, ?)
 		ON CONFLICT(key) DO NOTHING;
 	`
-	if _, err = s.db.Exec(querystr, ConfigJwtSecretKey, secretKey[:]); err != nil {
+	if _, err = s.db.Exec(querystr, key, value); err != nil {
 		return
 	}
 	return

@@ -15,7 +15,7 @@ import (
 )
 
 type Server struct {
-	listenAddrs  []string
+	cfg          *ServerConfig
 	postOffice   *postOffice
 	metarService *metarService
 	dbRepo       *db.Repositories
@@ -24,9 +24,9 @@ type Server struct {
 // NewServer creates a new Server instance.
 //
 // See NewDefaultServer to create a server using default settings obtained via environment variables.
-func NewServer(listenAddrs []string, dbRepo *db.Repositories, numMetarWorkers int) (server *Server, err error) {
+func NewServer(cfg *ServerConfig, dbRepo *db.Repositories, numMetarWorkers int) (server *Server, err error) {
 	server = &Server{
-		listenAddrs:  listenAddrs,
+		cfg:          cfg,
 		postOffice:   newPostOffice(),
 		metarService: newMetarService(numMetarWorkers),
 		dbRepo:       dbRepo,
@@ -92,12 +92,12 @@ func NewDefaultServer(ctx context.Context) (server *Server, err error) {
 
 	// Ensure default configuration is written to persistent storage
 	slog.Debug("initializing default config")
-	if err = dbRepo.ConfigRepo.InitDefault(); err != nil {
+	if err = db.InitDefaultConfig(&dbRepo.ConfigRepo); err != nil {
 		return
 	}
 	slog.Debug("config OK")
 
-	if server, err = NewServer(config.FsdListenAddrs, dbRepo, config.NumMetarWorkers); err != nil {
+	if server, err = NewServer(config, dbRepo, config.NumMetarWorkers); err != nil {
 		return
 	}
 
@@ -128,10 +128,13 @@ func (s *Server) Run(ctx context.Context) (err error) {
 	// Start metar service
 	go s.metarService.run(ctx)
 
-	errCh := make(chan error, len(s.listenAddrs))
+	// Start HTTP service
+	go s.runServiceHTTP(ctx)
+
+	errCh := make(chan error, len(s.cfg.FsdListenAddrs))
 	var listenerWg sync.WaitGroup
 
-	for _, addr := range s.listenAddrs {
+	for _, addr := range s.cfg.FsdListenAddrs {
 		slog.Info(fmt.Sprintf("Listening on %s\n", addr))
 		listenerWg.Add(1)
 		go func(ctx context.Context, addr string) {

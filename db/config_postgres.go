@@ -44,6 +44,15 @@ func (p *PostgresConfigRepository) Set(key string, value string) (err error) {
 	return
 }
 
+func (p *PostgresConfigRepository) SetIfNotExists(key string, value string) (err error) {
+	querystr := `
+		INSERT INTO config (key, value) VALUES ($1, $2)
+		ON CONFLICT (key) DO NOTHING;
+	`
+	_, err = p.db.Exec(querystr, key, value)
+	return
+}
+
 // Get retrieves the value for the given key from the configuration.
 // If the key does not exist, it returns ErrConfigKeyNotFound.
 func (p *PostgresConfigRepository) Get(key string) (value string, err error) {

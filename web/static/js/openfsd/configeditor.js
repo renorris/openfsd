@@ -1,5 +1,34 @@
 const keyLabels = {
-    "WELCOME_MESSAGE": "Welcome Message",
+    "WELCOME_MESSAGE": {
+        "name": "Welcome Message",
+        "description": "Welcome message sent to FSD clients after they connect",
+        "type": "text",
+        "placeholder": "Welcome to my FSD server!"
+    },
+    "FSD_SERVER_HOSTNAME": {
+        "name": "FSD Server Hostname",
+        "description": "Server hostname advertised to clients",
+        "type": "text",
+        "placeholder": "myfsdserver.com"
+    },
+    "FSD_SERVER_IDENT": {
+        "name": "FSD Server Ident",
+        "description": "Server ident advertised to clients",
+        "type": "text",
+        "placeholder": "MY-FSD-SERVER"
+    },
+    "FSD_SERVER_LOCATION": {
+        "name": "FSD Server Location",
+        "description": "Geographical server location advertised to clients",
+        "type": "text",
+        "placeholder": "East US",
+    },
+    "API_SERVER_BASE_URL": {
+        "name": "API Server Base URL",
+        "description": "API server base URL advertised to clients",
+        "type": "text",
+        "placeholder": "https://example.com"
+    },
 };
 
 // Function to show message modal
@@ -35,12 +64,14 @@ async function loadConfig() {
         const configForm = document.getElementById('config-form');
         configForm.innerHTML = ''; // Clear existing fields
         res.data.key_value_pairs.forEach(kv => {
-            const label = keyLabels[kv.key] || kv.key;
+            const label = keyLabels[kv.key].name || kv.key;
+            const desc = keyLabels[kv.key].description || kv.key
             const div = document.createElement('div');
             div.className = 'mb-3';
             div.innerHTML = `
                 <label for="${kv.key}" class="form-label">${label}</label>
-                <input type="text" class="form-control" id="${kv.key}" value="${kv.value}" data-key="${kv.key}">
+                <input type="${keyLabels[kv.key].type}" class="form-control" id="${kv.key}" value="${kv.value}" data-key="${kv.key}" placeholder="${keyLabels[kv.key].placeholder}">
+                <div class="form-text">${desc}</div>
             `;
             configForm.appendChild(div);
         });
@@ -58,7 +89,7 @@ document.getElementById('add-config').addEventListener('click', function() {
     // Create dropdown options from keyLabels
     let options = '';
     Object.keys(keyLabels).forEach(key => {
-        options += `<option value="${key}">${keyLabels[key]}</option>`;
+        options += `<option value="${key}">${keyLabels[key].name}</option>`;
     });
     div.innerHTML = `
         <label class="form-label">New Key</label>
@@ -68,8 +99,31 @@ document.getElementById('add-config').addEventListener('click', function() {
         </select>
         <label class="form-label">Value</label>
         <input type="text" class="form-control" placeholder="Value" data-type="new-value">
+        <div class="form-text" id="new-value-description"></div>
     `;
     configForm.appendChild(div);
+
+    // Add event listener to update input type based on selected key
+    const select = div.querySelector('select[data-type="new-key"]');
+    const valueInput = div.querySelector('input[data-type="new-value"]');
+    select.addEventListener('change', function() {
+        const selectedKey = select.value;
+        if (selectedKey && keyLabels[selectedKey]) {
+            const inputType = keyLabels[selectedKey].type;
+            if (inputType === 'checkbox') {
+                valueInput.type = 'checkbox';
+                valueInput.removeAttribute('placeholder');
+                valueInput.classList.add('form-check-input');
+                valueInput.value = 'true'; // Default for checkbox
+            } else {
+                valueInput.type = inputType;
+                valueInput.setAttribute('placeholder', keyLabels[selectedKey].placeholder);
+                valueInput.classList.remove('form-check-input');
+                valueInput.value = ''; // Clear value for text input
+            }
+        }
+        document.getElementById("new-value-description").innerText = keyLabels[selectedKey].description
+    });
 });
 
 document.getElementById('save-config').addEventListener('click', async function() {
@@ -78,9 +132,11 @@ document.getElementById('save-config').addEventListener('click', async function(
     // Existing configs
     const existingInputs = document.querySelectorAll('#config-form input[data-key]');
     existingInputs.forEach(input => {
+        const key = input.getAttribute('data-key');
+        const value = keyLabels[key].type === 'checkbox' ? input.checked.toString() : input.value;
         keyValuePairs.push({
-            key: input.getAttribute('data-key'),
-            value: input.value
+            key: key,
+            value: value
         });
     });
 
@@ -90,9 +146,11 @@ document.getElementById('save-config').addEventListener('click', async function(
         const keySelect = div.querySelector('select[data-type="new-key"]');
         const valueInput = div.querySelector('input[data-type="new-value"]');
         if (keySelect && valueInput && keySelect.value.trim() !== '') {
+            const key = keySelect.value;
+            const value = keyLabels[key].type === 'checkbox' ? valueInput.checked.toString() : valueInput.value;
             keyValuePairs.push({
-                key: keySelect.value,
-                value: valueInput.value
+                key: key,
+                value: value
             });
         }
     });

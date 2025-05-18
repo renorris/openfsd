@@ -1,0 +1,12 @@
+!GENERAL:
+VERSION = 8
+RELOAD = 2
+UPDATE = 20220401021210
+ATIS ALLOW MIN = 5
+CONNECTED CLIENTS = 1
+;
+;
+!SERVERS:
+{{ range . }}{{ .Ident }}:{{ .HostnameOrIp }}:{{ .Location }}:{{ .Ident }}:{{ .ClientsConnectionAllowed }}:{{ end }}
+;
+;   END

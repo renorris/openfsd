@@ -3,8 +3,10 @@ package fsd
 import (
 	"bytes"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func (s *Server) getHandler(packetType PacketType) handlerFunc {
@@ -38,14 +40,19 @@ func (s *Server) getHandler(packetType PacketType) handlerFunc {
 	case PacketTypeFlightPlanAmendment:
 		return s.handleAmendFlightplan
 	default:
-		return nil
+		return s.emptyHandler
 	}
+}
+
+func (s *Server) emptyHandler(client *Client, packet []byte) {
+	slog.Error("empty handler called")
+	return
 }
 
 func (s *Server) handleTextMessage(client *Client, packet []byte) {
 	recipient := getField(packet, 1)
 
-	// ATC chat
+	// OnlineUserATC chat
 	if string(recipient) == "@49999" {
 		if !client.isAtc {
 			return
@@ -122,6 +129,8 @@ func (s *Server) handleATCPosition(client *Client, packet []byte) {
 
 	// Broadcast position update
 	broadcastRanged(s.postOffice, client, packet)
+
+	client.lastUpdated.Store(time.Now())
 }
 
 // handlePilotPosition handles logic for 0.2hz `@` pilot position updates
@@ -139,6 +148,17 @@ func (s *Server) handlePilotPosition(client *Client, packet []byte) {
 
 	// Broadcast position update
 	broadcastRanged(s.postOffice, client, packet)
+
+	// Update state
+	client.transponder.Store(string(getField(packet, 2)))
+	groundspeed, _ := strconv.Atoi(string(getField(packet, 7)))
+	client.groundspeed.Store(int32(groundspeed))
+	altitude, _ := strconv.Atoi(string(getField(packet, 6)))
+	client.altitude.Store(int32(altitude))
+	pbhUint, _ := strconv.ParseUint(string(getField(packet, 8)), 10, 32)
+	_, _, heading := pitchBankHeading(pbhUint).vals()
+	client.heading.Store(int32(heading))
+	client.lastUpdated.Store(time.Now())
 }
 
 // handleFastPilotPosition handles logic for fast `^`, stopped `#ST`, and slow `#SL` pilot position updates
@@ -147,7 +167,7 @@ func (s *Server) handleFastPilotPosition(client *Client, packet []byte) {
 	broadcastRangedVelocity(s.postOffice, client, packet)
 }
 
-// handleDelete handles logic for Delete ATC `#DA` and Delete Pilot `#DP` packets
+// handleDelete handles logic for Delete OnlineUserATC `#DA` and Delete OnlineUserPilot `#DP` packets
 func (s *Server) handleDelete(client *Client, packet []byte) {
 	// Broadcast delete packet
 	broadcastAll(s.postOffice, client, packet)
@@ -165,7 +185,7 @@ func (s *Server) handleSquawkbox(client *Client, packet []byte) {
 
 // handleProcontroller handles logic for Pro Controller `#PC` packets
 func (s *Server) handleProcontroller(client *Client, packet []byte) {
-	// ATC-only packet
+	// OnlineUserATC-only packet
 	if !client.isAtc {
 		return
 	}
@@ -204,7 +224,7 @@ func (s *Server) handleProcontroller(client *Client, packet []byte) {
 		"DP", // Push to departure list
 		"ST": // Set flight strip
 
-		// Only active ATC above OBS
+		// Only active OnlineUserATC above OBS
 		if client.facilityType <= 0 {
 			client.sendError(InvalidControlError, "Invalid control")
 			return
@@ -224,7 +244,7 @@ func (s *Server) handleClientQuery(client *Client, packet []byte) {
 	// Handle queries sent to SERVER
 	if string(recipient) == "SERVER" {
 		switch string(queryType) {
-		case "ATC":
+		case "OnlineUserATC":
 			s.handleClientQueryATCRequest(client, packet)
 		case "IP":
 			s.handleClientQueryIPRequest(client, packet)
@@ -238,7 +258,7 @@ func (s *Server) handleClientQuery(client *Client, packet []byte) {
 	if bytes.HasPrefix(recipient, []byte("@")) {
 		switch string(queryType) {
 
-		// Unprivileged ATC queries
+		// Unprivileged OnlineUserATC queries
 		case
 			"BY",      // Request relief
 			"HI",      // Cancel request relief
@@ -248,14 +268,14 @@ func (s *Server) handleClientQuery(client *Client, packet []byte) {
 			"NEWATIS", // Broadcast new ATIS letter
 			"NEWINFO": // Broadcast new ATIS info
 
-			// ATC only
+			// OnlineUserATC only
 			if !client.isAtc {
 				client.sendError(InvalidControlError, "Invalid control")
 				return
 			}
 			broadcastRangedAtcOnly(s.postOffice, client, packet)
 
-		// Privileged ATC queries
+		// Privileged OnlineUserATC queries
 		case
 			"IT",  // Initiate track
 			"DR",  // Drop track
@@ -268,7 +288,7 @@ func (s *Server) handleClientQuery(client *Client, packet []byte) {
 			"EST", // Set estimate time
 			"GD":  // Set global data
 
-			// ATC above OBS facility only
+			// OnlineUserATC above OBS facility only
 			if !client.isAtc || client.facilityType <= 0 {
 				client.sendError(InvalidControlError, "Invalid control")
 				return
@@ -316,7 +336,7 @@ func (s *Server) handleClientQuery(client *Client, packet []byte) {
 
 func (s *Server) handleClientQueryATCRequest(client *Client, packet []byte) {
 	if countFields(packet) != 4 {
-		client.sendError(SyntaxError, "Invalid ATC request")
+		client.sendError(SyntaxError, "Invalid OnlineUserATC request")
 		return
 	}
 
@@ -329,9 +349,9 @@ func (s *Server) handleClientQueryATCRequest(client *Client, packet []byte) {
 
 	var p string
 	if targetClient.facilityType > 0 {
-		p = fmt.Sprintf("$CRSERVER:%s:ATC:Y:%s\r\n", client.callsign, targetCallsign)
+		p = fmt.Sprintf("$CRSERVER:%s:OnlineUserATC:Y:%s\r\n", client.callsign, targetCallsign)
 	} else {
-		p = fmt.Sprintf("$CRSERVER:%s:ATC:N:%s\r\n", client.callsign, targetCallsign)
+		p = fmt.Sprintf("$CRSERVER:%s:OnlineUserATC:N:%s\r\n", client.callsign, targetCallsign)
 	}
 	client.send(p)
 }
@@ -365,7 +385,7 @@ func (s *Server) handleClientQueryFlightplanRequest(client *Client, packet []byt
 		return
 	}
 
-	beaconCode := targetClient.beaconCode.Load()
+	beaconCode := targetClient.assignedBeaconCode.Load()
 	if beaconCode == "" {
 		beaconCode = "0"
 	}
@@ -431,7 +451,7 @@ func (s *Server) handleAuthChallenge(client *Client, packet []byte) {
 }
 
 func (s *Server) handleHandoff(client *Client, packet []byte) {
-	// Active >OBS ATC only
+	// Active >OBS OnlineUserATC only
 	if !client.isAtc || client.facilityType <= 1 {
 		return
 	}

@@ -254,7 +254,7 @@ func approxEqual(a, b float64) bool {
 
 // BenchmarkDistance measures the performance of the distance function using pre-generated pseudo-random coordinates.
 func BenchmarkDistance(b *testing.B) {
-	const numPairs = 1000
+	const numPairs = 1024 * 64
 	lats1 := make([]float64, numPairs)
 	lons1 := make([]float64, numPairs)
 	lats2 := make([]float64, numPairs)

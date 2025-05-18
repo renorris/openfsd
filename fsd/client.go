@@ -16,13 +16,19 @@ type Client struct {
 	cancelCtx func()
 	sendChan  chan string
 
-	latLon   [2]float64
-	visRange float64
+	lat, lon, visRange atomic.Float64
 
-	flightPlan *atomic.String
-	beaconCode *atomic.String
+	flightPlan         atomic.String
+	assignedBeaconCode atomic.String
 
-	facilityType int // ATC facility type. This value is only relevant for ATC
+	frequency   atomic.String // OnlineUserATC frequency
+	altitude    atomic.Int32  // OnlineUserPilot altitude
+	groundspeed atomic.Int32  // OnlineUserPilot ground speed
+	transponder atomic.String // Active pilot transponder
+	heading     atomic.Int32  // OnlineUserPilot heading
+	lastUpdated atomic.Time   // Last updated time
+
+	facilityType int // OnlineUserATC facility type. This value is only relevant for OnlineUserATC
 	loginData
 
 	authState vatsimAuthState
@@ -31,14 +37,12 @@ type Client struct {
 func newClient(ctx context.Context, conn net.Conn, scanner *bufio.Scanner, loginData loginData) (client *Client) {
 	clientCtx, cancel := context.WithCancel(ctx)
 	return &Client{
-		conn:       conn,
-		scanner:    scanner,
-		ctx:        clientCtx,
-		cancelCtx:  cancel,
-		sendChan:   make(chan string, 32),
-		flightPlan: &atomic.String{},
-		beaconCode: &atomic.String{},
-		loginData:  loginData,
+		conn:      conn,
+		scanner:   scanner,
+		ctx:       clientCtx,
+		cancelCtx: cancel,
+		sendChan:  make(chan string, 32),
+		loginData: loginData,
 	}
 }
 
@@ -113,4 +117,8 @@ func (s *Server) eventLoop(client *Client) {
 		handler := s.getHandler(packetType)
 		handler(client, packet)
 	}
+}
+
+func (c *Client) latLon() [2]float64 {
+	return [2]float64{c.lat.Load(), c.lon.Load()}
 }

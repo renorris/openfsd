@@ -8,11 +8,11 @@ import (
 )
 
 type ConfigRepository interface {
-	// InitDefault initializes the default state of the Config if one does not already exist.
-	InitDefault() (err error)
-
 	// Set sets a value for a given key
 	Set(key string, value string) (err error)
+
+	// SetIfNotExists sets a value for a given key if it does not already exist
+	SetIfNotExists(key string, value string) (err error)
 
 	// Get gets a value for a given key.
 	//
@@ -21,7 +21,14 @@ type ConfigRepository interface {
 }
 
 const (
-	ConfigJwtSecretKey   = "JWT_SECRET_KEY"
+	ConfigJwtSecretKey = "JWT_SECRET_KEY"
+
+	ConfigFsdServerHostname = "FSD_SERVER_HOSTNAME"
+	ConfigFsdServerIdent    = "FSD_SERVER_IDENT"
+	ConfigFsdServerLocation = "FSD_SERVER_LOCATION"
+
+	ConfigApiServerBaseURL = "API_SERVER_BASE_URL"
+
 	ConfigWelcomeMessage = "WELCOME_MESSAGE"
 )
 
@@ -44,5 +51,29 @@ func GenerateJwtSecretKey() (key [secretKeyBits / 8]byte, err error) {
 // Returns an empty string if no message is found.
 func GetWelcomeMessage(r *ConfigRepository) (msg string) {
 	msg, _ = (*r).Get(ConfigWelcomeMessage)
+	return
+}
+
+func InitDefaultConfig(r *ConfigRepository) (err error) {
+	secretKey, err := GenerateJwtSecretKey()
+	if err != nil {
+		return
+	}
+
+	defaultConfig := map[string]string{
+		ConfigJwtSecretKey:      string(secretKey[:]),
+		ConfigWelcomeMessage:    "Connected to openfsd",
+		ConfigFsdServerHostname: "localhost",
+		ConfigFsdServerIdent:    "OPENFSD",
+		ConfigFsdServerLocation: "Earth",
+		ConfigApiServerBaseURL:  "http://localhost",
+	}
+
+	for k, v := range defaultConfig {
+		if err = (*r).SetIfNotExists(k, v); err != nil {
+			return
+		}
+	}
+
 	return
 }

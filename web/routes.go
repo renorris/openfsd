@@ -23,6 +23,7 @@ func (s *Server) setupRoutes() (e *gin.Engine) {
 	s.setupAuthRoutes(apiV1Group)
 	s.setupUserRoutes(apiV1Group)
 	s.setupConfigRoutes(apiV1Group)
+	s.setupDataRoutes(apiV1Group)
 
 	// Frontend groups
 	s.setupFrontendRoutes(e.Group(""))
@@ -54,6 +55,20 @@ func (s *Server) setupConfigRoutes(parent *gin.RouterGroup) {
 	configGroup.POST("/update", s.handleUpdateConfig)
 	configGroup.POST("/resetsecretkey", s.handleResetSecretKey)
 	configGroup.POST("/createtoken", s.handleCreateNewAPIToken)
+}
+
+func (s *Server) setupDataRoutes(parent *gin.RouterGroup) {
+	dataGroup := parent.Group("/data")
+	dataGroup.GET("/status.txt", s.handleGetStatusTxt)
+	dataGroup.GET("/status.json", s.handleGetStatusJSON)
+	dataGroup.GET("/openfsd-servers.txt", s.handleGetServersTxt)
+	dataGroup.GET("/openfsd-servers.json", s.handleGetServersJSON)
+	dataGroup.GET("/sweatbox-servers.json", func(c *gin.Context) {
+		c.Set("is_sweatbox", "true")
+		s.handleGetServersJSON(c)
+	})
+	dataGroup.GET("/all-servers.json", s.handleGetServersJSON)
+	dataGroup.GET("/openfsd-data.json", s.getDatafeed)
 }
 
 func (s *Server) setupFrontendRoutes(parent *gin.RouterGroup) {

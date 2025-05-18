@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"slices"
 	"strconv"
 	"strings"
@@ -228,7 +229,7 @@ func broadcastRangedVelocity(po *postOffice, client *Client, packet []byte) {
 	})
 }
 
-// broadcastRangedAtcOnly broadcasts a packet to all ATC clients in range
+// broadcastRangedAtcOnly broadcasts a packet to all OnlineUserATC clients in range
 func broadcastRangedAtcOnly(po *postOffice, client *Client, packet []byte) {
 	packetStr := string(packet)
 	po.search(client, func(recipient *Client) bool {
@@ -249,7 +250,7 @@ func broadcastAll(po *postOffice, client *Client, packet []byte) {
 	})
 }
 
-// broadcastAllATC broadcasts a packet to all ATC on entire server
+// broadcastAllATC broadcasts a packet to all OnlineUserATC on entire server
 func broadcastAllATC(po *postOffice, client *Client, packet []byte) {
 	packetStr := string(packet)
 	po.all(client, func(recipient *Client) bool {
@@ -351,6 +352,31 @@ func buildBeaconCodePacket(source, recipient, targetCallsign, beaconCode string)
 	builder.WriteString("\r\n")
 
 	return builder.String()
+}
+
+type pitchBankHeading uint32
+
+const maxPbhValue = 0b1111111111
+
+func newPitchBankHeading(pitch uint32, bank uint32, heading uint32) (pbh pitchBankHeading, err error) {
+	if pitch > maxPbhValue || bank > maxPbhValue || heading > maxPbhValue {
+		err = errors.New("out of range")
+		return
+	}
+
+	pbh = (pbh | pitchBankHeading(pitch)) << 10
+	pbh = (pbh | pitchBankHeading(bank)) << 10
+	pbh = (pbh | pitchBankHeading(heading)) << 2
+
+	return
+}
+
+func (pbh pitchBankHeading) vals() (pitch uint32, bank uint32, heading uint32) {
+	pitch = uint32(pbh>>22) & maxPbhValue
+	bank = uint32(pbh>>12) & maxPbhValue
+	heading = uint32(pbh>>2) & maxPbhValue
+
+	return
 }
 
 func strPtr(str string) *string {

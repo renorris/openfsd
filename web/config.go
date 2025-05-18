@@ -22,6 +22,10 @@ func (s *Server) handleGetConfig(c *gin.Context) {
 
 	var configKeys = []string{
 		db.ConfigWelcomeMessage,
+		db.ConfigFsdServerHostname,
+		db.ConfigFsdServerIdent,
+		db.ConfigFsdServerLocation,
+		db.ConfigApiServerBaseURL,
 	}
 
 	type ResponseBody struct {

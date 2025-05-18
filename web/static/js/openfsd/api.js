@@ -23,7 +23,6 @@ async function doAPIRequest(method, url, withAuth, data) {
         }).done((res) => {
             resolve(res)
         }).fail((xhr) => {
-            logout()
             reject(xhr)
         });
     });

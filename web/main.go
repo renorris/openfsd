@@ -2,51 +2,21 @@ package main
 
 import (
 	"context"
-	"database/sql"
-	"github.com/renorris/openfsd/db"
+	"os"
+	"os/signal"
 )
 
 func main() {
-	sqlDb, err := sql.Open("sqlite", ":memory:")
+	ctx, _ := signal.NotifyContext(context.Background(), os.Interrupt)
+
+	os.Setenv("DATABASE_DRIVER", "sqlite")
+	os.Setenv("DATABASE_SOURCE_NAME", "../test.db")
+	os.Setenv("FSD_HTTP_SERVICE_ADDRESS", "http://localhost:13618")
+
+	server, err := NewDefaultServer(ctx)
 	if err != nil {
 		panic(err)
 	}
 
-	if err = db.Migrate(sqlDb); err != nil {
-		panic(err)
-	}
-
-	dbRepo, err := db.NewRepositories(sqlDb)
-	if err != nil {
-		panic(err)
-	}
-
-	strPtr := func(str string) *string {
-		return &str
-	}
-
-	if err = dbRepo.UserRepo.CreateUser(&db.User{
-		FirstName:     strPtr("Default Administrator"),
-		Password:      "12345",
-		NetworkRating: 12,
-	}); err != nil {
-		panic(err)
-	}
-
-	err = dbRepo.ConfigRepo.Set(db.ConfigJwtSecretKey, "abcdef")
-	if err != nil {
-		panic(err)
-	}
-
-	err = dbRepo.ConfigRepo.InitDefault()
-	if err != nil {
-		panic(err)
-	}
-
-	server, err := NewServer(dbRepo)
-	if err != nil {
-		panic(err)
-	}
-
-	server.Run(context.Background(), "0.0.0.0:8080")
+	server.Run(ctx)
 }

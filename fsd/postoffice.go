@@ -39,7 +39,7 @@ func (p *postOffice) register(client *Client) (err error) {
 	p.clientMapLock.Unlock()
 
 	// Insert into R-tree
-	clientMin, clientMax := calculateBoundingBox(client.latLon, client.visRange)
+	clientMin, clientMax := calculateBoundingBox(client.latLon(), client.visRange.Load())
 	p.treeLock.Lock()
 	p.tree.Insert(clientMin, clientMax, client)
 	p.treeLock.Unlock()
@@ -49,7 +49,7 @@ func (p *postOffice) register(client *Client) (err error) {
 
 // release removes a Client from the post office.
 func (p *postOffice) release(client *Client) {
-	clientMin, clientMax := calculateBoundingBox(client.latLon, client.visRange)
+	clientMin, clientMax := calculateBoundingBox(client.latLon(), client.visRange.Load())
 
 	p.treeLock.Lock()
 	p.tree.Delete(clientMin, clientMax, client)
@@ -65,11 +65,12 @@ func (p *postOffice) release(client *Client) {
 // updatePosition updates the geospatial position of a Client.
 // The referenced client's latLon and visRange are rewritten.
 func (p *postOffice) updatePosition(client *Client, newCenter [2]float64, newVisRange float64) {
-	oldMin, oldMax := calculateBoundingBox(client.latLon, client.visRange)
+	oldMin, oldMax := calculateBoundingBox(client.latLon(), client.visRange.Load())
 	newMin, newMax := calculateBoundingBox(newCenter, newVisRange)
 
-	client.latLon = newCenter
-	client.visRange = newVisRange
+	client.lat.Store(newCenter[0])
+	client.lon.Store(newCenter[1])
+	client.visRange.Store(newVisRange)
 
 	// Avoid redundant updates
 	if oldMin == newMin && oldMax == newMax {
@@ -86,7 +87,7 @@ func (p *postOffice) updatePosition(client *Client, newCenter [2]float64, newVis
 
 // search calls `callback` for every other Client within geographical range of the provided Client
 func (p *postOffice) search(client *Client, callback func(recipient *Client) bool) {
-	clientMin, clientMax := calculateBoundingBox(client.latLon, client.visRange)
+	clientMin, clientMax := calculateBoundingBox(client.latLon(), client.visRange.Load())
 
 	p.treeLock.RLock()
 	p.tree.Search(clientMin, clientMax, func(foundMin [2]float64, foundMax [2]float64, foundClient *Client) bool {
