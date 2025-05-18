@@ -1,10 +1,16 @@
 package main
 
 import (
+	"embed"
 	"github.com/gin-gonic/gin"
+	"io/fs"
+	"log"
 	"net/http"
 	"os"
 )
+
+//go:embed static/*
+var staticFS embed.FS
 
 func (s *Server) setupRoutes() (e *gin.Engine) {
 	e = gin.New()
@@ -29,7 +35,11 @@ func (s *Server) setupRoutes() (e *gin.Engine) {
 	s.setupFrontendRoutes(e.Group(""))
 
 	// Serve static files
-	e.Static("/static", "./static")
+	subFS, err := fs.Sub(staticFS, "static")
+	if err != nil {
+		log.Fatal(err)
+	}
+	e.StaticFS("/static", http.FS(subFS))
 
 	return
 }

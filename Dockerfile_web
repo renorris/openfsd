@@ -1,0 +1,27 @@
+FROM golang:1.24 AS build
+
+WORKDIR /go/src/fsdweb
+COPY go.mod go.sum ./
+
+# Cache module downloads
+RUN go mod download
+
+COPY . .
+
+# Cache builds
+ENV GOCACHE=/root/.cache/go-build
+RUN --mount=type=cache,target="/root/.cache/go-build" \
+    cd web && \
+    CGO_ENABLED=0 go build -o /go/bin/fsdweb
+
+FROM alpine:latest
+
+RUN addgroup -g 2001 nonroot && \
+    adduser -u 2001 -G nonroot -D nonroot && \
+    mkdir /db && chown -R nonroot:nonroot /db
+
+COPY --from=build --chown=nonroot:nonroot /go/bin/fsdweb /
+
+USER 2001:2001
+
+CMD ["/fsdweb"]

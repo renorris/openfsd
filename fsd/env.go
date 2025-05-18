@@ -11,7 +11,7 @@ type ServerConfig struct {
 	DatabaseDriver      string `env:"DATABASE_DRIVER, default=sqlite"`        // Golang sql database driver name
 	DatabaseSourceName  string `env:"DATABASE_SOURCE_NAME, default=:memory:"` // Golang sql database source name
 	DatabaseAutoMigrate bool   `env:"DATABASE_AUTO_MIGRATE, default=false"`   // Whether to automatically run database migrations on startup
-	DatabaseMaxConns    int    `env:"DATABASE_MAX_CONNS, default=4"`          // Max number of database connections
+	DatabaseMaxConns    int    `env:"DATABASE_MAX_CONNS, default=1"`          // Max number of database connections
 
 	NumMetarWorkers int `env:"NUM_METAR_WORKERS, default=4"` // Number of METAR fetch workers to run
 

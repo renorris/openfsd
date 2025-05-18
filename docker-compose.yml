@@ -1,0 +1,39 @@
+services:
+  fsd:
+    build:
+      context: .
+      dockerfile: Dockerfile_fsd
+    restart: unless-stopped
+    container_name: openfsd_fsd
+    hostname: openfsd_fsd
+    expose:
+      - "13618/tcp" # Internal HTTP REST API service. The webserver talks to this in order to obtain FSD state info.
+    ports:
+      - "6809/tcp"
+    environment:
+      DATABASE_SOURCE_NAME: /db/openfsd.db?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)
+      DATABASE_AUTO_MIGRATE: true
+    volumes:
+      - sqlite:/db
+
+  fsdweb:
+    build:
+      context: .
+      dockerfile: Dockerfile_web
+    restart: unless-stopped
+    container_name: openfsd_web
+    hostname: openfsd_web
+    expose:
+      - "8000/tcp"
+    environment:
+      DATABASE_SOURCE_NAME: /db/openfsd.db?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)
+      FSD_HTTP_SERVICE_ADDRESS: "http://openfsd_fsd:13618"
+    volumes:
+      - sqlite:/db
+
+networks:
+  openfsd:
+    name: openfsd_net
+
+volumes:
+  sqlite:
