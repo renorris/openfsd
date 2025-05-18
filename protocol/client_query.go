@@ -27,7 +27,7 @@ func buildSupportedClientQueryTypes() []string {
 
 type ClientQueryPDU struct {
 	From      string `validate:"required,alphanum,max=16"`
-	To        string `validate:"required,max=7"`
+	To        string `validate:"required,max=16"`
 	QueryType string `validate:"required,ascii,min=2,max=16"`
 	Payload   string `validate:""`
 }
