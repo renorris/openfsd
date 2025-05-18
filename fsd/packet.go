@@ -142,7 +142,9 @@ func minFields(packetType PacketType) int {
 	switch packetType {
 	case PacketTypePilotPosition:
 		return 9
-	case PacketTypePilotPositionFast, PacketTypePilotPositionSlow, PacketTypePilotPositionStopped:
+	case PacketTypePilotPositionFast, PacketTypePilotPositionSlow:
+		return 13
+	case PacketTypePilotPositionStopped:
 		return 7
 	case PacketTypeATCPosition:
 		return 7
