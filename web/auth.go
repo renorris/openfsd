@@ -231,7 +231,16 @@ func (s *Server) jwtBearerMiddleware(c *gin.Context) {
 		return
 	}
 
-	setJwtContext(c, accessToken.CustomClaims())
+	claims := accessToken.CustomClaims()
+
+	if claims.TokenType != "access" {
+		res := newAPIV1Failure("invalid token type")
+		writeAPIV1Response(c, http.StatusUnauthorized, &res)
+		c.Abort()
+		return
+	}
+
+	setJwtContext(c, claims)
 
 	c.Next()
 }

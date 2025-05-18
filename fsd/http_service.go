@@ -3,6 +3,7 @@ package fsd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"github.com/gin-gonic/gin"
 	"github.com/renorris/openfsd/db"
 	"log/slog"
@@ -27,6 +28,7 @@ func (s *Server) setupRoutes() (e *gin.Engine) {
 	// Verify administrator service JWT
 	e.Use(s.authMiddleware)
 	e.GET("/online_users", s.handleGetOnlineUsers)
+	e.POST("/kick_user", s.handleKickUser)
 
 	return
 }
@@ -142,4 +144,30 @@ func (s *Server) handleGetOnlineUsers(c *gin.Context) {
 	c.Writer.Header().Set("Content-Type", "application/json")
 	c.Writer.WriteHeader(http.StatusOK)
 	json.NewEncoder(c.Writer).Encode(&resData)
+}
+
+func (s *Server) handleKickUser(c *gin.Context) {
+	type RequestBody struct {
+		Callsign string `json:"callsign" binding:"required"`
+	}
+
+	var reqBody RequestBody
+	if err := c.ShouldBindJSON(&reqBody); err != nil {
+		c.AbortWithStatus(http.StatusBadRequest)
+	}
+
+	client, err := s.postOffice.find(reqBody.Callsign)
+	if err != nil {
+		if !errors.Is(err, ErrCallsignDoesNotExist) {
+			c.AbortWithStatus(http.StatusInternalServerError)
+			return
+		}
+		c.AbortWithStatus(http.StatusNotFound)
+		return
+	}
+
+	// Cancelling the context will cause the client's event loop to close
+	client.cancelCtx()
+
+	c.AbortWithStatus(http.StatusNoContent)
 }

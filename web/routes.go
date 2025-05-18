@@ -30,6 +30,7 @@ func (s *Server) setupRoutes() (e *gin.Engine) {
 	s.setupUserRoutes(apiV1Group)
 	s.setupConfigRoutes(apiV1Group)
 	s.setupDataRoutes(apiV1Group)
+	s.setupFsdConnRoutes(apiV1Group)
 
 	// Frontend groups
 	s.setupFrontendRoutes(e.Group(""))
@@ -65,6 +66,12 @@ func (s *Server) setupConfigRoutes(parent *gin.RouterGroup) {
 	configGroup.POST("/update", s.handleUpdateConfig)
 	configGroup.POST("/resetsecretkey", s.handleResetSecretKey)
 	configGroup.POST("/createtoken", s.handleCreateNewAPIToken)
+}
+
+func (s *Server) setupFsdConnRoutes(parent *gin.RouterGroup) {
+	fsdConnGroup := parent.Group("/fsdconn")
+	fsdConnGroup.Use(s.jwtBearerMiddleware)
+	fsdConnGroup.POST("/kickuser", s.handleKickActiveConnection)
 }
 
 func (s *Server) setupDataRoutes(parent *gin.RouterGroup) {

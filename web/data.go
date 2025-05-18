@@ -10,6 +10,7 @@ import (
 	"github.com/renorris/openfsd/db"
 	"github.com/renorris/openfsd/fsd"
 	"go.uber.org/atomic"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -272,32 +273,11 @@ func (s *Server) getDatafeed(c *gin.Context) {
 }
 
 func (s *Server) generateDatafeed() (feed *DatafeedCache, err error) {
-	// Generate JWT bearer token
-	customFields := fsd.CustomFields{
-		TokenType:     "fsd_service",
-		CID:           -1,
-		NetworkRating: fsd.NetworkRatingAdministator,
-	}
-	token, err := fsd.MakeJwtToken(&customFields, 15*time.Minute)
-	if err != nil {
-		return
-	}
-	secretKey, err := s.dbRepo.ConfigRepo.Get(db.ConfigJwtSecretKey)
-	if err != nil {
-		return
-	}
-	tokenStr, err := token.SignedString([]byte(secretKey))
-	if err != nil {
-		return
-	}
-
 	client := http.Client{}
-	req, err := http.NewRequest("GET", s.cfg.FsdHttpServiceAddress+"/online_users", nil)
+	req, err := s.makeFsdHttpServiceHttpRequest("GET", "/online_users", nil)
 	if err != nil {
 		return
 	}
-
-	req.Header.Set("Authorization", "Bearer "+tokenStr)
 	res, err := client.Do(req)
 	if err != nil {
 		return
@@ -328,6 +308,40 @@ func (s *Server) generateDatafeed() (feed *DatafeedCache, err error) {
 		jsonStr:     buf.String(),
 		lastUpdated: time.Now(),
 	}
+	return
+}
+
+// makeFsdHttpServiceHttpRequest prepares an HTTP request destined for the internal FSD HTTP API.
+//
+// method sets the HTTP method, path is the relative HTTP path (e.g. /online_users), and body is an optional request body.
+func (s *Server) makeFsdHttpServiceHttpRequest(method string, path string, body io.Reader) (req *http.Request, err error) {
+	// Generate JWT bearer token
+	customFields := fsd.CustomFields{
+		TokenType:     "fsd_service",
+		CID:           -1,
+		NetworkRating: fsd.NetworkRatingAdministator,
+	}
+	token, err := fsd.MakeJwtToken(&customFields, 15*time.Minute)
+	if err != nil {
+		return
+	}
+	secretKey, err := s.dbRepo.ConfigRepo.Get(db.ConfigJwtSecretKey)
+	if err != nil {
+		return
+	}
+	tokenStr, err := token.SignedString([]byte(secretKey))
+	if err != nil {
+		return
+	}
+
+	url := s.cfg.FsdHttpServiceAddress + path
+	req, err = http.NewRequest(method, url, body)
+	if err != nil {
+		return
+	}
+
+	req.Header.Set("Authorization", "Bearer "+tokenStr)
+
 	return
 }
 

@@ -1,3 +1,14 @@
+let userNetworkRating;
+
+async function kickUser(callsign) {
+    try {
+        await doAPIRequestWithAuth("POST", "/api/v1/fsdconn/kickuser", { callsign: callsign });
+        alert("User kicked successfully");
+    } catch (error) {
+        alert("Failed to kick user");
+    }
+}
+
 function networkRatingFromInt(val) {
     switch (val) {
         case -1: return "Inactive"
@@ -18,9 +29,9 @@ function networkRatingFromInt(val) {
     }
 }
 
-$(document).ready(async () => {
+$(async () => {
     const claims = getAccessTokenClaims()
-    loadUserInfo(claims.cid)
+    await loadUserInfo(claims.cid)
 
     const map = L.map('map').setView([30, 0], 1);
     L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -35,11 +46,12 @@ $(document).ready(async () => {
     });
 
     await populateMap(map, planeIcon)
-    setInterval(() => { populateMap(map, planeIcon) }, 5000)
+    setInterval(() => { populateMap(map, planeIcon) }, 15000)
 })
 
 async function loadUserInfo(cid) {
     const res = await doAPIRequest("POST", "/api/v1/user/load", true, { cid: cid })
+    userNetworkRating = res.data.network_rating;
 
     if (res.data.first_name !== "") {
         $("#dashboard-real-name").text(`Welcome, ${res.data.first_name}!`);
@@ -62,9 +74,17 @@ let dashboardMarkers = [];
 
 async function populateMap(map, planeIcon) {
     try {
-        const res = await $.ajax("https://data.vatsim.net/v3/vatsim-data.json", {
+        const res = await $.ajax("/api/v1/data/openfsd-data.json", {
             method: "GET",
             dataType: "json"
+        });
+
+        // Collect callsigns of markers with open popups
+        const openCallsigns = new Set();
+        dashboardMarkers.forEach((marker) => {
+            if (marker.getPopup() && marker.getPopup().isOpen()) {
+                openCallsigns.add(marker.options.title);
+            }
         });
 
         // Remove existing markers
@@ -73,6 +93,7 @@ async function populateMap(map, planeIcon) {
         });
         dashboardMarkers = [];
 
+        // Add new markers
         res.pilots.forEach((pilot) => {
             const callsign = pilot.callsign;
             const lat = pilot.latitude;
@@ -80,20 +101,25 @@ async function populateMap(map, planeIcon) {
             const heading = pilot.heading;
             const name = pilot.name;
 
-            const marker = L.marker([lat, lon], { icon: planeIcon, title: callsign });
-            // Bind popup with callsign
-            marker.bindPopup(`<b>Callsign:</b> ${callsign}<br>${name}<br>${lat} ${lon}`).openPopup();
-            marker.on('click', function() {
-                this.openPopup();
+            const marker = L.marker([lat, lon], {
+                icon: planeIcon,
+                rotationAngle: heading,
+                rotationOrigin: 'center center',
+                title: callsign
             });
-            marker.addTo(map);
-            // Set rotation
-            if (marker._icon) {
-                const currentTransform = marker._icon.style.transform || '';
-                marker._icon.style.transform = currentTransform + ` rotate(${heading}deg)`;
-                marker._icon.style.transformOrigin = "center"
+
+            let popupContent = `<b>Callsign:</b> ${callsign}<br>${name}<br>${lat} ${lon}`;
+            if (userNetworkRating >= 11) {
+                popupContent += `<br><button onclick="kickUser('${callsign}')">Kick</button>`;
             }
+            marker.bindPopup(popupContent);
+            marker.addTo(map);
             dashboardMarkers.push(marker);
+
+            // If this callsign was open before, open its popup
+            if (openCallsigns.has(callsign)) {
+                marker.openPopup();
+            }
         });
         $("#dashboard-connection-count").text(dashboardMarkers.length);
     } catch (error) {
