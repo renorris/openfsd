@@ -229,7 +229,7 @@ func broadcastRangedVelocity(po *postOffice, client *Client, packet []byte) {
 	})
 }
 
-// broadcastRangedAtcOnly broadcasts a packet to all OnlineUserATC clients in range
+// broadcastRangedAtcOnly broadcasts a packet to all ATC clients in range
 func broadcastRangedAtcOnly(po *postOffice, client *Client, packet []byte) {
 	packetStr := string(packet)
 	po.search(client, func(recipient *Client) bool {
@@ -250,7 +250,7 @@ func broadcastAll(po *postOffice, client *Client, packet []byte) {
 	})
 }
 
-// broadcastAllATC broadcasts a packet to all OnlineUserATC on entire server
+// broadcastAllATC broadcasts a packet to all ATC on entire server
 func broadcastAllATC(po *postOffice, client *Client, packet []byte) {
 	packetStr := string(packet)
 	po.all(client, func(recipient *Client) bool {

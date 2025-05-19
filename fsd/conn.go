@@ -97,14 +97,14 @@ func sendServerIdent(conn io.Writer) (err error) {
 // loginData holds the data extracted from the Client's login packets.
 type loginData struct {
 	clientChallenge string        // Optional Client challenge for authentication
-	callsign        string        // Callsign of the Client (OnlineUserATC or pilot)
+	callsign        string        // Callsign of the Client
 	cid             int           // Cert ID
 	realName        string        // Real name
 	networkRating   NetworkRating // Network rating of the Client
 	protoRevision   int           // Protocol revision
 	loginTime       time.Time     // Time of login
 	clientId        uint16        // Client ID
-	isAtc           bool          // True if the Client is an OnlineUserATC, false if a pilot
+	isAtc           bool          // True if the Client is an ATC, false if a pilot
 }
 
 // ErrInvalidAddPacket is returned when the add packet from the Client is invalid.
@@ -173,7 +173,7 @@ func readLoginPackets(conn net.Conn, scanner *bufio.Scanner) (data loginData, to
 	if data.isAtc {
 		if countFields(addPacket) != 7 {
 			err = ErrInvalidAddPacket
-			sendError(conn, SyntaxError, "Invalid number of fields in OnlineUserATC add packet")
+			sendError(conn, SyntaxError, "Invalid number of fields in ATC add packet")
 			return
 		}
 	} else {
@@ -196,7 +196,7 @@ func readLoginPackets(conn net.Conn, scanner *bufio.Scanner) (data loginData, to
 		data.realName = string(getField(addPacket, 2))
 		if data.cid, err = strconv.Atoi(string(getField(addPacket, 3))); err != nil {
 			err = ErrInvalidAddPacket
-			sendError(conn, SyntaxError, "Invalid CID in OnlineUserATC add packet")
+			sendError(conn, SyntaxError, "Invalid CID in ATC add packet")
 			return
 		}
 		token = string(getField(addPacket, 4))
@@ -209,7 +209,7 @@ func readLoginPackets(conn net.Conn, scanner *bufio.Scanner) (data loginData, to
 		data.networkRating = NetworkRating(networkRating)
 		if data.protoRevision, err = strconv.Atoi(string(getField(addPacket, 6))); err != nil {
 			err = ErrInvalidAddPacket
-			sendError(conn, SyntaxError, "Invalid protocol revision in OnlineUserATC add packet")
+			sendError(conn, SyntaxError, "Invalid protocol revision in ATC add packet")
 			return
 		}
 	} else {

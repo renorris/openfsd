@@ -21,14 +21,14 @@ type Client struct {
 	flightPlan         atomic.String
 	assignedBeaconCode atomic.String
 
-	frequency   atomic.String // OnlineUserATC frequency
+	frequency   atomic.String // ATC frequency
 	altitude    atomic.Int32  // OnlineUserPilot altitude
 	groundspeed atomic.Int32  // OnlineUserPilot ground speed
 	transponder atomic.String // Active pilot transponder
 	heading     atomic.Int32  // OnlineUserPilot heading
 	lastUpdated atomic.Time   // Last updated time
 
-	facilityType int // OnlineUserATC facility type. This value is only relevant for OnlineUserATC
+	facilityType int // ATC facility type. This value is only relevant for ATC
 	loginData
 
 	authState vatsimAuthState

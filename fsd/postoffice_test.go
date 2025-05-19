@@ -9,9 +9,13 @@ import (
 	"testing"
 )
 
+// TestRegister tests the registration of clients with unique and duplicate callsigns.
 func TestRegister(t *testing.T) {
 	p := newPostOffice()
-	client1 := &Client{loginData: loginData{callsign: "client1"}, latLon: [2]float64{0, 0}, visRange: 100000}
+	client1 := &Client{loginData: loginData{callsign: "client1"}}
+	client1.lat.Store(0)
+	client1.lon.Store(0)
+	client1.visRange.Store(100000)
 	err := p.register(client1)
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
@@ -19,7 +23,10 @@ func TestRegister(t *testing.T) {
 	if p.clientMap["client1"] != client1 {
 		t.Errorf("expected client1 in map")
 	}
-	client2 := &Client{loginData: loginData{callsign: "client1"}, latLon: [2]float64{0, 0}, visRange: 100000}
+	client2 := &Client{loginData: loginData{callsign: "client1"}}
+	client2.lat.Store(0)
+	client2.lon.Store(0)
+	client2.visRange.Store(100000)
 	err = p.register(client2)
 	if err != ErrCallsignInUse {
 		t.Errorf("expected ErrCallsignInUse, got %v", err)
@@ -29,22 +36,21 @@ func TestRegister(t *testing.T) {
 	}
 }
 
+// TestRelease tests the removal of a client and its effect on search results.
 func TestRelease(t *testing.T) {
 	p := newPostOffice()
-	client1 := &Client{
-		loginData: loginData{callsign: "client1"},
-		latLon:    [2]float64{0, 0},
-		visRange:  100000,
-	}
+	client1 := &Client{loginData: loginData{callsign: "client1"}}
+	client1.lat.Store(0)
+	client1.lon.Store(0)
+	client1.visRange.Store(100000)
 	err := p.register(client1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	client2 := &Client{
-		loginData: loginData{callsign: "client2"},
-		latLon:    [2]float64{0, 0},
-		visRange:  200000,
-	}
+	client2 := &Client{loginData: loginData{callsign: "client2"}}
+	client2.lat.Store(0)
+	client2.lon.Store(0)
+	client2.visRange.Store(200000)
 	err = p.register(client2)
 	if err != nil {
 		t.Fatal(err)
@@ -75,22 +81,21 @@ func TestRelease(t *testing.T) {
 	}
 }
 
+// TestUpdatePosition tests updating a client's position and its effect on search.
 func TestUpdatePosition(t *testing.T) {
 	p := newPostOffice()
-	client1 := &Client{
-		loginData: loginData{callsign: "client1"},
-		latLon:    [2]float64{0, 0},
-		visRange:  100000,
-	}
+	client1 := &Client{loginData: loginData{callsign: "client1"}}
+	client1.lat.Store(0)
+	client1.lon.Store(0)
+	client1.visRange.Store(100000)
 	err := p.register(client1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	client2 := &Client{
-		loginData: loginData{callsign: "client2"},
-		latLon:    [2]float64{0.5, 0.5},
-		visRange:  100000,
-	}
+	client2 := &Client{loginData: loginData{callsign: "client2"}}
+	client2.lat.Store(0.5)
+	client2.lon.Store(0.5)
+	client2.visRange.Store(100000)
 	err = p.register(client2)
 	if err != nil {
 		t.Fatal(err)
@@ -105,9 +110,11 @@ func TestUpdatePosition(t *testing.T) {
 		t.Errorf("expected to find client2, got %v", found)
 	}
 
-	newLatLon := [2]float64{100, 100}
+	// Assuming updatePosition now takes lat, lon, visRange separately
+	newLat := 100.0
+	newLon := 100.0
 	newVisRange := 100000.0
-	p.updatePosition(client2, newLatLon, newVisRange)
+	p.updatePosition(client2, [2]float64{newLat, newLon}, newVisRange)
 
 	found = nil
 	p.search(client1, func(recipient *Client) bool {
@@ -119,31 +126,29 @@ func TestUpdatePosition(t *testing.T) {
 	}
 }
 
+// TestSearch tests the search functionality with multiple clients.
 func TestSearch(t *testing.T) {
 	p := newPostOffice()
-	client1 := &Client{
-		loginData: loginData{callsign: "client1"},
-		latLon:    [2]float64{32.0, -117.0},
-		visRange:  100000,
-	}
+	client1 := &Client{loginData: loginData{callsign: "client1"}}
+	client1.lat.Store(32.0)
+	client1.lon.Store(-117.0)
+	client1.visRange.Store(100000)
 	err := p.register(client1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	client2 := &Client{
-		loginData: loginData{callsign: "client2"},
-		latLon:    [2]float64{33.0, -117.0},
-		visRange:  50000,
-	}
+	client2 := &Client{loginData: loginData{callsign: "client2"}}
+	client2.lat.Store(33.0)
+	client2.lon.Store(-117.0)
+	client2.visRange.Store(50000)
 	err = p.register(client2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	client3 := &Client{
-		loginData: loginData{callsign: "client3"},
-		latLon:    [2]float64{34.0, -117.0},
-		visRange:  50000,
-	}
+	client3 := &Client{loginData: loginData{callsign: "client3"}}
+	client3.lat.Store(34.0)
+	client3.lon.Store(-117.0)
+	client3.visRange.Store(50000)
 	err = p.register(client3)
 	if err != nil {
 		t.Fatal(err)
@@ -176,11 +181,10 @@ func TestSearch(t *testing.T) {
 		t.Errorf("expected no clients found, got %v", found)
 	}
 
-	client4 := &Client{
-		loginData: loginData{callsign: "client4"},
-		latLon:    [2]float64{31.0, -117.0},
-		visRange:  50000,
-	}
+	client4 := &Client{loginData: loginData{callsign: "client4"}}
+	client4.lat.Store(31.0)
+	client4.lon.Store(-117.0)
+	client4.visRange.Store(50000)
 	err = p.register(client4)
 	if err != nil {
 		t.Fatal(err)
@@ -209,6 +213,7 @@ func TestSearch(t *testing.T) {
 	}
 }
 
+// TestCalculateBoundingBox remains unchanged as it doesn't involve Client.
 func TestCalculateBoundingBox(t *testing.T) {
 	const earthRadius = 6371000.0
 	tests := []struct {
@@ -252,7 +257,7 @@ func approxEqual(a, b float64) bool {
 	return math.Abs(a-b) < epsilon
 }
 
-// BenchmarkDistance measures the performance of the distance function using pre-generated pseudo-random coordinates.
+// BenchmarkDistance remains unchanged as it doesn't involve Client directly.
 func BenchmarkDistance(b *testing.B) {
 	const numPairs = 1024 * 64
 	lats1 := make([]float64, numPairs)
@@ -281,6 +286,7 @@ func BenchmarkDistance(b *testing.B) {
 	}
 }
 
+// benchmarkSearchWithN benchmarks search performance with n clients.
 func benchmarkSearchWithN(b *testing.B, n int) {
 	// Create postOffice
 	p := newPostOffice()
@@ -288,11 +294,10 @@ func benchmarkSearchWithN(b *testing.B, n int) {
 	// Create n clients
 	clients := make([]*Client, n)
 	for i := 0; i < n; i++ {
-		clients[i] = &Client{
-			loginData: loginData{callsign: fmt.Sprintf("Client%d", i)},
-			latLon:    [2]float64{rand.Float64(), rand.Float64()},
-			visRange:  10000,
-		}
+		clients[i] = &Client{loginData: loginData{callsign: fmt.Sprintf("Client%d", i)}}
+		clients[i].lat.Store(-90 + rand.Float64()*180)  // Latitude: -90 to 90
+		clients[i].lon.Store(-180 + rand.Float64()*360) // Longitude: -180 to 180
+		clients[i].visRange.Store(10000)
 		p.register(clients[i])
 	}
 
@@ -314,6 +319,7 @@ func benchmarkSearchWithN(b *testing.B, n int) {
 	}
 }
 
+// BenchmarkSearch runs benchmarks for different client counts.
 func BenchmarkSearch(b *testing.B) {
 	rand.Seed(42)
 	for _, n := range []int{100, 1000, 10000} {

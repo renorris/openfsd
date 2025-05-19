@@ -52,7 +52,7 @@ func (s *Server) emptyHandler(client *Client, packet []byte) {
 func (s *Server) handleTextMessage(client *Client, packet []byte) {
 	recipient := getField(packet, 1)
 
-	// OnlineUserATC chat
+	// ATC chat
 	if string(recipient) == "@49999" {
 		if !client.isAtc {
 			return
@@ -167,7 +167,7 @@ func (s *Server) handleFastPilotPosition(client *Client, packet []byte) {
 	broadcastRangedVelocity(s.postOffice, client, packet)
 }
 
-// handleDelete handles logic for Delete OnlineUserATC `#DA` and Delete OnlineUserPilot `#DP` packets
+// handleDelete handles logic for Delete ATC `#DA` and Delete OnlineUserPilot `#DP` packets
 func (s *Server) handleDelete(client *Client, packet []byte) {
 	// Broadcast delete packet
 	broadcastAll(s.postOffice, client, packet)
@@ -185,7 +185,7 @@ func (s *Server) handleSquawkbox(client *Client, packet []byte) {
 
 // handleProcontroller handles logic for Pro Controller `#PC` packets
 func (s *Server) handleProcontroller(client *Client, packet []byte) {
-	// OnlineUserATC-only packet
+	// ATC-only packet
 	if !client.isAtc {
 		return
 	}
@@ -224,7 +224,7 @@ func (s *Server) handleProcontroller(client *Client, packet []byte) {
 		"DP", // Push to departure list
 		"ST": // Set flight strip
 
-		// Only active OnlineUserATC above OBS
+		// Only active ATC above OBS
 		if client.facilityType <= 0 {
 			client.sendError(InvalidControlError, "Invalid control")
 			return
@@ -244,7 +244,7 @@ func (s *Server) handleClientQuery(client *Client, packet []byte) {
 	// Handle queries sent to SERVER
 	if string(recipient) == "SERVER" {
 		switch string(queryType) {
-		case "OnlineUserATC":
+		case "ATC":
 			s.handleClientQueryATCRequest(client, packet)
 		case "IP":
 			s.handleClientQueryIPRequest(client, packet)
@@ -258,7 +258,7 @@ func (s *Server) handleClientQuery(client *Client, packet []byte) {
 	if bytes.HasPrefix(recipient, []byte("@")) {
 		switch string(queryType) {
 
-		// Unprivileged OnlineUserATC queries
+		// Unprivileged ATC queries
 		case
 			"BY",      // Request relief
 			"HI",      // Cancel request relief
@@ -268,14 +268,14 @@ func (s *Server) handleClientQuery(client *Client, packet []byte) {
 			"NEWATIS", // Broadcast new ATIS letter
 			"NEWINFO": // Broadcast new ATIS info
 
-			// OnlineUserATC only
+			// ATC only
 			if !client.isAtc {
 				client.sendError(InvalidControlError, "Invalid control")
 				return
 			}
 			broadcastRangedAtcOnly(s.postOffice, client, packet)
 
-		// Privileged OnlineUserATC queries
+		// Privileged ATC queries
 		case
 			"IT",  // Initiate track
 			"DR",  // Drop track
@@ -288,7 +288,7 @@ func (s *Server) handleClientQuery(client *Client, packet []byte) {
 			"EST", // Set estimate time
 			"GD":  // Set global data
 
-			// OnlineUserATC above OBS facility only
+			// ATC above OBS facility only
 			if !client.isAtc || client.facilityType <= 0 {
 				client.sendError(InvalidControlError, "Invalid control")
 				return
@@ -336,7 +336,7 @@ func (s *Server) handleClientQuery(client *Client, packet []byte) {
 
 func (s *Server) handleClientQueryATCRequest(client *Client, packet []byte) {
 	if countFields(packet) != 4 {
-		client.sendError(SyntaxError, "Invalid OnlineUserATC request")
+		client.sendError(SyntaxError, "Invalid ATC request")
 		return
 	}
 
@@ -349,9 +349,9 @@ func (s *Server) handleClientQueryATCRequest(client *Client, packet []byte) {
 
 	var p string
 	if targetClient.facilityType > 0 {
-		p = fmt.Sprintf("$CRSERVER:%s:OnlineUserATC:Y:%s\r\n", client.callsign, targetCallsign)
+		p = fmt.Sprintf("$CRSERVER:%s:ATC:Y:%s\r\n", client.callsign, targetCallsign)
 	} else {
-		p = fmt.Sprintf("$CRSERVER:%s:OnlineUserATC:N:%s\r\n", client.callsign, targetCallsign)
+		p = fmt.Sprintf("$CRSERVER:%s:ATC:N:%s\r\n", client.callsign, targetCallsign)
 	}
 	client.send(p)
 }
@@ -451,7 +451,7 @@ func (s *Server) handleAuthChallenge(client *Client, packet []byte) {
 }
 
 func (s *Server) handleHandoff(client *Client, packet []byte) {
-	// Active >OBS OnlineUserATC only
+	// Active >OBS ATC only
 	if !client.isAtc || client.facilityType <= 1 {
 		return
 	}
