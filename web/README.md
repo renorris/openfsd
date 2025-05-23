@@ -31,7 +31,7 @@ All API responses follow a standard `APIV1Response` structure:
 }
 ```
 - **err**: Contains an error message if the request fails; otherwise, null.
-- **data**: Contains the response data if the request succeeds; otherwise, null.
+- **data**: Contains the response data if relevant.
 
 Common HTTP status codes:
 - **200 OK**: Request succeeded.
@@ -50,6 +50,8 @@ Common HTTP status codes:
 
 #### POST /api/v1/auth/login
 Obtain access and refresh tokens using FSD login credentials.
+NOTE: Do not use this endpoint for programmatic access from an external application.
+Instead, generate an API token using the Configure Server menu via the frontend.
 
 **Request Body**:
 ```json
@@ -83,6 +85,8 @@ Obtain access and refresh tokens using FSD login credentials.
 
 #### POST /api/v1/auth/refresh
 Refresh an access token using a refresh token.
+NOTE: Do not use this endpoint for programmatic access from an external application.
+Instead, generate an API token using the Configure Server menu via the frontend.
 
 **Request Body**:
 ```json
@@ -179,6 +183,7 @@ Retrieve user information by CID.
 
 #### PATCH /api/v1/user/update
 Update user information by CID.
+The CID itself is immutable and is only provided as reference of the user to update.
 
 **Request Body**:
 ```json
@@ -328,6 +333,7 @@ Update server configuration key-value pairs.
 
 #### POST /api/v1/config/resetsecretkey
 Reset the JWT secret key used for signing tokens.
+Upon successfully calling this endpoint, this effectively invalidates *all* previously-administered authentication tokens. All users using the frontend will be logged out. All previously-generated API tokens will be invalidated.
 
 **Request**: No body required.
 
