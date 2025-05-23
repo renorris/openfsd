@@ -254,63 +254,52 @@ func (s *Server) handleClientQuery(client *Client, packet []byte) {
 		return
 	}
 
-	// Handle broadcast queries (recipient starts with "@")
-	if bytes.HasPrefix(recipient, []byte("@")) {
-		switch string(queryType) {
-
-		// Unprivileged ATC queries
-		case
-			"BY",      // Request relief
-			"HI",      // Cancel request relief
-			"HLP",     // Request help
-			"NOHLP",   // Cancel request help
-			"WH",      // Who has
-			"NEWATIS", // Broadcast new ATIS letter
-			"NEWINFO": // Broadcast new ATIS info
-
-			// ATC only
-			if !client.isAtc {
-				client.sendError(InvalidControlError, "Invalid control")
-				return
-			}
-			broadcastRangedAtcOnly(s.postOffice, client, packet)
-
-		// Privileged ATC queries
-		case
-			"IT",  // Initiate track
-			"DR",  // Drop track
-			"HT",  // Accept handoff
-			"TA",  // Set temporary altitude
-			"FA",  // Set final altitude
-			"BC",  // Set beacon code
-			"SC",  // Set scratchpad
-			"VT",  // Set voice type
-			"EST", // Set estimate time
-			"GD":  // Set global data
-
-			// ATC above OBS facility only
-			if !client.isAtc || client.facilityType <= 0 {
-				client.sendError(InvalidControlError, "Invalid control")
-				return
-			}
-			broadcastRangedAtcOnly(s.postOffice, client, packet)
-
-		// Allow aircraft configuration queries from any client
-		case "ACC":
-			broadcastRanged(s.postOffice, client, packet)
-		}
-		return
-	}
-
-	// Handle direct queries to another client
 	switch string(queryType) {
 
-	// General unprivileged queries
-	case "CAPS", "C?", "RN", "ATIS", "ACC":
-		sendDirectOrErr(s.postOffice, client, recipient, packet)
+	// Unprivileged ATC queries
+	case
+		"BY",      // Request relief
+		"HI",      // Cancel request relief
+		"HLP",     // Request help
+		"NOHLP",   // Cancel request help
+		"WH",      // Who has
+		"NEWATIS", // Broadcast new ATIS letter
+		"NEWINFO": // Broadcast new ATIS info
 
-	// Supervisor queries
-	case "SV", "INF":
+		// ATC only
+		if !client.isAtc {
+			client.sendError(InvalidControlError, "Invalid control")
+			return
+		}
+		forwardClientQuery(s.postOffice, client, packet)
+
+	// Privileged ATC queries
+	case
+		"IT",  // Initiate track
+		"DR",  // Drop track
+		"HT",  // Accept handoff
+		"TA",  // Set temporary altitude
+		"FA",  // Set final altitude
+		"BC",  // Set beacon code
+		"SC",  // Set scratchpad
+		"VT",  // Set voice type
+		"EST", // Set estimate time
+		"GD",  // Set global data
+		"IPC": // Force squawk code change
+
+		// ATC above OBS facility only
+		if !client.isAtc || client.facilityType <= 0 {
+			client.sendError(InvalidControlError, "Invalid control")
+			return
+		}
+		forwardClientQuery(s.postOffice, client, packet)
+
+	// Allow aircraft configuration queries from any client
+	case "ACC", "CAPS", "C?", "RN", "ATIS", "SV":
+		forwardClientQuery(s.postOffice, client, packet)
+
+	// INF queries
+	case "INF":
 		// Allow responses from any client
 		if getPacketType(packet) == PacketTypeClientQueryResponse {
 			sendDirectOrErr(s.postOffice, client, recipient, packet)
@@ -322,15 +311,7 @@ func (s *Server) handleClientQuery(client *Client, packet []byte) {
 			client.sendError(InvalidControlError, "Invalid control")
 			return
 		}
-		sendDirectOrErr(s.postOffice, client, recipient, packet)
-
-	// Force squawk code change. I have no idea if anyone even supports this.
-	case "IPC":
-		if !client.isAtc || client.facilityType <= 0 {
-			client.sendError(InvalidControlError, "Invalid control")
-			return
-		}
-		sendDirectOrErr(s.postOffice, client, recipient, packet)
+		forwardClientQuery(s.postOffice, client, packet)
 	}
 }
 

@@ -207,6 +207,29 @@ func parseVisRange(packet []byte, index int) (visRange float64, ok bool) {
 	return
 }
 
+// forwardClientQuery freely routes a client query packet depending on the recipient.
+func forwardClientQuery(po *postOffice, client *Client, packet []byte) {
+	recipient := getField(packet, 1)
+
+	if len(recipient) < 2 {
+		client.sendError(NoSuchCallsignError, "Invalid recipient")
+		return
+	}
+
+	switch string(recipient) {
+	case "@94835":
+		// Broadcast to in-range ATC
+		broadcastRangedAtcOnly(po, client, packet)
+		return
+	case "@94836":
+		// Broadcast to all in-range clients
+		broadcastRanged(po, client, packet)
+		return
+	}
+
+	sendDirectOrErr(po, client, recipient, packet)
+}
+
 // broadcastRanged broadcasts a packet to all clients in range
 func broadcastRanged(po *postOffice, client *Client, packet []byte) {
 	packetStr := string(packet)
