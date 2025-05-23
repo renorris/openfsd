@@ -1,6 +1,6 @@
 # openfsd
 
-**openfsd** is an open-source multiplayer flight simulation server implementing the Flight Sim Daemon (FSD) protocol, compatible with VATSIM's Velocity protocol. It connects pilots and air traffic controllers in a shared virtual environment.
+**openfsd** is an open-source multiplayer flight simulation server implementing the modern VATSIM FSD protocol. It connects pilots and air traffic controllers in a shared virtual environment.
 
 ## Features
 
@@ -37,9 +37,9 @@ The preferred way to run openfsd is using **Docker** and **Docker Compose**. See
     - Navigate to the **Configure Server** menu
     - Set configuration values. See the [Configuration]() wiki.
 
-4. **Connect Clients**:
-   Configure flight simulation clients (e.g., vPilot, Swift, VRC) to connect to `localhost:6809`. See the [Client Connection Wiki](https://github.com/renorris/openfsd/wiki/Client-Connection) for client-specific instructions.
+4. **Connect**:
+   See the [Client Connection Wiki](https://github.com/renorris/openfsd/wiki/Client-Connection) for client-specific instructions.
 
 ## API
 
-The web server exposes APIs under `/api/v1` for authentication, user management, and configuration. Although a basic web interface is provided, users are encouraged to call this API from their own external applications. See the [API Wiki](https://github.com/renorris/openfsd/wiki/api) for documentation.
+The web server exposes APIs under `/api/v1` for authentication, user management, and configuration. Although a basic web interface is provided, users are encouraged to call this API from their own external applications. See the [API](https://github.com/renorris/openfsd/tree/main/web) documentation.
