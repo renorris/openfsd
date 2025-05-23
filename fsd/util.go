@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"slices"
 	"strconv"
 	"strings"
@@ -377,27 +376,14 @@ func buildBeaconCodePacket(source, recipient, targetCallsign, beaconCode string)
 	return builder.String()
 }
 
-type pitchBankHeading uint32
+func pitchBankHeading(packed uint32) (pitch float64, bank float64, heading float64) {
+	// Map 11 bits of resolution to degrees [0..359]
+	const conversionRatio float64 = 359.0 / 1023.0
+	const mask uint32 = 1023 // 0b1111111111
 
-const maxPbhValue = 0b1111111111
-
-func newPitchBankHeading(pitch uint32, bank uint32, heading uint32) (pbh pitchBankHeading, err error) {
-	if pitch > maxPbhValue || bank > maxPbhValue || heading > maxPbhValue {
-		err = errors.New("out of range")
-		return
-	}
-
-	pbh = (pbh | pitchBankHeading(pitch)) << 10
-	pbh = (pbh | pitchBankHeading(bank)) << 10
-	pbh = (pbh | pitchBankHeading(heading)) << 2
-
-	return
-}
-
-func (pbh pitchBankHeading) vals() (pitch uint32, bank uint32, heading uint32) {
-	pitch = uint32(pbh>>22) & maxPbhValue
-	bank = uint32(pbh>>12) & maxPbhValue
-	heading = uint32(pbh>>2) & maxPbhValue
+	pitch = float64(packed>>22&mask) * conversionRatio
+	bank = float64(packed>>12&mask) * conversionRatio
+	heading = float64(packed>>2&mask) * conversionRatio
 
 	return
 }

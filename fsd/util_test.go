@@ -1,6 +1,7 @@
 package fsd
 
 import (
+	"fmt"
 	"testing"
 )
 
@@ -51,4 +52,11 @@ func TestGetField(t *testing.T) {
 			t.Errorf("getField(%q, %d) = %q, want %q", tt.packet, tt.index, got, tt.want)
 		}
 	}
+}
+
+func TestPitchBankHeading(t *testing.T) {
+	pitch, bank, heading := pitchBankHeading(4261294148)
+	fmt.Println(pitch)
+	fmt.Println(bank)
+	fmt.Println(heading)
 }

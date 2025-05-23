@@ -151,13 +151,17 @@ func (s *Server) handlePilotPosition(client *Client, packet []byte) {
 
 	// Update state
 	client.transponder.Store(string(getField(packet, 2)))
+
 	groundspeed, _ := strconv.Atoi(string(getField(packet, 7)))
 	client.groundspeed.Store(int32(groundspeed))
+
 	altitude, _ := strconv.Atoi(string(getField(packet, 6)))
 	client.altitude.Store(int32(altitude))
+
 	pbhUint, _ := strconv.ParseUint(string(getField(packet, 8)), 10, 32)
-	_, _, heading := pitchBankHeading(pbhUint).vals()
+	_, _, heading := pitchBankHeading(uint32(pbhUint))
 	client.heading.Store(int32(heading))
+
 	client.lastUpdated.Store(time.Now())
 }
 
