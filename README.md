@@ -41,7 +41,7 @@ The preferred way to run openfsd is using **Docker** and **Docker Compose**. See
     - Open `http://localhost:8000` in a browser.
     - Log in with the default administrator credentials (printed in the FSD server logs on first startup).
     - Navigate to the **Configure Server** menu
-    - Set configuration values. See the [Configuration]() wiki.
+    - Set configuration values. See the [Configuration](https://github.com/renorris/openfsd/wiki/Configuration) wiki.
 
 4. **Connect**:
    See the [Client Connection Wiki](https://github.com/renorris/openfsd/wiki/Client-Connection) for client-specific instructions.
