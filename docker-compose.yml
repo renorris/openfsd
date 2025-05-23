@@ -1,8 +1,6 @@
 services:
   fsd:
-    build:
-      context: .
-      dockerfile: Dockerfile_fsd
+    image: ghcr.io/renorris/openfsd:fsd-latest
     restart: unless-stopped
     container_name: openfsd_fsd
     hostname: openfsd_fsd
@@ -17,9 +15,7 @@ services:
       - sqlite:/db
 
   fsdweb:
-    build:
-      context: .
-      dockerfile: Dockerfile_web
+    image: ghcr.io/renorris/openfsd:web-latest
     restart: unless-stopped
     container_name: openfsd_web
     hostname: openfsd_web
