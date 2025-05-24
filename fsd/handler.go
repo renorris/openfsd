@@ -366,7 +366,6 @@ func (s *Server) handleClientQueryFlightplanRequest(client *Client, packet []byt
 
 	fplInfo := targetClient.flightPlan.Load()
 	if fplInfo == "" {
-		client.sendError(NoFlightPlanError, "No flightplan for: "+targetCallsign)
 		return
 	}
 
