@@ -171,7 +171,7 @@ func (s *Server) handleFastPilotPosition(client *Client, packet []byte) {
 	broadcastRangedVelocity(s.postOffice, client, packet)
 }
 
-// handleDelete handles logic for Delete ATC `#DA` and Delete OnlineUserPilot `#DP` packets
+// handleDelete handles logic for Delete ATC `#DA` and Delete Pilot `#DP` packets
 func (s *Server) handleDelete(client *Client, packet []byte) {
 	// Broadcast delete packet
 	broadcastAll(s.postOffice, client, packet)
