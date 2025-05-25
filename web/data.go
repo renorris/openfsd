@@ -270,7 +270,7 @@ func (s *Server) getBaseURLOrErr(c *gin.Context) (baseURL string, ok bool) {
 type Datafeed struct {
 	General DatafeedGeneral `json:"general"`
 	Pilots  []DatafeedPilot `json:"pilots"`
-	ATC     []DatafeedATC   `json:"atc"`
+	ATC     []DatafeedATC   `json:"controllers"`
 }
 
 type DatafeedGeneral struct {
