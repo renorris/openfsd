@@ -43,7 +43,7 @@ type LatLon struct {
 
 func newClient(ctx context.Context, conn net.Conn, scanner *bufio.Scanner, loginData loginData) (client *Client) {
 	clientCtx, cancel := context.WithCancel(ctx)
-	return &Client{
+	client = &Client{
 		conn:      conn,
 		scanner:   scanner,
 		ctx:       clientCtx,
@@ -51,6 +51,8 @@ func newClient(ctx context.Context, conn net.Conn, scanner *bufio.Scanner, login
 		sendChan:  make(chan string, 32),
 		loginData: loginData,
 	}
+	client.setLatLon(0, 0)
+	return
 }
 
 func (c *Client) senderWorker() {
