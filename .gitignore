@@ -3,3 +3,4 @@
 .vscode
 *.db
 **tmp**
+build-and-push.sh

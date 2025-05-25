@@ -4,3 +4,4 @@ mkdocs.yml
 README.md
 docs
 **tmp**
+build-and-push.sh
