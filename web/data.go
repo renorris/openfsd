@@ -268,8 +268,49 @@ func (s *Server) getBaseURLOrErr(c *gin.Context) (baseURL string, ok bool) {
 }
 
 type Datafeed struct {
-	Pilots []fsd.OnlineUserPilot `json:"pilots"`
-	ATC    []fsd.OnlineUserATC   `json:"atc"`
+	General DatafeedGeneral `json:"general"`
+	Pilots  []DatafeedPilot `json:"pilots"`
+	ATC     []DatafeedATC   `json:"atc"`
+}
+
+type DatafeedGeneral struct {
+	Version          int       `json:"version"`
+	UpdateTimestamp  time.Time `json:"update_timestamp"`
+	ConnectedClients int       `json:"connected_clients"`
+	UniqueUsers      int       `json:"unique_users"`
+}
+
+type DatafeedPilot struct {
+	fsd.OnlineUserPilot
+	Server         string              `json:"server"`
+	PilotRating    int                 `json:"pilot_rating"`          // INOP placeholder
+	MilitaryRating int                 `json:"military_rating"`       // INOP placeholder
+	QnhIHg         float64             `json:"qnh_i_hg"`              // INOP placeholder
+	QnhMb          int                 `json:"qnh_mb"`                // INOP placeholder
+	FlightPlan     *DatafeedFlightplan `json:"flight_plan,omitempty"` // INOP placeholder
+}
+
+type DatafeedFlightplan struct {
+	FlightRules         string `json:"flight_rules"`
+	Aircraft            string `json:"aircraft"`
+	AircraftFAA         string `json:"aircraft_faa"`
+	AircraftShort       string `json:"aircraft_short"`
+	Departure           string `json:"departure"`
+	Arrival             string `json:"arrival"`
+	Alternate           string `json:"alternate"`
+	DepTime             string `json:"deptime"`
+	EnrouteTime         string `json:"enroute_time"`
+	FuelTime            string `json:"fuel_time"`
+	Remarks             string `json:"remarks"`
+	Route               string `json:"route"`
+	RevisionID          int    `json:"revision_id"`
+	AssignedTransponder string `json:"assigned_transponder"`
+}
+
+type DatafeedATC struct {
+	fsd.OnlineUserATC
+	Server   string   `json:"server"`
+	TextATIS []string `json:"text_atis"` // INOP placeholder
 }
 
 type DatafeedCache struct {
@@ -312,10 +353,38 @@ func (s *Server) generateDatafeed() (feed *DatafeedCache, err error) {
 		return
 	}
 
+	now := time.Now()
+
 	dataFeed := Datafeed{
-		Pilots: onlineUsers.Pilots,
-		ATC:    onlineUsers.ATC,
+		General: DatafeedGeneral{
+			Version:          3,
+			UpdateTimestamp:  now,
+			ConnectedClients: len(onlineUsers.Pilots) + len(onlineUsers.ATC),
+			UniqueUsers:      len(onlineUsers.Pilots) + len(onlineUsers.ATC),
+		},
+		Pilots: []DatafeedPilot{},
+		ATC:    []DatafeedATC{},
 	}
+
+	for _, pilot := range onlineUsers.Pilots {
+		dataFeed.Pilots = append(dataFeed.Pilots, DatafeedPilot{
+			OnlineUserPilot: pilot,
+			Server:          "OPENFSD",
+			PilotRating:     1,
+			MilitaryRating:  1,
+			QnhIHg:          29.92,
+			QnhMb:           1013,
+		})
+	}
+
+	for _, atc := range onlineUsers.ATC {
+		dataFeed.ATC = append(dataFeed.ATC, DatafeedATC{
+			OnlineUserATC: atc,
+			Server:        "OPENFSD",
+			TextATIS:      []string{},
+		})
+	}
+
 	buf := bytes.Buffer{}
 	encoder := json.NewEncoder(&buf)
 	if err = encoder.Encode(&dataFeed); err != nil {
@@ -324,7 +393,7 @@ func (s *Server) generateDatafeed() (feed *DatafeedCache, err error) {
 
 	feed = &DatafeedCache{
 		jsonStr:     buf.String(),
-		lastUpdated: time.Now(),
+		lastUpdated: now,
 	}
 	return
 }
