@@ -68,8 +68,7 @@ func (p *postOffice) updatePosition(client *Client, newCenter [2]float64, newVis
 	oldMin, oldMax := calculateBoundingBox(client.latLon(), client.visRange.Load())
 	newMin, newMax := calculateBoundingBox(newCenter, newVisRange)
 
-	client.lat.Store(newCenter[0])
-	client.lon.Store(newCenter[1])
+	client.setLatLon(newCenter[0], newCenter[1])
 	client.visRange.Store(newVisRange)
 
 	// Avoid redundant updates
@@ -100,12 +99,14 @@ func (p *postOffice) search(client *Client, callback func(recipient *Client) boo
 		}
 
 		if foundClient.protoRevision == 101 {
-			dist := distance(client.lat.Load(), client.lon.Load(), foundClient.lat.Load(), foundClient.lon.Load())
+			clientLatLon := client.latLon()
+			foundClientLatLon := foundClient.latLon()
+			dist := distance(clientLatLon[0], clientLatLon[1], foundClientLatLon[0], foundClientLatLon[1])
 			if dist < client.closestVelocityClientDistance {
 				client.closestVelocityClientDistance = dist
 			}
 		}
-		
+
 		return callback(foundClient)
 	})
 	p.treeLock.RUnlock()

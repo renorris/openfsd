@@ -110,13 +110,14 @@ func (s *Server) handleGetOnlineUsers(c *gin.Context) {
 	}
 
 	for _, client := range clientMap {
+		latLon := client.latLon()
 		genData := OnlineUserGeneralData{
 			Callsign:      client.callsign,
 			CID:           client.cid,
 			Name:          client.realName,
 			NetworkRating: int(client.networkRating),
-			Latitude:      client.lat.Load(),
-			Longitude:     client.lon.Load(),
+			Latitude:      latLon[0],
+			Longitude:     latLon[1],
 			LogonTime:     client.loginTime,
 			LastUpdated:   client.lastUpdated.Load(),
 		}

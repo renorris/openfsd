@@ -16,7 +16,8 @@ type Client struct {
 	cancelCtx func()
 	sendChan  chan string
 
-	lat, lon, visRange            atomic.Float64
+	coords                        atomic.Value
+	visRange                      atomic.Float64
 	closestVelocityClientDistance float64 // The closest Velocity-compatible client in meters
 
 	flightPlan         atomic.String
@@ -37,6 +38,7 @@ type Client struct {
 }
 
 type LatLon struct {
+	lat, lon float64
 }
 
 func newClient(ctx context.Context, conn net.Conn, scanner *bufio.Scanner, loginData loginData) (client *Client) {
@@ -125,5 +127,10 @@ func (s *Server) eventLoop(client *Client) {
 }
 
 func (c *Client) latLon() [2]float64 {
-	return [2]float64{c.lat.Load(), c.lon.Load()}
+	latLon := c.coords.Load().(LatLon)
+	return [2]float64{latLon.lat, latLon.lon}
+}
+
+func (c *Client) setLatLon(lat, lon float64) {
+	c.coords.Store(LatLon{lat: lat, lon: lon})
 }
