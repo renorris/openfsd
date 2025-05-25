@@ -16,7 +16,8 @@ type Client struct {
 	cancelCtx func()
 	sendChan  chan string
 
-	lat, lon, visRange atomic.Float64
+	lat, lon, visRange            atomic.Float64
+	closestVelocityClientDistance float64 // The closest Velocity-compatible client in meters
 
 	flightPlan         atomic.String
 	assignedBeaconCode atomic.String
@@ -31,7 +32,11 @@ type Client struct {
 	facilityType int // ATC facility type. This value is only relevant for ATC
 	loginData
 
-	authState vatsimAuthState
+	authState       vatsimAuthState
+	sendFastEnabled bool
+}
+
+type LatLon struct {
 }
 
 func newClient(ctx context.Context, conn net.Conn, scanner *bufio.Scanner, loginData loginData) (client *Client) {

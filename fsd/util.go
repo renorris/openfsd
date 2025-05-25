@@ -391,3 +391,30 @@ func pitchBankHeading(packed uint32) (pitch float64, bank float64, heading float
 func strPtr(str string) *string {
 	return &str
 }
+
+// sendEnableSendFastPacket sends an 'enable' $SF Send Fast packet to the client
+func sendEnableSendFastPacket(client *Client) {
+	sendSendFastPacket(client, true)
+}
+
+// sendDisableSendFastPacket sends a 'disable' $SF Send Fast packet to the client
+func sendDisableSendFastPacket(client *Client) {
+	sendSendFastPacket(client, false)
+}
+
+// sendSendFastPacket sends a $SF Send Fast packet to the client
+func sendSendFastPacket(client *Client, enabled bool) {
+	builder := strings.Builder{}
+	builder.Grow(32)
+	builder.WriteString("$SFSERVER:")
+	builder.WriteString(client.callsign)
+	builder.WriteByte(':')
+	if enabled {
+		builder.WriteByte('1')
+	} else {
+		builder.WriteByte('0')
+	}
+	builder.WriteString("\r\n")
+
+	client.send(builder.String())
+}

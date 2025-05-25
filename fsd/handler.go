@@ -163,6 +163,17 @@ func (s *Server) handlePilotPosition(client *Client, packet []byte) {
 	client.heading.Store(int32(heading))
 
 	client.lastUpdated.Store(time.Now())
+
+	// Check if we need to update the sendfast state
+	if client.sendFastEnabled {
+		if (client.closestVelocityClientDistance / 1852.0) > 5.0 { // 5.0 nautical miles
+			sendDisableSendFastPacket(client)
+		}
+	} else {
+		if (client.closestVelocityClientDistance / 1852.0) < 5.0 { // 5.0 nautical miles
+			sendEnableSendFastPacket(client)
+		}
+	}
 }
 
 // handleFastPilotPosition handles logic for fast `^`, stopped `#ST`, and slow `#SL` pilot position updates

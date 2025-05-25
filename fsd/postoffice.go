@@ -85,15 +85,27 @@ func (p *postOffice) updatePosition(client *Client, newCenter [2]float64, newVis
 	return
 }
 
-// search calls `callback` for every other Client within geographical range of the provided Client
+// search calls `callback` for every other Client within geographical range of the provided Client.
+//
+// It automatically resets and populates the Client.nearbyClients and Client.closestVelocityClientDistance values
 func (p *postOffice) search(client *Client, callback func(recipient *Client) bool) {
 	clientMin, clientMax := calculateBoundingBox(client.latLon(), client.visRange.Load())
+
+	client.closestVelocityClientDistance = math.MaxFloat64
 
 	p.treeLock.RLock()
 	p.tree.Search(clientMin, clientMax, func(foundMin [2]float64, foundMax [2]float64, foundClient *Client) bool {
 		if foundClient == client {
 			return true // Ignore self
 		}
+
+		if foundClient.protoRevision == 101 {
+			dist := distance(client.lat.Load(), client.lon.Load(), foundClient.lat.Load(), foundClient.lon.Load())
+			if dist < client.closestVelocityClientDistance {
+				client.closestVelocityClientDistance = dist
+			}
+		}
+		
 		return callback(foundClient)
 	})
 	p.treeLock.RUnlock()
