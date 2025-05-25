@@ -7,6 +7,7 @@ CONNECTED CLIENTS = 1
 ;
 ;
 !SERVERS:
-{{ range . }}{{ .Ident }}:{{ .HostnameOrIp }}:{{ .Location }}:{{ .Ident }}:{{ .ClientsConnectionAllowed }}:{{ end }}
+{{ range $index, $element := . }}{{ if $index }}
+{{ end }}{{ $element.Ident }}:{{ $element.HostnameOrIp }}:{{ $element.Location }}:{{ $element.Name }}:{{ $element.ClientsConnectionAllowed }}:{{ end }}
 ;
 ;   END

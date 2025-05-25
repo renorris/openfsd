@@ -145,6 +145,15 @@ func (s *Server) handleGetServersJSON(c *gin.Context) {
 			ClientsConnectionAllowed: 99,
 			IsSweatbox:               isSweatbox,
 		},
+		{
+			Ident:                    "AUTOMATIC",
+			HostnameOrIp:             serverHostname,
+			Location:                 serverLocation,
+			Name:                     serverIdent,
+			ClientConnectionsAllowed: true,
+			ClientsConnectionAllowed: 99,
+			IsSweatbox:               isSweatbox,
+		},
 	}
 
 	res, err := json.Marshal(&dataJson)
@@ -183,6 +192,15 @@ func (s *Server) generateServersTxt() (txt string, err error) {
 	tmplData := TemplateData{
 		{
 			Ident:                    serverIdent,
+			HostnameOrIp:             serverHostname,
+			Location:                 serverLocation,
+			Name:                     serverIdent,
+			ClientConnectionsAllowed: true,
+			ClientsConnectionAllowed: 99,
+			IsSweatbox:               false,
+		},
+		{
+			Ident:                    "AUTOMATIC",
 			HostnameOrIp:             serverHostname,
 			Location:                 serverLocation,
 			Name:                     serverIdent,
