@@ -98,7 +98,7 @@ func (p *postOffice) search(client *Client, callback func(recipient *Client) boo
 			return true // Ignore self
 		}
 
-		if foundClient.protoRevision == 101 {
+		if !client.isAtc && client.protoRevision == 101 && foundClient.protoRevision == 101 {
 			clientLatLon := client.latLon()
 			foundClientLatLon := foundClient.latLon()
 			dist := distance(clientLatLon[0], clientLatLon[1], foundClientLatLon[0], foundClientLatLon[1])
