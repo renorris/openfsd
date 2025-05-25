@@ -167,10 +167,12 @@ func (s *Server) handlePilotPosition(client *Client, packet []byte) {
 	// Check if we need to update the sendfast state
 	if client.sendFastEnabled {
 		if (client.closestVelocityClientDistance / 1852.0) > 5.0 { // 5.0 nautical miles
+			client.sendFastEnabled = false
 			sendDisableSendFastPacket(client)
 		}
 	} else {
 		if (client.closestVelocityClientDistance / 1852.0) < 5.0 { // 5.0 nautical miles
+			client.sendFastEnabled = true
 			sendEnableSendFastPacket(client)
 		}
 	}
