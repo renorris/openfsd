@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database"
-	"github.com/golang-migrate/migrate/v4/database/postgres"
+	migratePostgres "github.com/golang-migrate/migrate/v4/database/postgres"
 	migrateSqlite "github.com/golang-migrate/migrate/v4/database/sqlite"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 	"github.com/lib/pq"  // PostgreSQL driver
@@ -19,25 +19,23 @@ var migrationsFS embed.FS
 
 // Migrate applies database migrations.
 func Migrate(db *sql.DB) (err error) {
-	var migrationPath string
 	var driver database.Driver
 	var dbType string
-
+	var migrationPath string
 	switch db.Driver().(type) {
 	case *pq.Driver:
 		dbType = "postgres"
 		migrationPath = "migrations/postgres"
-		if driver, err = postgres.WithInstance(db, &postgres.Config{}); err != nil {
-			return
-		}
+		driver, err = migratePostgres.WithInstance(db, &migratePostgres.Config{})
 	case *sqlite.Driver:
 		dbType = "sqlite"
 		migrationPath = "migrations/sqlite"
-		if driver, err = migrateSqlite.WithInstance(db, &migrateSqlite.Config{}); err != nil {
-			return
-		}
+		driver, err = migrateSqlite.WithInstance(db, &migrateSqlite.Config{})
 	default:
 		return fmt.Errorf("unsupported database type")
+	}
+	if err != nil {
+		return err
 	}
 
 	d, err := iofs.New(migrationsFS, migrationPath)
