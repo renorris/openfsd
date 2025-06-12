@@ -96,15 +96,16 @@ func sendServerIdent(conn io.Writer) (err error) {
 
 // loginData holds the data extracted from the Client's login packets.
 type loginData struct {
-	clientChallenge string        // Optional Client challenge for authentication
-	callsign        string        // Callsign of the Client
-	cid             int           // Cert ID
-	realName        string        // Real name
-	networkRating   NetworkRating // Network rating of the Client
-	protoRevision   int           // Protocol revision
-	loginTime       time.Time     // Time of login
-	clientId        uint16        // Client ID
-	isAtc           bool          // True if the Client is an ATC, false if a pilot
+	clientChallenge  string        // Optional Client challenge for authentication
+	callsign         string        // Callsign of the Client
+	cid              int           // Cert ID
+	realName         string        // Real name
+	networkRating    NetworkRating // Network rating of the Client
+	maxNetworkRating NetworkRating // Maximum allowed network rating (what is stored in the database)
+	protoRevision    int           // Protocol revision
+	loginTime        time.Time     // Time of login
+	clientId         uint16        // Client ID
+	isAtc            bool          // True if the Client is an ATC, false if a pilot
 }
 
 // ErrInvalidAddPacket is returned when the add packet from the Client is invalid.
@@ -297,6 +298,8 @@ func (s *Server) attemptAuthentication(client *Client, token string) (err error)
 			sendError(client.conn, CertificateSuspendedError, "Certificate inactive or suspended")
 			return
 		}
+		client.maxNetworkRating = claims.NetworkRating
+
 		return
 	}
 
@@ -329,6 +332,7 @@ func (s *Server) attemptAuthentication(client *Client, token string) (err error)
 		sendError(client.conn, CertificateSuspendedError, "Certificate inactive or suspended")
 		return
 	}
+	client.maxNetworkRating = NetworkRating(user.NetworkRating)
 
 	return
 }

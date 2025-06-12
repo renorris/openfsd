@@ -48,7 +48,11 @@ func NewDefaultServer(ctx context.Context) (server *Server, err error) {
 	if err != nil {
 		return
 	}
-	slog.Debug("SQL OK")
+	slog.Debug("SQL opened")
+
+	if err = sqlDb.PingContext(ctx); err != nil {
+		return
+	}
 
 	sqlDb.SetMaxOpenConns(config.DatabaseMaxConns)
 

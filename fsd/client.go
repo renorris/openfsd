@@ -24,10 +24,10 @@ type Client struct {
 	assignedBeaconCode atomic.String
 
 	frequency   atomic.String // ATC frequency
-	altitude    atomic.Int32  // OnlineUserPilot altitude
-	groundspeed atomic.Int32  // OnlineUserPilot ground speed
+	altitude    atomic.Int32  // Pilot altitude
+	groundspeed atomic.Int32  // Pilot ground speed
 	transponder atomic.String // Active pilot transponder
-	heading     atomic.Int32  // OnlineUserPilot heading
+	heading     atomic.Int32  // Pilot heading
 	lastUpdated atomic.Time   // Last updated time
 
 	facilityType int // ATC facility type. This value is only relevant for ATC

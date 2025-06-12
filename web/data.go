@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
 	_ "embed"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"github.com/gin-gonic/gin"
@@ -13,6 +15,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"text/template"
 	"time"
@@ -315,6 +318,7 @@ type DatafeedATC struct {
 
 type DatafeedCache struct {
 	jsonStr     string
+	etag        string
 	lastUpdated time.Time
 }
 
@@ -326,7 +330,14 @@ func (s *Server) getDatafeed(c *gin.Context) {
 		c.AbortWithStatus(http.StatusInternalServerError)
 		return
 	}
+
 	c.Writer.Header().Set("Content-Type", "application/json")
+
+	timeUntilInvalid := feed.lastUpdated.Sub(time.Now())
+	if timeUntilInvalid > 0 {
+		secondsUntilInvalid := int(timeUntilInvalid.Seconds()) + 1
+		c.Writer.Header().Set("Cache-Control", "max-age="+strconv.Itoa(secondsUntilInvalid))
+	}
 	c.Writer.WriteHeader(http.StatusOK)
 	c.Writer.WriteString(feed.jsonStr)
 }
@@ -357,7 +368,7 @@ func (s *Server) generateDatafeed() (feed *DatafeedCache, err error) {
 
 	dataFeed := Datafeed{
 		General: DatafeedGeneral{
-			Version:          3,
+			Version:          3, // Match VATSIM API version
 			UpdateTimestamp:  now,
 			ConnectedClients: len(onlineUsers.Pilots) + len(onlineUsers.ATC),
 			UniqueUsers:      len(onlineUsers.Pilots) + len(onlineUsers.ATC),
@@ -391,8 +402,11 @@ func (s *Server) generateDatafeed() (feed *DatafeedCache, err error) {
 		return
 	}
 
+	etag := md5.Sum(buf.Bytes())
+
 	feed = &DatafeedCache{
 		jsonStr:     buf.String(),
+		etag:        hex.EncodeToString(etag[:]),
 		lastUpdated: now,
 	}
 	return

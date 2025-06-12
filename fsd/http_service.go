@@ -63,14 +63,15 @@ func (s *Server) authMiddleware(c *gin.Context) {
 }
 
 type OnlineUserGeneralData struct {
-	Callsign      string    `json:"callsign"`
-	CID           int       `json:"cid"`
-	Name          string    `json:"name"`
-	NetworkRating int       `json:"network_rating"`
-	Latitude      float64   `json:"latitude"`
-	Longitude     float64   `json:"longitude"`
-	LogonTime     time.Time `json:"logon_time"`
-	LastUpdated   time.Time `json:"last_updated"`
+	Callsign         string    `json:"callsign"`
+	CID              int       `json:"cid"`
+	Name             string    `json:"name"`
+	NetworkRating    int       `json:"network_rating"`
+	MaxNetworkRating int       `json:"max_network_rating"`
+	Latitude         float64   `json:"latitude"`
+	Longitude        float64   `json:"longitude"`
+	LogonTime        time.Time `json:"logon_time"`
+	LastUpdated      time.Time `json:"last_updated"`
 }
 
 type OnlineUserPilot struct {
@@ -112,14 +113,15 @@ func (s *Server) handleGetOnlineUsers(c *gin.Context) {
 	for _, client := range clientMap {
 		latLon := client.latLon()
 		genData := OnlineUserGeneralData{
-			Callsign:      client.callsign,
-			CID:           client.cid,
-			Name:          client.realName,
-			NetworkRating: int(client.networkRating),
-			Latitude:      latLon[0],
-			Longitude:     latLon[1],
-			LogonTime:     client.loginTime,
-			LastUpdated:   client.lastUpdated.Load(),
+			Callsign:         client.callsign,
+			CID:              client.cid,
+			Name:             client.realName,
+			NetworkRating:    int(client.networkRating),
+			MaxNetworkRating: int(client.maxNetworkRating),
+			Latitude:         latLon[0],
+			Longitude:        latLon[1],
+			LogonTime:        client.loginTime,
+			LastUpdated:      client.lastUpdated.Load(),
 		}
 
 		if client.isAtc {
