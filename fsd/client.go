@@ -108,6 +108,8 @@ func (s *Server) eventLoop(client *Client) {
 	go client.senderWorker()
 
 	for {
+		// Set deadline and attempt to read
+		client.conn.SetReadDeadline(getTimeBySecondsInFuture(s.cfg.ConnectionTimeoutSeconds))
 		if !client.scanner.Scan() {
 			return
 		}

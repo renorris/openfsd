@@ -35,8 +35,10 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 			fmt.Println(err)
 		}
 	}()
-
 	defer conn.Close()
+
+	// Set timeout for login phase
+	conn.SetDeadline(getTimeBySecondsInFuture(s.cfg.ConnectionTimeoutSeconds))
 
 	if err := sendServerIdent(conn); err != nil {
 		fmt.Printf("Error sending server ident: %v\n", err)

@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // FSD error codes
@@ -417,4 +418,9 @@ func sendSendFastPacket(client *Client, enabled bool) {
 	builder.WriteString("\r\n")
 
 	client.send(builder.String())
+}
+
+// getTimeBySecondsInFuture returns time.Now + seconds
+func getTimeBySecondsInFuture(seconds int) time.Time {
+	return time.Now().Add(time.Duration(seconds) * time.Second)
 }
