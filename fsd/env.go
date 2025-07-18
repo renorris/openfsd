@@ -16,9 +16,6 @@ type ServerConfig struct {
 	NumMetarWorkers int `env:"NUM_METAR_WORKERS, default=4"` // Number of METAR fetch workers to run
 
 	ServiceHTTPListenAddr string `env:"SERVICE_HTTP_LISTEN_ADDR, default=:13618"`
-
-	// Seconds after which a connection will be closed for inactivity
-	ConnectionTimeoutSeconds int `env:"CONNECTION_TIMEOUT_SECONDS, default=30"`
 }
 
 func loadServerConfig(ctx context.Context) (config *ServerConfig, err error) {
