@@ -14,6 +14,12 @@ import (
 
 // getAccessRefreshTokens returns access and refresh tokens given FSD login credentials
 func (s *Server) getAccessRefreshTokens(c *gin.Context) {
+	if !s.loginLimiter.allow(c.ClientIP()) {
+		res := newAPIV1Failure("too many login attempts, try again later")
+		writeAPIV1Response(c, http.StatusTooManyRequests, &res)
+		return
+	}
+
 	type RequestBody struct {
 		CID        int    `json:"cid" binding:"min=1,required"`
 		Password   string `json:"password" binding:"required"`
@@ -115,6 +121,15 @@ func (s *Server) refreshAccessToken(c *gin.Context) {
 }
 
 func (s *Server) getFsdJwt(c *gin.Context) {
+	if !s.loginLimiter.allow(c.ClientIP()) {
+		resBody := struct {
+			Success  bool   `json:"success"`
+			ErrorMsg string `json:"error_msg"`
+		}{ErrorMsg: "too many login attempts, try again later"}
+		c.JSON(http.StatusTooManyRequests, &resBody)
+		return
+	}
+
 	type RequestBody struct {
 		CID      string `json:"cid" form:"cid" binding:"required"`
 		Password string `json:"password" form:"password" binding:"required"`

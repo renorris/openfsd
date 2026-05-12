@@ -87,8 +87,16 @@ func (s *Server) updateUser(c *gin.Context) {
 		return
 	}
 
-	if targetUser.NetworkRating > int(claims.NetworkRating) {
-		res := newAPIV1Failure("cannot update user with higher network rating")
+	// Cannot edit a user at equal or higher rating, unless editing yourself
+	if reqBody.CID != claims.CID && targetUser.NetworkRating >= int(claims.NetworkRating) {
+		res := newAPIV1Failure("cannot update user with equal or higher network rating")
+		writeAPIV1Response(c, http.StatusForbidden, &res)
+		return
+	}
+
+	// Cannot promote a user beyond your own rating
+	if reqBody.NetworkRating != nil && *reqBody.NetworkRating > int(claims.NetworkRating) {
+		res := newAPIV1Failure("cannot set network rating above your own")
 		writeAPIV1Response(c, http.StatusForbidden, &res)
 		return
 	}

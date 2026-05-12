@@ -10,8 +10,9 @@ import (
 )
 
 type Server struct {
-	cfg    *ServerConfig
-	dbRepo *db.Repositories
+	cfg          *ServerConfig
+	dbRepo       *db.Repositories
+	loginLimiter *loginRateLimiter
 }
 
 func NewDefaultServer(ctx context.Context) (server *Server, err error) {
@@ -45,8 +46,9 @@ func NewDefaultServer(ctx context.Context) (server *Server, err error) {
 
 func NewServer(cfg *ServerConfig, dbRepo *db.Repositories) (server *Server, err error) {
 	server = &Server{
-		cfg:    cfg,
-		dbRepo: dbRepo,
+		cfg:          cfg,
+		dbRepo:       dbRepo,
+		loginLimiter: newLoginRateLimiter(),
 	}
 
 	return
