@@ -141,6 +141,24 @@ func (s *Server) handlePilotPosition(client *Client, packet []byte) {
 		return
 	}
 
+	altitude, err := strconv.Atoi(string(getField(packet, 6)))
+	if err != nil {
+		client.sendError(SyntaxError, "Invalid altitude")
+		return
+	}
+
+	groundspeed, err := strconv.Atoi(string(getField(packet, 7)))
+	if err != nil {
+		client.sendError(SyntaxError, "Invalid groundspeed")
+		return
+	}
+
+	pbhUint, err := strconv.ParseUint(string(getField(packet, 8)), 10, 32)
+	if err != nil {
+		client.sendError(SyntaxError, "Invalid pitch/bank/heading")
+		return
+	}
+
 	const pilotVisRange = 50.0 * 1852.0 // 50 nautical miles
 
 	// Update post office position
@@ -151,14 +169,8 @@ func (s *Server) handlePilotPosition(client *Client, packet []byte) {
 
 	// Update state
 	client.transponder.Store(string(getField(packet, 2)))
-
-	groundspeed, _ := strconv.Atoi(string(getField(packet, 7)))
 	client.groundspeed.Store(int32(groundspeed))
-
-	altitude, _ := strconv.Atoi(string(getField(packet, 6)))
 	client.altitude.Store(int32(altitude))
-
-	pbhUint, _ := strconv.ParseUint(string(getField(packet, 8)), 10, 32)
 	_, _, heading := pitchBankHeading(uint32(pbhUint))
 	client.heading.Store(int32(heading))
 
@@ -431,7 +443,7 @@ func (s *Server) handleKillRequest(client *Client, packet []byte) {
 
 func (s *Server) handleAuthChallenge(client *Client, packet []byte) {
 	if client.clientChallenge == "" {
-		client.sendError(UnauthorizedSoftwareError, "Cannot reply to auth challenge since no initial challenge was recieved")
+		client.sendError(UnauthorizedSoftwareError, "Cannot reply to auth challenge since no initial challenge was received")
 		return
 	}
 

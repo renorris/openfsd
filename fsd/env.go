@@ -15,7 +15,7 @@ type ServerConfig struct {
 
 	NumMetarWorkers int `env:"NUM_METAR_WORKERS, default=4"` // Number of METAR fetch workers to run
 
-	ServiceHTTPListenAddr string `env:"SERVICE_HTTP_LISTEN_ADDR, default=:13618"`
+	ServiceHTTPListenAddr string `env:"SERVICE_HTTP_LISTEN_ADDR, default=127.0.0.1:13618"`
 }
 
 func loadServerConfig(ctx context.Context) (config *ServerConfig, err error) {

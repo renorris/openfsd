@@ -56,7 +56,11 @@ func countFields(packet []byte) int {
 }
 
 func rebaseToNextField(packet []byte) []byte {
-	return packet[bytes.IndexByte(packet, ':')+1:]
+	i := bytes.IndexByte(packet, ':')
+	if i == -1 {
+		return packet[len(packet):]
+	}
+	return packet[i+1:]
 }
 
 func getField(packet []byte, index int) []byte {

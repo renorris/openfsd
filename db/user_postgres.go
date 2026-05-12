@@ -27,8 +27,8 @@ func (r *PostgresUserRepository) CreateUser(user *User) (err error) {
 	row := r.db.QueryRow(`
 		INSERT INTO public.users
 		(password, first_name, last_name, network_rating)
-		VALUES 
-		($1, $2, $3, $4, $5)
+		VALUES
+		($1, $2, $3, $4)
 		RETURNING cid`,
 		hash, user.FirstName, user.LastName, user.NetworkRating,
 	)

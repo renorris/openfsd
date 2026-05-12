@@ -11,6 +11,7 @@ services:
     environment:
       DATABASE_SOURCE_NAME: /db/openfsd.db?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)
       DATABASE_AUTO_MIGRATE: true
+      SERVICE_HTTP_LISTEN_ADDR: ":13618"
     volumes:
       - sqlite:/db
 
