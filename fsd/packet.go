@@ -25,6 +25,9 @@ const (
 	PacketTypeHandoffAccept
 	PacketTypeFlightPlan
 	PacketTypeFlightPlanAmendment
+	PacketTypePing
+	PacketTypePong
+	PacketTypeWeatherRequest
 )
 
 // sourceCallsignFieldIndex returns the index of the field containing the source callsign
@@ -62,6 +65,8 @@ func getPacketType(packet []byte) PacketType {
 			return PacketTypeProController
 		case "#SB":
 			return PacketTypeSquawkbox
+		case "#WX":
+			return PacketTypeWeatherRequest
 		default:
 			return PacketTypeUnknown
 		}
@@ -85,6 +90,10 @@ func getPacketType(packet []byte) PacketType {
 			return PacketTypeFlightPlan
 		case "$AM":
 			return PacketTypeFlightPlanAmendment
+		case "$PI":
+			return PacketTypePing
+		case "$PO":
+			return PacketTypePong
 		default:
 			return PacketTypeUnknown
 		}
@@ -133,6 +142,12 @@ func getPacketPrefix(packetType PacketType) string {
 		return "$FP"
 	case PacketTypeFlightPlanAmendment:
 		return "$AM"
+	case PacketTypePing:
+		return "$PI"
+	case PacketTypePong:
+		return "$PO"
+	case PacketTypeWeatherRequest:
+		return "#WX"
 	default:
 		return ""
 	}
@@ -172,6 +187,10 @@ func minFields(packetType PacketType) int {
 		return 17
 	case PacketTypeFlightPlanAmendment:
 		return 18
+	case PacketTypePing, PacketTypePong:
+		return 3
+	case PacketTypeWeatherRequest:
+		return 3
 	default:
 		return -1
 	}

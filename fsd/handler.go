@@ -39,6 +39,12 @@ func (s *Server) getHandler(packetType PacketType) handlerFunc {
 		return s.handleFileFlightplan
 	case PacketTypeFlightPlanAmendment:
 		return s.handleAmendFlightplan
+	case PacketTypePing:
+		return s.handlePing
+	case PacketTypePong:
+		return s.handlePong
+	case PacketTypeWeatherRequest:
+		return s.handleWeatherRequest
 	default:
 		return s.emptyHandler
 	}
@@ -83,12 +89,13 @@ func (s *Server) handleTextMessage(client *Client, packet []byte) {
 	}
 
 	if string(recipient) == "FP" {
-		// TODO: handle FP
+		// ATC clients send #TM:FP messages to acknowledge a received flight plan;
+		// FP is a reserved callsign with no registered client, so drop silently.
 		return
 	}
 
 	if string(recipient) == "SERVER" {
-		// TODO: handle SERVER
+		// No server-side command protocol is defined for #TM:SERVER messages.
 		return
 	}
 
@@ -477,6 +484,46 @@ func (s *Server) handleFileFlightplan(client *Client, packet []byte) {
 
 	broadcastPacket := buildFileFlightplanPacket(client.callsign, "*A", fplInfo)
 	broadcastAllATC(s.postOffice, client, []byte(broadcastPacket))
+}
+
+// handlePing handles $PI ping packets. If addressed to SERVER the server responds
+// with a $PO pong; otherwise the packet is relayed to the named recipient.
+func (s *Server) handlePing(client *Client, packet []byte) {
+	recipient := getField(packet, 1)
+	if string(recipient) == "SERVER" {
+		pong := fmt.Sprintf("$POSERVER:%s:%s\r\n", client.callsign, string(getField(packet, 2)))
+		client.send(pong)
+		return
+	}
+	sendDirectOrErr(s.postOffice, client, recipient, packet)
+}
+
+// handlePong handles $PO pong packets by relaying them to the named recipient.
+func (s *Server) handlePong(client *Client, packet []byte) {
+	recipient := getField(packet, 1)
+	sendDirectOrErr(s.postOffice, client, recipient, packet)
+}
+
+// handleWeatherRequest handles #WX weather profile requests addressed to SERVER.
+// It responds with zeroed #WD (wind), #CD (cloud), and #TD (temperature) packets
+// using ISA-approximate temperature layers and standard pressure (29.92 inHg).
+func (s *Server) handleWeatherRequest(client *Client, packet []byte) {
+	if string(getField(packet, 1)) != "SERVER" {
+		return
+	}
+	cs := client.callsign
+
+	// 4 wind layers: ceiling:floor:direction:speed:gusting:turbulence
+	client.send(fmt.Sprintf(
+		"#WDSERVER:%s:-1:-1:0:0:0:0:-1:-1:0:0:0:0:-1:-1:0:0:0:0:-1:-1:0:0:0:0\r\n", cs))
+
+	// 2 cloud layers + storm layer: ceiling:floor:coverage:icing:turbulence; last field is visibility
+	client.send(fmt.Sprintf(
+		"#CDSERVER:%s:-1:-1:0:0:0:-1:-1:0:0:0:-1:-1:0:0:0:0.00\r\n", cs))
+
+	// 4 temperature layers (ISA): ceiling:temperature; trailing field is pressure (inHg ×100)
+	client.send(fmt.Sprintf(
+		"#TDSERVER:%s:100:15:10000:-5:18000:-19:35000:-56:2992\r\n", cs))
 }
 
 func (s *Server) handleAmendFlightplan(client *Client, packet []byte) {
