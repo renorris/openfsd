@@ -94,6 +94,7 @@ A list of known clients is as follows:
 
 | Client ID | Private Key                        | Client Name |
 |-----------|------------------------------------|-------------|
+| `2`       | `079f83e7d0fb6a9d99114439b2ea28fb` | SquawkBox   |
 | `8464`    | `945507c4c50222c34687e742729252e6` | vSTARS      |
 | `10452`   | `0ad74157c7f449c216bfed04f3af9fb9` | vERAM       |
 | `24515`   | `3424cbcebcca6fe95f973b350ff85cef` | vatSys      |
