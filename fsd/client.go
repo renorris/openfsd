@@ -3,10 +3,10 @@ package fsd
 import (
 	"bufio"
 	"context"
-	"go.uber.org/atomic"
 	"net"
-	"strconv"
-	"strings"
+
+	"github.com/renorris/openfsd/pkg/protocol"
+	"go.uber.org/atomic"
 )
 
 type Client struct {
@@ -76,17 +76,7 @@ func (c *Client) senderWorker() {
 //
 // This call is thread-safe
 func (c *Client) sendError(code int, message string) (err error) {
-	packet := strings.Builder{}
-	packet.Grow(128)
-	packet.WriteString("$ERserver:unknown:")
-	codeBuf := make([]byte, 0, 8)
-	codeBuf = strconv.AppendInt(codeBuf, int64(code), 10)
-	packet.Write(codeBuf)
-	packet.WriteString("::")
-	packet.WriteString(message)
-	packet.WriteString("\r\n")
-
-	return c.send(packet.String())
+	return c.send(protocol.FormatError(protocol.ErrorCode(code), message))
 }
 
 // send sends a packet string to a Client.

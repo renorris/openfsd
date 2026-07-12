@@ -7,70 +7,62 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/renorris/openfsd/pkg/protocol"
 )
 
-// FSD error codes
+// FSD error codes — aliases of protocol.ErrorCode for wire values 1–17.
 const (
-	CallsignInUseError                       = 1  // Callsign is already in use
-	CallsignInvalidError                     = 2  // Callsign is invalid
-	AlreadyRegisteredError                   = 3  // Client is already registered
-	SyntaxError                              = 4  // Packet syntax is invalid
-	SourceInvalidError                       = 5  // Packet source is invalid
-	InvalidLogonError                        = 6  // Login credentials or token are invalid
-	NoSuchCallsignError                      = 7  // Specified callsign does not exist
-	NoFlightPlanError                        = 8  // No flight plan found for the Client
-	NoWeatherProfileError                    = 9  // No weather profile available
-	InvalidProtocolRevisionError             = 10 // Client uses an unsupported protocol version
-	RequestedLevelTooHighError               = 11 // Requested access level is too high
-	ServerFullError                          = 12 // Server has reached capacity
-	CertificateSuspendedError                = 13 // Client's certificate is suspended
-	InvalidControlError                      = 14 // Invalid control command
-	InvalidPositionForRatingError            = 15 // Position not allowed for Client's rating
-	UnauthorizedSoftwareError                = 16 // Client software is not authorized
-	ClientAuthenticationResponseTimeoutError = 17 // Authentication response timed out
+	CallsignInUseError                       = int(protocol.CallsignInUseError)
+	CallsignInvalidError                     = int(protocol.CallsignInvalidError)
+	AlreadyRegisteredError                   = int(protocol.AlreadyRegisteredError)
+	SyntaxError                              = int(protocol.SyntaxError)
+	SourceInvalidError                       = int(protocol.SourceInvalidError)
+	InvalidLogonError                        = int(protocol.InvalidLogonError)
+	NoSuchCallsignError                      = int(protocol.NoSuchCallsignError)
+	NoFlightPlanError                        = int(protocol.NoFlightPlanError)
+	NoWeatherProfileError                    = int(protocol.NoWeatherProfileError)
+	InvalidProtocolRevisionError             = int(protocol.InvalidProtocolRevisionError)
+	RequestedLevelTooHighError               = int(protocol.RequestedLevelTooHighError)
+	ServerFullError                          = int(protocol.ServerFullError)
+	CertificateSuspendedError                = int(protocol.CertificateSuspendedError)
+	InvalidControlError                      = int(protocol.InvalidControlError)
+	InvalidPositionForRatingError            = int(protocol.InvalidPositionForRatingError)
+	UnauthorizedSoftwareError                = int(protocol.UnauthorizedSoftwareError)
+	ClientAuthenticationResponseTimeoutError = int(protocol.ClientAuthenticationResponseTimeoutError)
 )
 
-// FSD Network Ratings
-
-type NetworkRating int
+// NetworkRating re-exports protocol.NetworkRating (including Administator typo).
+type NetworkRating = protocol.NetworkRating
 
 const (
-	NetworkRatingInactive NetworkRating = iota - 1
-	NetworkRatingSuspended
-	NetworkRatingObserver
-	NetworkRatingStudent1
-	NetworkRatingStudent2
-	NetworkRatingStudent3
-	NetworkRatingController1
-	NetworkRatingController2
-	NetworkRatingController3
-	NetworkRatingInstructor1
-	NetworkRatingInstructor2
-	NetworkRatingInstructor3
-	NetworkRatingSupervisor
-	NetworkRatingAdministator
+	NetworkRatingInactive     = protocol.NetworkRatingInactive
+	NetworkRatingSuspended    = protocol.NetworkRatingSuspended
+	NetworkRatingObserver     = protocol.NetworkRatingObserver
+	NetworkRatingStudent1     = protocol.NetworkRatingStudent1
+	NetworkRatingStudent2     = protocol.NetworkRatingStudent2
+	NetworkRatingStudent3     = protocol.NetworkRatingStudent3
+	NetworkRatingController1  = protocol.NetworkRatingController1
+	NetworkRatingController2  = protocol.NetworkRatingController2
+	NetworkRatingController3  = protocol.NetworkRatingController3
+	NetworkRatingInstructor1  = protocol.NetworkRatingInstructor1
+	NetworkRatingInstructor2  = protocol.NetworkRatingInstructor2
+	NetworkRatingInstructor3  = protocol.NetworkRatingInstructor3
+	NetworkRatingSupervisor   = protocol.NetworkRatingSupervisor
+	NetworkRatingAdministator = protocol.NetworkRatingAdministator
 )
 
 func countFields(packet []byte) int {
-	return bytes.Count(packet, []byte(":")) + 1
+	return protocol.CountFields(packet)
 }
 
 func rebaseToNextField(packet []byte) []byte {
+	// Keep local helper for flightplan extraction paths that still use it.
 	return packet[bytes.IndexByte(packet, ':')+1:]
 }
 
 func getField(packet []byte, index int) []byte {
-	for range index {
-		packet = rebaseToNextField(packet)
-	}
-
-	if i := bytes.IndexByte(packet, ':'); i != -1 {
-		packet = packet[:i]
-	}
-
-	packet, _ = bytes.CutSuffix(packet, []byte("\r\n"))
-
-	return packet
+	return protocol.Field(packet, index)
 }
 
 // mostLikelyJwt returns whether a given byte slice is most likely a JWT token

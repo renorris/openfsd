@@ -6,12 +6,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/renorris/openfsd/db"
 	"io"
 	"net"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/renorris/openfsd/db"
+	"github.com/renorris/openfsd/pkg/protocol"
 )
 
 // sendError sends an FSD error packet to an io.Writer with the specified code and message.
@@ -21,9 +23,7 @@ import (
 // as it synchronously writes the error directly to the
 // connection socket.
 func sendError(conn io.Writer, code int, message string) (err error) {
-	packet := fmt.Sprintf("$ERserver:unknown:%d::%s\r\n", code, message)
-	_, err = conn.Write([]byte(packet))
-	return
+	return protocol.WriteError(conn, protocol.ErrorCode(code), message)
 }
 
 // handleConn manages a single Client connection.
@@ -89,8 +89,11 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 // sendServerIdent sends the initial server identification packet to the Client.
 // It returns an error if writing to the connection fails.
 func sendServerIdent(conn io.Writer) (err error) {
-	packet := "$DISERVER:CLIENT:openfsd:6f70656e667364\r\n"
-	_, err = conn.Write([]byte(packet))
+	packet := protocol.ServerIdent{
+		Version:      "openfsd",
+		ChallengeKey: "6f70656e667364",
+	}.Marshal()
+	_, err = conn.Write(packet)
 	return
 }
 

@@ -1,195 +1,68 @@
 package fsd
 
-import "bytes"
-
-type PacketType int
-
-const (
-	PacketTypeUnknown PacketType = iota
-	PacketTypeTextMessage
-	PacketTypePilotPosition
-	PacketTypePilotPositionFast
-	PacketTypePilotPositionSlow
-	PacketTypePilotPositionStopped
-	PacketTypeATCPosition
-	PacketTypeDeleteATC
-	PacketTypeDeletePilot
-	PacketTypeClientQuery
-	PacketTypeClientQueryResponse
-	PacketTypeProController
-	PacketTypeSquawkbox
-	PacketTypeMetarRequest
-	PacketTypeKillRequest
-	PacketTypeAuthChallenge
-	PacketTypeHandoffRequest
-	PacketTypeHandoffAccept
-	PacketTypeFlightPlan
-	PacketTypeFlightPlanAmendment
+import (
+	"github.com/renorris/openfsd/pkg/protocol"
 )
 
-// sourceCallsignFieldIndex returns the index of the field containing the source callsign
-func sourceCallsignFieldIndex(packetType PacketType) (index int) {
-	switch packetType {
-	case PacketTypePilotPosition:
-		return 1
-	default:
-		return 0
-	}
-}
+// PacketType re-exports protocol.PacketType so existing fsd code keeps compiling.
+type PacketType = protocol.PacketType
 
-// getPacketType parses the packet type given a packet
+const (
+	PacketTypeUnknown              = protocol.PacketTypeUnknown
+	PacketTypeTextMessage          = protocol.PacketTypeTextMessage
+	PacketTypePilotPosition        = protocol.PacketTypePilotPosition
+	PacketTypePilotPositionFast    = protocol.PacketTypePilotPositionFast
+	PacketTypePilotPositionSlow    = protocol.PacketTypePilotPositionSlow
+	PacketTypePilotPositionStopped = protocol.PacketTypePilotPositionStopped
+	PacketTypeATCPosition          = protocol.PacketTypeATCPosition
+	PacketTypeDeleteATC            = protocol.PacketTypeDeleteATC
+	PacketTypeDeletePilot          = protocol.PacketTypeDeletePilot
+	PacketTypeClientQuery          = protocol.PacketTypeClientQuery
+	PacketTypeClientQueryResponse  = protocol.PacketTypeClientQueryResponse
+	PacketTypeProController        = protocol.PacketTypeProController
+	PacketTypeSquawkbox            = protocol.PacketTypeSquawkbox
+	PacketTypeMetarRequest         = protocol.PacketTypeMetarRequest
+	PacketTypeKillRequest          = protocol.PacketTypeKillRequest
+	PacketTypeAuthChallenge        = protocol.PacketTypeAuthChallenge
+	PacketTypeHandoffRequest       = protocol.PacketTypeHandoffRequest
+	PacketTypeHandoffAccept        = protocol.PacketTypeHandoffAccept
+	PacketTypeFlightPlan           = protocol.PacketTypeFlightPlan
+	PacketTypeFlightPlanAmendment  = protocol.PacketTypeFlightPlanAmendment
+)
+
+// getPacketType parses the packet type given a packet.
+// Login/error packet types known to protocol.TypeOf are mapped back to
+// PacketTypeUnknown so post-login verifyPacket behavior is unchanged.
 func getPacketType(packet []byte) PacketType {
-	switch packet[0] {
-	case '^':
-		return PacketTypePilotPositionFast
-	case '@':
-		return PacketTypePilotPosition
-	case '%':
-		return PacketTypeATCPosition
-	case '#':
-		switch string(packet[:3]) {
-		case "#DA":
-			return PacketTypeDeleteATC
-		case "#DP":
-			return PacketTypeDeletePilot
-		case "#TM":
-			return PacketTypeTextMessage
-		case "#SL":
-			return PacketTypePilotPositionSlow
-		case "#ST":
-			return PacketTypePilotPositionStopped
-		case "#PC":
-			return PacketTypeProController
-		case "#SB":
-			return PacketTypeSquawkbox
-		default:
-			return PacketTypeUnknown
-		}
-	case '$':
-		switch string(packet[:3]) {
-		case "$CQ":
-			return PacketTypeClientQuery
-		case "$CR":
-			return PacketTypeClientQueryResponse
-		case "$AX":
-			return PacketTypeMetarRequest
-		case "$!!":
-			return PacketTypeKillRequest
-		case "$ZC":
-			return PacketTypeAuthChallenge
-		case "$HO":
-			return PacketTypeHandoffRequest
-		case "$HA":
-			return PacketTypeHandoffAccept
-		case "$FP":
-			return PacketTypeFlightPlan
-		case "$AM":
-			return PacketTypeFlightPlanAmendment
-		default:
-			return PacketTypeUnknown
-		}
-	default:
+	t := protocol.TypeOf(packet)
+	switch t {
+	case protocol.PacketTypeServerIdent,
+		protocol.PacketTypeClientIdent,
+		protocol.PacketTypeAddPilot,
+		protocol.PacketTypeAddATC,
+		protocol.PacketTypeError:
 		return PacketTypeUnknown
+	default:
+		return t
 	}
 }
 
 func getPacketPrefix(packetType PacketType) string {
-	switch packetType {
-	case PacketTypePilotPositionFast:
-		return "^"
-	case PacketTypePilotPosition:
-		return "@"
-	case PacketTypeATCPosition:
-		return "%"
-	case PacketTypeDeleteATC:
-		return "#DA"
-	case PacketTypeDeletePilot:
-		return "#DP"
-	case PacketTypeTextMessage:
-		return "#TM"
-	case PacketTypePilotPositionSlow:
-		return "#SL"
-	case PacketTypePilotPositionStopped:
-		return "#ST"
-	case PacketTypeProController:
-		return "#PC"
-	case PacketTypeSquawkbox:
-		return "#SB"
-	case PacketTypeClientQuery:
-		return "$CQ"
-	case PacketTypeClientQueryResponse:
-		return "$CR"
-	case PacketTypeMetarRequest:
-		return "$AX"
-	case PacketTypeKillRequest:
-		return "$!!"
-	case PacketTypeAuthChallenge:
-		return "$ZC"
-	case PacketTypeHandoffRequest:
-		return "$HO"
-	case PacketTypeHandoffAccept:
-		return "$HA"
-	case PacketTypeFlightPlan:
-		return "$FP"
-	case PacketTypeFlightPlanAmendment:
-		return "$AM"
-	default:
-		return ""
-	}
+	return protocol.Prefix(packetType)
 }
 
 func minFields(packetType PacketType) int {
-	switch packetType {
-	case PacketTypePilotPosition:
-		return 9
-	case PacketTypePilotPositionFast, PacketTypePilotPositionSlow:
-		return 13
-	case PacketTypePilotPositionStopped:
-		return 7
-	case PacketTypeATCPosition:
-		return 7
-	case PacketTypeDeleteATC, PacketTypeDeletePilot:
-		return 1
-	case PacketTypeTextMessage:
-		return 3
-	case PacketTypeProController:
-		return 4
-	case PacketTypeSquawkbox:
-		return 3
-	case PacketTypeClientQuery:
-		return 3
-	case PacketTypeClientQueryResponse:
-		return 3
-	case PacketTypeMetarRequest:
-		return 4
-	case PacketTypeKillRequest:
-		return 3
-	case PacketTypeAuthChallenge:
-		return 3
-	case PacketTypeHandoffRequest, PacketTypeHandoffAccept:
-		return 3
-	case PacketTypeFlightPlan:
-		return 17
-	case PacketTypeFlightPlanAmendment:
-		return 18
-	default:
-		return -1
-	}
+	return protocol.MinFields(packetType)
 }
 
 type handlerFunc func(client *Client, packet []byte)
 
 func getSourceCallsign(packet []byte, packetType PacketType) []byte {
-	callsign, _ := bytes.CutPrefix(
-		getField(packet, sourceCallsignFieldIndex(packetType)),
-		[]byte(getPacketPrefix(packetType)),
-	)
-	return callsign
+	return protocol.SourceCallsign(packet, packetType)
 }
 
 func verifySourceCallsign(packet []byte, packetType PacketType, callsign string) bool {
-	sourceCallsign := getSourceCallsign(packet, packetType)
-	return string(sourceCallsign) == callsign
+	return protocol.VerifySourceCallsign(packet, packetType, callsign)
 }
 
 // verifyPacket runs a set of sanity checks against a packet sent by a client and returns the detected packet type
