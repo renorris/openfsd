@@ -1,7 +1,7 @@
 package fsd
 
 import (
-	"fmt"
+	"math"
 	"testing"
 )
 
@@ -55,8 +55,23 @@ func TestGetField(t *testing.T) {
 }
 
 func TestPitchBankHeading(t *testing.T) {
-	pitch, bank, heading := pitchBankHeading(4261294148)
-	fmt.Println(pitch)
-	fmt.Println(bank)
-	fmt.Println(heading)
+	const packed uint32 = 4261294148 // 0xfdfe3044
+	const conversionRatio float64 = 359.0 / 1023.0
+	const mask uint32 = 1023
+	const eps = 1e-9
+
+	wantPitch := float64(packed>>22&mask) * conversionRatio
+	wantBank := float64(packed>>12&mask) * conversionRatio
+	wantHeading := float64(packed>>2&mask) * conversionRatio
+
+	pitch, bank, heading := pitchBankHeading(packed)
+	if math.Abs(pitch-wantPitch) > eps {
+		t.Errorf("pitch = %v, want %v", pitch, wantPitch)
+	}
+	if math.Abs(bank-wantBank) > eps {
+		t.Errorf("bank = %v, want %v", bank, wantBank)
+	}
+	if math.Abs(heading-wantHeading) > eps {
+		t.Errorf("heading = %v, want %v", heading, wantHeading)
+	}
 }

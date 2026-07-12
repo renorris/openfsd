@@ -23,8 +23,8 @@ func setupConfigTestDB(t *testing.T) (*sql.DB, *SQLiteConfigRepository) {
 	return db, repo
 }
 
-// TestInitDefault verifies that InitDefault correctly inserts the JWT secret key and does not overwrite it on subsequent calls.
-func TestInitDefault(t *testing.T) {
+// TestInitDefaultConfig verifies that InitDefaultConfig correctly inserts the JWT secret key and does not overwrite it on subsequent calls.
+func TestInitDefaultConfig(t *testing.T) {
 	db, repo := setupConfigTestDB(t)
 	defer db.Close()
 
@@ -34,8 +34,8 @@ func TestInitDefault(t *testing.T) {
 		t.Errorf("expected ErrConfigKeyNotFound, got %v", err)
 	}
 
-	// Call InitDefault
-	err = repo.InitDefault()
+	// Call InitDefaultConfig
+	err = InitDefaultConfig(repo)
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
 	}
@@ -49,8 +49,8 @@ func TestInitDefault(t *testing.T) {
 		t.Errorf("expected 32-character hex string, got %s", value)
 	}
 
-	// Call InitDefault again
-	err = repo.InitDefault()
+	// Call InitDefaultConfig again
+	err = InitDefaultConfig(repo)
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
 	}

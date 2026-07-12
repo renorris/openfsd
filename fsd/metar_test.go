@@ -105,13 +105,13 @@ func TestBuildMetarResponsePacket(t *testing.T) {
 			name:     "Valid METAR for KJFK",
 			callsign: "TEST",
 			metar:    []byte("KJFK 301951Z 18010KT 10SM FEW250 29/19 A2992"),
-			expected: "$ARSERVER:TEST:KJFK 301951Z 18010KT 10SM FEW250 29/19 A2992\r\n",
+			expected: "$ARSERVER:TEST:METAR:KJFK 301951Z 18010KT 10SM FEW250 29/19 A2992\r\n",
 		},
 		{
 			name:     "Valid METAR for EGLL",
 			callsign: "PILOT1",
 			metar:    []byte("EGLL 301950Z 24008KT 9999 FEW040 18/12 Q1015"),
-			expected: "$ARSERVER:PILOT1:EGLL 301950Z 24008KT 9999 FEW040 18/12 Q1015\r\n",
+			expected: "$ARSERVER:PILOT1:METAR:EGLL 301950Z 24008KT 9999 FEW040 18/12 Q1015\r\n",
 		},
 	}
 	for _, tt := range tests {
@@ -168,7 +168,7 @@ func TestHandleMetarRequest_Success(t *testing.T) {
 		t.Errorf("expected 1 packet sent, got %d", len(packets))
 	}
 
-	if !strings.HasPrefix(packets[0], "$ARSERVER:TEST:KJFK ") || !strings.HasSuffix(packets[0], "\r\n") {
+	if !strings.HasPrefix(packets[0], "$ARSERVER:TEST:METAR:KJFK ") || !strings.HasSuffix(packets[0], "\r\n") {
 		t.Errorf("bad response packet")
 	}
 }

@@ -49,12 +49,12 @@ func GenerateJwtSecretKey() (key [secretKeyBits / 8]byte, err error) {
 
 // GetWelcomeMessage returns any configured welcome message.
 // Returns an empty string if no message is found.
-func GetWelcomeMessage(r *ConfigRepository) (msg string) {
-	msg, _ = (*r).Get(ConfigWelcomeMessage)
+func GetWelcomeMessage(r ConfigRepository) (msg string) {
+	msg, _ = r.Get(ConfigWelcomeMessage)
 	return
 }
 
-func InitDefaultConfig(r *ConfigRepository) (err error) {
+func InitDefaultConfig(r ConfigRepository) (err error) {
 	secretKey, err := GenerateJwtSecretKey()
 	if err != nil {
 		return
@@ -70,7 +70,7 @@ func InitDefaultConfig(r *ConfigRepository) (err error) {
 	}
 
 	for k, v := range defaultConfig {
-		if err = (*r).SetIfNotExists(k, v); err != nil {
+		if err = r.SetIfNotExists(k, v); err != nil {
 			return
 		}
 	}

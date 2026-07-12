@@ -9,30 +9,6 @@ type PostgresConfigRepository struct {
 	db *sql.DB
 }
 
-// InitDefault initializes the default configuration values.
-func (p *PostgresConfigRepository) InitDefault() (err error) {
-	if err = p.ensureSecretKeyExists(); err != nil {
-		return
-	}
-	return
-}
-
-func (p *PostgresConfigRepository) ensureSecretKeyExists() (err error) {
-	secretKey, err := GenerateJwtSecretKey()
-	if err != nil {
-		return
-	}
-
-	querystr := `
-		INSERT INTO config (key, value)
-		SELECT $1, $2
-		WHERE NOT EXISTS (
-			SELECT 1 FROM config WHERE key = $1
-		);`
-	_, err = p.db.Exec(querystr, ConfigJwtSecretKey, secretKey)
-	return
-}
-
 // Set sets the value for the given key in the configuration.
 // If the key already exists, it updates the value.
 func (p *PostgresConfigRepository) Set(key string, value string) (err error) {

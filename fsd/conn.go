@@ -377,7 +377,7 @@ func (s *Server) broadcastDisconnectPacket(client *Client) {
 }
 
 func (s *Server) sendMotd(client *Client) (err error) {
-	welcomeMsg := db.GetWelcomeMessage(&s.dbRepo.ConfigRepo)
+	welcomeMsg := db.GetWelcomeMessage(s.dbRepo.ConfigRepo)
 	if welcomeMsg != "" {
 		lines := strings.Split(welcomeMsg, "\n")
 		for i := range lines {

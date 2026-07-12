@@ -96,7 +96,7 @@ func NewDefaultServer(ctx context.Context) (server *Server, err error) {
 
 	// Ensure default configuration is written to persistent storage
 	slog.Debug("initializing default config")
-	if err = db.InitDefaultConfig(&dbRepo.ConfigRepo); err != nil {
+	if err = db.InitDefaultConfig(dbRepo.ConfigRepo); err != nil {
 		return
 	}
 	slog.Debug("config OK")

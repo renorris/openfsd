@@ -13,8 +13,7 @@ import (
 func TestRegister(t *testing.T) {
 	p := newPostOffice()
 	client1 := &Client{loginData: loginData{callsign: "client1"}}
-	client1.lat.Store(0)
-	client1.lon.Store(0)
+	client1.setLatLon(0, 0)
 	client1.visRange.Store(100000)
 	err := p.register(client1)
 	if err != nil {
@@ -24,8 +23,7 @@ func TestRegister(t *testing.T) {
 		t.Errorf("expected client1 in map")
 	}
 	client2 := &Client{loginData: loginData{callsign: "client1"}}
-	client2.lat.Store(0)
-	client2.lon.Store(0)
+	client2.setLatLon(0, 0)
 	client2.visRange.Store(100000)
 	err = p.register(client2)
 	if err != ErrCallsignInUse {
@@ -40,16 +38,14 @@ func TestRegister(t *testing.T) {
 func TestRelease(t *testing.T) {
 	p := newPostOffice()
 	client1 := &Client{loginData: loginData{callsign: "client1"}}
-	client1.lat.Store(0)
-	client1.lon.Store(0)
+	client1.setLatLon(0, 0)
 	client1.visRange.Store(100000)
 	err := p.register(client1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	client2 := &Client{loginData: loginData{callsign: "client2"}}
-	client2.lat.Store(0)
-	client2.lon.Store(0)
+	client2.setLatLon(0, 0)
 	client2.visRange.Store(200000)
 	err = p.register(client2)
 	if err != nil {
@@ -85,16 +81,14 @@ func TestRelease(t *testing.T) {
 func TestUpdatePosition(t *testing.T) {
 	p := newPostOffice()
 	client1 := &Client{loginData: loginData{callsign: "client1"}}
-	client1.lat.Store(0)
-	client1.lon.Store(0)
+	client1.setLatLon(0, 0)
 	client1.visRange.Store(100000)
 	err := p.register(client1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	client2 := &Client{loginData: loginData{callsign: "client2"}}
-	client2.lat.Store(0.5)
-	client2.lon.Store(0.5)
+	client2.setLatLon(0.5, 0.5)
 	client2.visRange.Store(100000)
 	err = p.register(client2)
 	if err != nil {
@@ -130,24 +124,21 @@ func TestUpdatePosition(t *testing.T) {
 func TestSearch(t *testing.T) {
 	p := newPostOffice()
 	client1 := &Client{loginData: loginData{callsign: "client1"}}
-	client1.lat.Store(32.0)
-	client1.lon.Store(-117.0)
+	client1.setLatLon(32.0, -117.0)
 	client1.visRange.Store(100000)
 	err := p.register(client1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	client2 := &Client{loginData: loginData{callsign: "client2"}}
-	client2.lat.Store(33.0)
-	client2.lon.Store(-117.0)
+	client2.setLatLon(33.0, -117.0)
 	client2.visRange.Store(50000)
 	err = p.register(client2)
 	if err != nil {
 		t.Fatal(err)
 	}
 	client3 := &Client{loginData: loginData{callsign: "client3"}}
-	client3.lat.Store(34.0)
-	client3.lon.Store(-117.0)
+	client3.setLatLon(34.0, -117.0)
 	client3.visRange.Store(50000)
 	err = p.register(client3)
 	if err != nil {
@@ -182,8 +173,7 @@ func TestSearch(t *testing.T) {
 	}
 
 	client4 := &Client{loginData: loginData{callsign: "client4"}}
-	client4.lat.Store(31.0)
-	client4.lon.Store(-117.0)
+	client4.setLatLon(31.0, -117.0)
 	client4.visRange.Store(50000)
 	err = p.register(client4)
 	if err != nil {
@@ -295,8 +285,7 @@ func benchmarkSearchWithN(b *testing.B, n int) {
 	clients := make([]*Client, n)
 	for i := 0; i < n; i++ {
 		clients[i] = &Client{loginData: loginData{callsign: fmt.Sprintf("Client%d", i)}}
-		clients[i].lat.Store(-90 + rand.Float64()*180)  // Latitude: -90 to 90
-		clients[i].lon.Store(-180 + rand.Float64()*360) // Longitude: -180 to 180
+		clients[i].setLatLon(-90+rand.Float64()*180, -180+rand.Float64()*360)
 		clients[i].visRange.Store(10000)
 		p.register(clients[i])
 	}
