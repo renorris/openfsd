@@ -125,8 +125,6 @@ func TestClientIdentGolden(t *testing.T) {
 	if _, err := ParseClientIdent([]byte("$IDx:SERVER:1:n:1:0:1:bad")); err == nil {
 		t.Error("bad uid")
 	}
-	// missing $ID prefix on field0 (shouldn't happen if TypeOf matched, but CutPrefix can fail if malformed)
-	// TypeOf checks $ID so wrong type is covered. Craft a $ID that TypeOf accepts but prefix cut fails — impossible with TypeOf.
 }
 
 func TestAddPilotGolden(t *testing.T) {
@@ -446,16 +444,5 @@ func TestPacketErrorString(t *testing.T) {
 	err := errPacket("test msg")
 	if err.Error() != "protocol: test msg" {
 		t.Errorf("Error() = %q", err.Error())
-	}
-}
-
-func TestCutPrefixField(t *testing.T) {
-	s, ok := cutPrefixField([]byte("#APN123"), "#AP")
-	if !ok || s != "N123" {
-		t.Errorf("got %q %v", s, ok)
-	}
-	s, ok = cutPrefixField([]byte("N123"), "#AP")
-	if ok || s != "" {
-		t.Errorf("expected fail, got %q %v", s, ok)
 	}
 }

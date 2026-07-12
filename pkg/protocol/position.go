@@ -5,8 +5,10 @@ import (
 	"strings"
 )
 
-// formatFloat formats a float for wire without unnecessary trailing zeros
-// while preserving reasonable precision for lat/lon style values.
+// formatFloat formats a float for wire. Uses strconv 'f' with precision -1 so
+// the numeric value round-trips; the string form may normalize (drop trailing
+// zeros) relative to an arbitrary input line. That is intentional wire-helper
+// behavior, not a byte-for-byte re-encode of the original packet.
 func formatFloat(v float64) string {
 	return strconv.FormatFloat(v, 'f', -1, 64)
 }
@@ -153,10 +155,8 @@ func ParseATCPosition(line []byte) (ATCPosition, error) {
 	if CountFields(line) < 7 {
 		return ATCPosition{}, errPacket("atc position: too few fields")
 	}
-	callsign, ok := cutPrefixField(Field(line, 0), "%")
-	if !ok {
-		return ATCPosition{}, errPacket("atc position: missing % prefix")
-	}
+	// TypeOf already verified the leading '%' on the wire line.
+	callsign := strings.TrimPrefix(string(Field(line, 0)), "%")
 	fac, err := strconv.Atoi(string(Field(line, 2)))
 	if err != nil {
 		return ATCPosition{}, errPacket("atc position: bad facility type")

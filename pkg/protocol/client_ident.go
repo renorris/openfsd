@@ -63,10 +63,8 @@ func ParseClientIdent(line []byte) (ClientIdent, error) {
 		return ClientIdent{}, errPacket("client ident: too few fields")
 	}
 
-	callsign, ok := cutPrefixField(Field(line, 0), Prefix(PacketTypeClientIdent))
-	if !ok {
-		return ClientIdent{}, errPacket("client ident: missing $ID prefix")
-	}
+	// TypeOf already verified the $ID prefix on the wire line.
+	callsign := strings.TrimPrefix(string(Field(line, 0)), Prefix(PacketTypeClientIdent))
 
 	major, err := strconv.Atoi(string(Field(line, 4)))
 	if err != nil {

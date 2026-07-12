@@ -20,11 +20,18 @@ func TestAdapterCountFieldsAndGetField(t *testing.T) {
 		if countFields(p) != protocol.CountFields(p) {
 			t.Errorf("countFields mismatch for %q", p)
 		}
+		// fsd only ever uses non-negative field indices; adapters match protocol for those.
 		for i := 0; i < 5; i++ {
 			if string(getField(p, i)) != string(protocol.Field(p, i)) {
 				t.Errorf("getField(%q,%d) mismatch", p, i)
 			}
 		}
+	}
+	// Negative indices: protocol.Field returns nil (safety); fsd getField is the same
+	// wrapper. Historical pre-extract getField returned field 0. No fsd call site
+	// passes a negative index.
+	if getField([]byte("a:b"), -1) != nil {
+		t.Error("getField(-1) should be nil via protocol.Field")
 	}
 }
 

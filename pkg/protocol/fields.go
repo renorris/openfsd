@@ -16,7 +16,12 @@ func rebaseToNextField(packet []byte) []byte {
 }
 
 // Field returns the field at index (0-based). Trailing "\r\n" is stripped.
-// Negative indices yield nil (protocol package never panics).
+//
+// Negative indices return nil. This differs from historical fsd getField, which
+// skipped a `for range index` loop and returned field 0; protocol never panics
+// and treats negative index as invalid. Production fsd call sites only use
+// non-negative indices, so the thin fsd getField wrapper is unaffected in practice.
+//
 // Out-of-range positive indices follow historical fsd getField behavior:
 // once past the last delimiter, the last remaining slice is returned repeatedly.
 func Field(packet []byte, index int) []byte {

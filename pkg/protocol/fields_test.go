@@ -54,9 +54,16 @@ func TestField(t *testing.T) {
 			t.Errorf("Field(%q, %d) = %q, want %q", tt.packet, tt.index, got, tt.want)
 		}
 	}
-	// negative index returns nil (not empty non-nil) for clarity
-	if Field([]byte("a"), -5) != nil {
-		t.Errorf("Field negative index should return nil")
+	// Negative index: intentional safety delta vs historical getField (which returned field 0).
+	// Documented contract: nil, no panic. fsd never passes negative indices.
+	if got := Field([]byte("a:b:c"), -1); got != nil {
+		t.Errorf("Field(-1) = %q, want nil", got)
+	}
+	if got := Field([]byte("a"), -5); got != nil {
+		t.Errorf("Field(-5) = %q, want nil", got)
+	}
+	if got := Field(nil, -1); got != nil {
+		t.Errorf("Field(nil, -1) = %q, want nil", got)
 	}
 }
 

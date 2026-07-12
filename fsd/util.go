@@ -56,11 +56,6 @@ func countFields(packet []byte) int {
 	return protocol.CountFields(packet)
 }
 
-func rebaseToNextField(packet []byte) []byte {
-	// Keep local helper for flightplan extraction paths that still use it.
-	return packet[bytes.IndexByte(packet, ':')+1:]
-}
-
 func getField(packet []byte, index int) []byte {
 	return protocol.Field(packet, index)
 }
@@ -300,15 +295,15 @@ func sendDirectOrErr(po *postOffice, client *Client, recipient []byte, packet []
 
 // extractFlightplanInfoSection extracts the useful flightplan information from an $FP or $AM packet
 func extractFlightplanInfoSection(packet []byte) (fpl string) {
-	switch getPacketType(packet) {
-	case PacketTypeFlightPlan:
-		for range 2 {
-			packet = rebaseToNextField(packet)
-		}
-	default: // PacketTypeFlightPlanAmendment
-		for range 3 {
-			packet = rebaseToNextField(packet)
-		}
+	// Advance past SOURCE:DEST (and TARGET for $AM) using the same IndexByte+1
+	// slice step as historical rebaseToNextField — kept inline to avoid a
+	// second copy of that helper after the protocol extraction.
+	skipFields := 2
+	if getPacketType(packet) != PacketTypeFlightPlan {
+		skipFields = 3 // PacketTypeFlightPlanAmendment
+	}
+	for range skipFields {
+		packet = packet[bytes.IndexByte(packet, ':')+1:]
 	}
 
 	packet, _ = bytes.CutSuffix(packet, []byte("\r\n"))

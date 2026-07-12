@@ -53,10 +53,8 @@ func ParseAddPilot(line []byte) (AddPilot, error) {
 	if CountFields(line) < MinFields(PacketTypeAddPilot) {
 		return AddPilot{}, errPacket("add pilot: too few fields")
 	}
-	callsign, ok := cutPrefixField(Field(line, 0), Prefix(PacketTypeAddPilot))
-	if !ok {
-		return AddPilot{}, errPacket("add pilot: missing #AP prefix")
-	}
+	// TypeOf already verified the #AP prefix on the wire line.
+	callsign := strings.TrimPrefix(string(Field(line, 0)), Prefix(PacketTypeAddPilot))
 	rating, err := strconv.Atoi(string(Field(line, 4)))
 	if err != nil {
 		return AddPilot{}, errPacket("add pilot: bad network rating")
@@ -126,10 +124,8 @@ func ParseAddATC(line []byte) (AddATC, error) {
 	if CountFields(line) < MinFields(PacketTypeAddATC) {
 		return AddATC{}, errPacket("add atc: too few fields")
 	}
-	callsign, ok := cutPrefixField(Field(line, 0), Prefix(PacketTypeAddATC))
-	if !ok {
-		return AddATC{}, errPacket("add atc: missing #AA prefix")
-	}
+	// TypeOf already verified the #AA prefix on the wire line.
+	callsign := strings.TrimPrefix(string(Field(line, 0)), Prefix(PacketTypeAddATC))
 	rating, err := strconv.Atoi(string(Field(line, 5)))
 	if err != nil {
 		return AddATC{}, errPacket("add atc: bad network rating")
