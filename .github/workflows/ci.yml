@@ -12,28 +12,46 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # Race gate (single race suite — coverage step does not re-run with -race).
       - name: Test
         run: go test -race ./...
 
+      # Soft coverage without -race to avoid doubling race-test wall time.
       - name: Coverage report (soft)
+        if: always()
         run: |
           chmod +x scripts/coverage.sh
           ./scripts/coverage.sh
-        # Soft only: floors are phased (AGENTS.md §8). Failures here are test failures only.
+        # Soft only: floors are phased (AGENTS.md §8). Fails only if tests fail.
 
-      - name: Hygiene (panic/reflect/fmt.Print)
+      - name: gofmt
+        if: always()
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "The following files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+          echo "gofmt OK"
+
+      - name: Hygiene (panic/reflect/fmt.Print/log.Print)
+        if: always()
         run: |
           chmod +x scripts/check-hygiene.sh
           ./scripts/check-hygiene.sh
 
       - name: Import graph (forbidden edges)
+        if: always()
         run: |
           chmod +x scripts/check-import-graph.sh
           ./scripts/check-import-graph.sh
 
+      # Advisory until a dedicated cleanup PR lands; then drop continue-on-error.
       - name: golangci-lint
+        if: always()
         uses: golangci/golangci-lint-action@v6
-        continue-on-error: true # advisory until package split; hard fail later
+        continue-on-error: true
         with:
           version: v1.64.5
           args: --timeout=5m

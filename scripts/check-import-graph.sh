@@ -2,6 +2,10 @@
 # Forbidden import-edge checks for openfsd (AGENTS.md §2).
 # Documents and enforces edges when packages exist; no-op success if absent.
 # A Go TestImportGraph may replace or supplement this once packages land.
+#
+# Checks direct imports of each package under a pattern (./pkg/... style).
+# Pure packages (pkg/protocol, internal/geo) must be stdlib-only:
+# stdlib import paths have no '.' in the first path element (e.g. fmt, net/http).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -10,117 +14,126 @@ cd "$ROOT"
 MODULE="$(go list -m -f '{{.Path}}' 2>/dev/null || echo "github.com/renorris/openfsd")"
 failed=0
 
-# Return 0 if package path exists in the module build list.
-pkg_exists() {
-  local import_path="$1"
-  go list "$import_path" >/dev/null 2>&1
+# True if at least one package matches the pattern (e.g. $MODULE/pkg/protocol/...).
+pkgs_exist() {
+  local pattern="$1"
+  local list
+  list="$(go list "$pattern" 2>/dev/null || true)"
+  [[ -n "$list" ]]
 }
 
-# Fail if importer's transitive/direct imports include any forbidden path prefix.
-# Uses go list -f '{{.Imports}}' on the package.
+# Stdlib heuristic: first path element contains no '.' (fmt, encoding/json, net/http).
+# Rejects module paths (github.com/...), domain-qualified modules, and local module imports.
+is_stdlib_import() {
+  local imp="$1"
+  local first="${imp%%/*}"
+  [[ "$first" != *.* ]]
+}
+
+# For each package matching pattern, fail if any direct import matches a forbidden prefix.
+# "from_label" is only for messages; pattern is a go list pattern (may end in /...).
 check_no_imports() {
-  local from="$1"
-  shift
+  local from_label="$1"
+  local pattern="$2"
+  shift 2
   local forbidden=("$@")
 
-  if ! pkg_exists "$from"; then
-    echo "    skip $from (not present yet)"
+  if ! pkgs_exist "$pattern"; then
+    echo "    skip $from_label (not present yet)"
     return 0
   fi
 
-  local imports
-  imports="$(go list -f '{{range .Imports}}{{.}}{{"\n"}}{{end}}' "$from" 2>/dev/null || true)"
-  # Also check test imports lightly via deps of the package only (direct Imports).
-  local hit=0
-  local imp
-  for imp in $imports; do
-    for bad in "${forbidden[@]}"; do
-      case "$imp" in
-        "$bad"|"$bad"/*)
-          echo "    FAIL: $from imports $imp (forbidden: $bad)"
-          hit=1
-          failed=1
-          ;;
-      esac
+  local pkg hit=0
+  while IFS= read -r pkg; do
+    [[ -z "$pkg" ]] && continue
+    local imports
+    imports="$(go list -f '{{range .Imports}}{{.}}{{"\n"}}{{end}}' "$pkg" 2>/dev/null || true)"
+    local imp
+    for imp in $imports; do
+      for bad in "${forbidden[@]}"; do
+        case "$imp" in
+          "$bad"|"$bad"/*)
+            echo "    FAIL: $pkg imports $imp (forbidden: $bad)"
+            hit=1
+            failed=1
+            ;;
+        esac
+      done
     done
-  done
+  done < <(go list "$pattern" 2>/dev/null || true)
+
   if [[ "$hit" -eq 0 ]]; then
-    echo "    OK $from"
+    echo "    OK $from_label (direct imports under $pattern)"
+  fi
+}
+
+# Fail if any package under pattern has a non-stdlib direct import.
+check_stdlib_only() {
+  local from_label="$1"
+  local pattern="$2"
+
+  if ! pkgs_exist "$pattern"; then
+    echo "    skip $from_label (not present yet)"
+    return 0
+  fi
+
+  local pkg hit=0
+  while IFS= read -r pkg; do
+    [[ -z "$pkg" ]] && continue
+    local imports
+    imports="$(go list -f '{{range .Imports}}{{.}}{{"\n"}}{{end}}' "$pkg" 2>/dev/null || true)"
+    local imp
+    for imp in $imports; do
+      if ! is_stdlib_import "$imp"; then
+        echo "    FAIL: $pkg imports $imp (must be stdlib only; third-party and module imports forbidden)"
+        hit=1
+        failed=1
+      fi
+    done
+  done < <(go list "$pattern" 2>/dev/null || true)
+
+  if [[ "$hit" -eq 0 ]]; then
+    echo "    OK $from_label (stdlib-only under $pattern)"
   fi
 }
 
 echo "==> Import graph: forbidden edges (AGENTS.md §2)"
 echo "    module: $MODULE"
+echo "    note: checks direct imports of every package matched by each pattern"
 
-# pkg/protocol — anything in module except stdlib
-if pkg_exists "${MODULE}/pkg/protocol"; then
-  echo "    checking pkg/protocol is free of module-internal imports..."
-  proto_imports="$(go list -f '{{range .Imports}}{{.}}{{"\n"}}{{end}}' "${MODULE}/pkg/protocol" 2>/dev/null || true)"
-  hit=0
-  for imp in $proto_imports; do
-    case "$imp" in
-      "${MODULE}"|"${MODULE}"/*)
-        echo "    FAIL: pkg/protocol imports $imp (must be stdlib only within module)"
-        hit=1
-        failed=1
-        ;;
-    esac
-  done
-  if [[ "$hit" -eq 0 ]]; then
-    echo "    OK ${MODULE}/pkg/protocol"
-  fi
-else
-  echo "    skip ${MODULE}/pkg/protocol (not present yet)"
-fi
+# pkg/protocol — stdlib only (no third-party, no module-internal)
+check_stdlib_only "pkg/protocol" "${MODULE}/pkg/protocol/..."
 
 # pkg/fsdclient — must not import internal/*
-check_no_imports "${MODULE}/pkg/fsdclient" \
+check_no_imports "pkg/fsdclient" "${MODULE}/pkg/fsdclient/..." \
   "${MODULE}/internal"
 
 # internal/session — must not import postoffice, server, web, metar
-check_no_imports "${MODULE}/internal/session" \
+check_no_imports "internal/session" "${MODULE}/internal/session/..." \
   "${MODULE}/internal/postoffice" \
   "${MODULE}/internal/server" \
   "${MODULE}/internal/web" \
   "${MODULE}/internal/metar"
 
-# internal/geo — anything openfsd except stdlib
-if pkg_exists "${MODULE}/internal/geo"; then
-  echo "    checking internal/geo is free of module-internal imports..."
-  geo_imports="$(go list -f '{{range .Imports}}{{.}}{{"\n"}}{{end}}' "${MODULE}/internal/geo" 2>/dev/null || true)"
-  hit=0
-  for imp in $geo_imports; do
-    case "$imp" in
-      "${MODULE}"|"${MODULE}"/*)
-        echo "    FAIL: internal/geo imports $imp (must be stdlib only within module)"
-        hit=1
-        failed=1
-        ;;
-    esac
-  done
-  if [[ "$hit" -eq 0 ]]; then
-    echo "    OK ${MODULE}/internal/geo"
-  fi
-else
-  echo "    skip ${MODULE}/internal/geo (not present yet)"
-fi
+# internal/geo — stdlib only
+check_stdlib_only "internal/geo" "${MODULE}/internal/geo/..."
 
 # internal/web — must not import server, session, postoffice, metar
-check_no_imports "${MODULE}/internal/web" \
+check_no_imports "internal/web" "${MODULE}/internal/web/..." \
   "${MODULE}/internal/server" \
   "${MODULE}/internal/session" \
   "${MODULE}/internal/postoffice" \
   "${MODULE}/internal/metar"
 
 # internal/db — must not import server, session, web, fsdclient
-check_no_imports "${MODULE}/internal/db" \
+check_no_imports "internal/db" "${MODULE}/internal/db/..." \
   "${MODULE}/internal/server" \
   "${MODULE}/internal/session" \
   "${MODULE}/internal/web" \
   "${MODULE}/pkg/fsdclient"
 
 # internal/auth — must not import server, session, web
-check_no_imports "${MODULE}/internal/auth" \
+check_no_imports "internal/auth" "${MODULE}/internal/auth/..." \
   "${MODULE}/internal/server" \
   "${MODULE}/internal/session" \
   "${MODULE}/internal/web"

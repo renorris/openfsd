@@ -1,6 +1,12 @@
 # golangci-lint configuration for openfsd (Go 1.24+).
 # Start with a passable baseline on current code; tighten later.
 # See AGENTS.md for operational criteria.
+#
+# CI runs this with continue-on-error: true (advisory) because the legacy
+# fsd/db/web tree still has dozens of findings. Before flipping the hard gate:
+#   1) dedicated cleanup PR (errcheck / revive / staticcheck / ineffassign)
+#   2) optionally exclude or fix SA1019 (deprecated rand.Seed) in tests
+#   3) then drop continue-on-error in .github/workflows/ci.yml
 
 run:
   timeout: 5m

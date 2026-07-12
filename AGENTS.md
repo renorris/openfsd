@@ -4,7 +4,10 @@ This file is **operational and checkable**. Agents and humans must follow it whe
 
 **Primary track:** Track A (core FSD) is primary. Full completion is through **PR17**. **PR11 is an e2e checkpoint only** — not permission to stop FSD finish work (db move, `cmd/openfsd`, stress, coverage floor) or Track B (web PE).
 
-Design reference: agentic refactor design (package layout, phased coverage, PR sequence).
+**In-repo contract:** this file is the operational source of truth for agents working from the git tree.
+
+**Design reference (may be local-only / not in this repo):**  
+`~/.grok/docs/designs/openfsd-agentic-refactor-3bd159cb.md` — package layout, phased coverage, PR sequence. If that path is unavailable, follow this `AGENTS.md` alone.
 
 ---
 
@@ -14,9 +17,9 @@ Target layout (packages may not all exist yet; do not invent imports that violat
 
 | Package | Owns | Notes |
 |---------|------|-------|
-| `pkg/protocol` | Pure wire format (parse/serialize/validate) | No I/O; stdlib only |
+| `pkg/protocol` | Pure wire format (parse/serialize/validate) | No I/O; **stdlib only** (no third-party, no module-internal) |
 | `pkg/fsdclient` | Public mock/real FSD client | Imports `protocol` only (+ stdlib) |
-| `internal/geo` | Pure haversine / bounding box | Stdlib only |
+| `internal/geo` | Pure haversine / bounding box | **stdlib only** (no third-party, no module-internal) |
 | `internal/auth` | JWT + VATSIM auth state | No TCP |
 | `internal/session` | Per-connection state + send worker | Does not import postoffice/server |
 | `internal/postoffice` | Registry (map/tree of participants) | Depends on session ports, not server |
@@ -55,13 +58,15 @@ Enforce with `scripts/check-import-graph.sh` (and later `TestImportGraph` when p
 
 | From | Must not import |
 |------|-----------------|
-| `pkg/protocol` | Anything in this module except stdlib |
+| `pkg/protocol` | **Any non-stdlib import** (no third-party; no module packages) |
 | `pkg/fsdclient` | `internal/*` |
 | `internal/session` | `postoffice`, `server`, `web`, `metar` |
-| `internal/geo` | Anything openfsd except stdlib |
+| `internal/geo` | **Any non-stdlib import** (no third-party; no module packages) |
 | `internal/web` | `server`, `session`, `postoffice`, `metar` |
 | `internal/db` | `server`, `session`, `web`, `fsdclient` |
 | `internal/auth` | `server`, `session`, `web` |
+
+Enforcement (`scripts/check-import-graph.sh`): walks **every package** under each root (`…/...`), checks **direct** imports. Stdlib heuristic: first path element contains no `.` (e.g. `fmt`, `net/http`). Third-party is **never** allowed in `pkg/protocol` or `internal/geo`.
 
 **Cycle prevention:** `session` never imports `postoffice`. Postoffice depends on a narrow participant/send port. Shared errors like `ErrCallsignInUse` live next to the registry, not in `pkg/protocol`.
 
@@ -169,11 +174,18 @@ Checklist:
 **Measurement:**
 
 ```bash
+# Race gate (CI Test step) — run separately:
+go test -race ./...
+
+# Soft coverage (no -race; avoids double race suite in CI):
 ./scripts/coverage.sh
 # equivalent:
-go test -race -coverprofile=cover.out ./...
+go test -coverprofile=cover.out ./...
 go tool cover -func=cover.out
+# script also prints an in-scope total with cmd/* filtered out
 ```
+
+`cmd/*` is soft-excluded from floor measurement. Hard package floors (PR2+) will be enforced later via env/milestone gates; this PR only reports.
 
 ---
 
@@ -194,7 +206,7 @@ go test -race ./pkg/... ./internal/...
 ./scripts/coverage.sh
 ```
 
-Exits non-zero only if tests fail, not if coverage is below a floor (until floors are enforced in CI).
+Does **not** pass `-race` (race is a separate gate). Exits non-zero only if tests fail, not if coverage is below a floor (until floors are enforced in CI). Prints full-tree total plus an in-scope summary excluding `cmd/*`.
 
 ### Hygiene / import graph
 
@@ -203,12 +215,20 @@ Exits non-zero only if tests fail, not if coverage is below a floor (until floor
 ./scripts/check-import-graph.sh
 ```
 
+### Format
+
+```bash
+gofmt -l .
+# CI fails if any file is listed
+```
+
 ### Lint
 
 ```bash
 golangci-lint run
 ```
 
+Lint is **advisory** in CI (`continue-on-error: true`) until a dedicated cleanup PR removes legacy findings and hard-fails the gate.
 ### E2E (after PR11)
 
 ```bash
@@ -251,16 +271,19 @@ Before adding a new frontend framework, client router, global store, or hydratio
 |------|-------|-------------|
 | No `panic(` | non-test `.go` under `pkg/`, `internal/` | `scripts/check-hygiene.sh` |
 | No `reflect` | `pkg/protocol` | `scripts/check-hygiene.sh` |
-| No `fmt.Print` | `pkg/`, `internal/` (non-test) | `scripts/check-hygiene.sh` |
+| No `fmt.Print` / `log.Print` / `log.Fatal` / `log.Panic` | `pkg/`, `internal/` (non-test) | `scripts/check-hygiene.sh` |
 | Forbidden imports | See §2 | `scripts/check-import-graph.sh` |
+| gofmt | all `.go` | CI `gofmt -l .` |
 
 Legacy `fsd/` will move into `internal/` / `pkg/`. Hygiene greps target the **target** trees so early PRs stay green while the split lands; do not add new panics/prints in new packages.
+
+**False positives:** greps skip pure `//` and `*` comment lines but may still match string literals. Prefer restructuring strings over weakening the script.
 
 ---
 
 ## Logging and errors
 
-- Libraries: `log/slog` only (no `fmt.Print` / `log.Print` in `pkg/` / `internal/`)
+- Libraries: `log/slog` only (no `fmt.Print` / `log.Print` / `log.Fatal` / `log.Panic` in `pkg/` / `internal/`)
 - Wrap errors with `%w`; sentinels + `errors.Is` / `errors.As`
 - Panic forbidden in `pkg/*` and `internal/*` (tests exempt)
 - Reflection forbidden in `pkg/protocol`
