@@ -55,14 +55,13 @@ func TestGetField(t *testing.T) {
 }
 
 func TestPitchBankHeading(t *testing.T) {
-	const packed uint32 = 4261294148 // 0xfdfe3044
-	const conversionRatio float64 = 359.0 / 1023.0
-	const mask uint32 = 1023
+	// Fixture 4261294148 (0xfdfe3044): 10-bit fields pitch=1015, bank=995, heading=17
+	// mapped via (359.0/1023.0) — golden values computed offline, not re-derived here.
+	const packed uint32 = 4261294148
 	const eps = 1e-9
-
-	wantPitch := float64(packed>>22&mask) * conversionRatio
-	wantBank := float64(packed>>12&mask) * conversionRatio
-	wantHeading := float64(packed>>2&mask) * conversionRatio
+	const wantPitch = 356.19257086999022
+	const wantBank = 349.1739980449658
+	const wantHeading = 5.9657869012707723
 
 	pitch, bank, heading := pitchBankHeading(packed)
 	if math.Abs(pitch-wantPitch) > eps {

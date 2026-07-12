@@ -69,6 +69,6 @@ func (s *Server) Run(ctx context.Context) (err error) {
 	}()
 
 	<-ctx.Done()
-
+	
 	return
 }
