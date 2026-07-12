@@ -1,0 +1,68 @@
+# golangci-lint configuration for openfsd (Go 1.24+).
+# Start with a passable baseline on current code; tighten later.
+# See AGENTS.md for operational criteria.
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  disable-all: true
+  enable:
+    - errcheck
+    - staticcheck
+    - govet
+    - ineffassign
+    - revive
+
+linters-settings:
+  errcheck:
+    check-type-assertions: false
+    check-blank: false
+  govet:
+    enable-all: false
+  revive:
+    # Selected rules only — avoid failing the current tree on style nits.
+    ignore-generated-header: true
+    severity: warning
+    rules:
+      - name: blank-imports
+      - name: context-as-argument
+      - name: context-keys-type
+      - name: dot-imports
+      - name: error-return
+      - name: error-strings
+      - name: error-naming
+      - name: exported
+        disabled: true # enable after package split stabilizes public API
+      - name: if-return
+      - name: increment-decrement
+      - name: var-naming
+      - name: var-declaration
+      - name: package-comments
+        disabled: true
+      - name: range
+      - name: receiver-naming
+      - name: time-naming
+      - name: unexported-return
+      - name: indent-error-flow
+      - name: errorf
+      - name: empty-block
+      - name: superfluous-else
+      - name: unreachable-code
+      - name: redefines-builtin-id
+
+issues:
+  exclude-use-default: false
+  max-issues-per-linter: 50
+  max-same-issues: 10
+  # Legacy trees will move to internal/*; keep lint advisory-friendly early.
+  exclude-dirs:
+    - docs
+    - testdata
+  # Do not exclude fsd/db/web entirely — fix issues as we touch them.
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - errcheck
+        - revive

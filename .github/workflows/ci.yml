@@ -11,5 +11,29 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+
       - name: Test
         run: go test -race ./...
+
+      - name: Coverage report (soft)
+        run: |
+          chmod +x scripts/coverage.sh
+          ./scripts/coverage.sh
+        # Soft only: floors are phased (AGENTS.md §8). Failures here are test failures only.
+
+      - name: Hygiene (panic/reflect/fmt.Print)
+        run: |
+          chmod +x scripts/check-hygiene.sh
+          ./scripts/check-hygiene.sh
+
+      - name: Import graph (forbidden edges)
+        run: |
+          chmod +x scripts/check-import-graph.sh
+          ./scripts/check-import-graph.sh
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        continue-on-error: true # advisory until package split; hard fail later
+        with:
+          version: v1.64.5
+          args: --timeout=5m

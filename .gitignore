@@ -4,3 +4,5 @@
 *.db
 **tmp**
 build-and-push.sh
+cover.out
+coverage.out
