@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/renorris/openfsd/internal/db"
 	"github.com/renorris/openfsd/internal/auth"
+	"github.com/renorris/openfsd/internal/db"
 )
 
 // runServiceHTTP starts the admin service HTTP server used for
