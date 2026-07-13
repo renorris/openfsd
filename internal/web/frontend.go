@@ -5,21 +5,21 @@ import (
 )
 
 func (s *Server) handleFrontendLanding(c *gin.Context) {
-	writeTemplate(c, "landing", nil)
+	s.writeTemplate(c, "landing", nil)
 }
 
 func (s *Server) handleFrontendLogin(c *gin.Context) {
-	writeTemplate(c, "login", nil)
+	s.writeTemplate(c, "login", nil)
 }
 
 func (s *Server) handleFrontendDashboard(c *gin.Context) {
-	writeTemplate(c, "dashboard", nil)
+	s.writeTemplate(c, "dashboard", nil)
 }
 
 func (s *Server) handleFrontendUserEditor(c *gin.Context) {
-	writeTemplate(c, "usereditor", nil)
+	s.writeTemplate(c, "usereditor", nil)
 }
 
 func (s *Server) handleFrontendConfigEditor(c *gin.Context) {
-	writeTemplate(c, "configeditor", nil)
+	s.writeTemplate(c, "configeditor", nil)
 }

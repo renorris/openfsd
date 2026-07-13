@@ -2,18 +2,19 @@ package web
 
 import (
 	"embed"
-	"github.com/gin-gonic/gin"
+	"fmt"
 	"io/fs"
-	"log"
 	"net/http"
 	"os"
+
+	"github.com/gin-gonic/gin"
 )
 
 //go:embed static/*
 var staticFS embed.FS
 
-func (s *Server) setupRoutes() (e *gin.Engine) {
-	e = gin.New()
+func (s *Server) setupRoutes() (*gin.Engine, error) {
+	e := gin.New()
 	e.Use(gin.Recovery())
 	if os.Getenv("GIN_LOGGER") != "" {
 		e.Use(gin.Logger())
@@ -38,11 +39,11 @@ func (s *Server) setupRoutes() (e *gin.Engine) {
 	// Serve static files
 	subFS, err := fs.Sub(staticFS, "static")
 	if err != nil {
-		log.Fatal(err)
+		return nil, fmt.Errorf("static subfs: %w", err)
 	}
 	e.StaticFS("/static", http.FS(subFS))
 
-	return
+	return e, nil
 }
 
 func (s *Server) setupAuthRoutes(parent *gin.RouterGroup) {

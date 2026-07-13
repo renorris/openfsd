@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	htmltemplate "html/template"
 	"log/slog"
 	"net"
 	"text/template"
@@ -16,6 +17,7 @@ type Server struct {
 	dbRepo             *db.Repositories
 	statusTxtTemplate  *template.Template
 	serversTxtTemplate *template.Template
+	pageTemplates      map[string]*htmltemplate.Template
 }
 
 func NewDefaultServer(ctx context.Context) (server *Server, err error) {
@@ -53,18 +55,27 @@ func NewServer(cfg *ServerConfig, dbRepo *db.Repositories) (server *Server, err 
 		return nil, fmt.Errorf("parse data templates: %w", err)
 	}
 
+	pageTemplates, err := parsePageTemplates()
+	if err != nil {
+		return nil, fmt.Errorf("parse page templates: %w", err)
+	}
+
 	server = &Server{
 		cfg:                cfg,
 		dbRepo:             dbRepo,
 		statusTxtTemplate:  statusTxt,
 		serversTxtTemplate: serversTxt,
+		pageTemplates:      pageTemplates,
 	}
 
 	return
 }
 
 func (s *Server) Run(ctx context.Context) (err error) {
-	e := s.setupRoutes()
+	e, err := s.setupRoutes()
+	if err != nil {
+		return err
+	}
 	go s.runDatafeedWorker(ctx)
 
 	listener, err := net.Listen("tcp", s.cfg.ListenAddr)
