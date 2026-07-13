@@ -132,10 +132,10 @@ Checklist:
 ## 7. PR checklist (all PRs)
 
 - [ ] `go test -race ./...`
+- [ ] `gofmt -l .` clean (CI enforces)
 - [ ] `golangci-lint run` (advisory in early PRs; hard fail later)
 - [ ] Coverage floors for this milestone (see §8); report via `scripts/coverage.sh`
-- [ ] No `panic(` in non-test `pkg/` / `internal/` (`scripts/check-hygiene.sh`)
-- [ ] No `fmt.Print` in library `pkg/` / `internal/` (use `slog`)
+- [ ] Hygiene clean: no `panic(`, no `fmt.Print*` / `log.Print*` / `log.Fatal*` / `log.Panic*` in non-test `pkg/` / `internal/` (`scripts/check-hygiene.sh`; see Hygiene rules table)
 - [ ] No `reflect` in `pkg/protocol`
 - [ ] If web: boring-web checklist (§6)
 - [ ] If protocol/handler after **PR11**: e2e green
@@ -229,6 +229,7 @@ golangci-lint run
 ```
 
 Lint is **advisory** in CI (`continue-on-error: true`) until a dedicated cleanup PR removes legacy findings and hard-fails the gate.
+
 ### E2E (after PR11)
 
 ```bash
