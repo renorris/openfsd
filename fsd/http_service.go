@@ -5,15 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
-	"maps"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/renorris/openfsd/db"
-"github.com/renorris/openfsd/internal/auth"
-	"github.com/renorris/openfsd/internal/session"
+	"github.com/renorris/openfsd/internal/auth"
+	"github.com/renorris/openfsd/internal/postoffice"
 )
 
 // runServiceHTTP starts the admin service HTTP server used for
@@ -98,22 +97,14 @@ type OnlineUsersResponseData struct {
 }
 
 func (s *Server) handleGetOnlineUsers(c *gin.Context) {
-	s.postOffice.clientMapLock.RLock()
-	mapLen := len(s.postOffice.clientMap)
-	s.postOffice.clientMapLock.RUnlock()
-
-	clientMap := make(map[string]*session.Session, mapLen+16)
-
-	s.postOffice.clientMapLock.RLock()
-	maps.Copy(clientMap, s.postOffice.clientMap)
-	s.postOffice.clientMapLock.RUnlock()
+	clients := s.postOffice.Snapshot()
 
 	resData := OnlineUsersResponseData{
 		Pilots: make([]OnlineUserPilot, 0, 512),
 		ATC:    make([]OnlineUserATC, 0, 128),
 	}
 
-	for _, client := range clientMap {
+	for _, client := range clients {
 		latLon := client.LatLon()
 		genData := OnlineUserGeneralData{
 			Callsign:         client.Callsign,
@@ -162,9 +153,9 @@ func (s *Server) handleKickUser(c *gin.Context) {
 		c.AbortWithStatus(http.StatusBadRequest)
 	}
 
-	client, err := s.postOffice.find(reqBody.Callsign)
+	client, err := s.postOffice.Find(reqBody.Callsign)
 	if err != nil {
-		if !errors.Is(err, ErrCallsignDoesNotExist) {
+		if !errors.Is(err, postoffice.ErrCallsignDoesNotExist) {
 			c.AbortWithStatus(http.StatusInternalServerError)
 			return
 		}

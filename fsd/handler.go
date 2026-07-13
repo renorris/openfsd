@@ -130,7 +130,7 @@ func (s *Server) handleATCPosition(client *session.Session, packet []byte) {
 	}
 
 	// Update post office position
-	s.postOffice.updatePosition(client, [2]float64{lat, lon}, visRange)
+	s.postOffice.UpdatePosition(client, [2]float64{lat, lon}, visRange)
 
 	// Broadcast position update
 	broadcastRanged(s.postOffice, client, packet)
@@ -149,7 +149,7 @@ func (s *Server) handlePilotPosition(client *session.Session, packet []byte) {
 	const pilotVisRange = 50.0 * 1852.0 // 50 nautical miles
 
 	// Update post office position
-	s.postOffice.updatePosition(client, [2]float64{lat, lon}, pilotVisRange)
+	s.postOffice.UpdatePosition(client, [2]float64{lat, lon}, pilotVisRange)
 
 	// Broadcast position update
 	broadcastRanged(s.postOffice, client, packet)
@@ -346,7 +346,7 @@ func (s *Server) handleClientQueryATCRequest(client *session.Session, packet []b
 	}
 
 	targetCallsign := getField(packet, 3)
-	targetClient, err := s.postOffice.find(string(targetCallsign))
+	targetClient, err := s.postOffice.Find(string(targetCallsign))
 	if err != nil {
 		client.SendError(NoSuchCallsignError, "No such callsign")
 		return
@@ -378,7 +378,7 @@ func (s *Server) handleClientQueryFlightplanRequest(client *session.Session, pac
 	}
 
 	targetCallsign := string(getField(packet, 3))
-	targetClient, err := s.postOffice.find(targetCallsign)
+	targetClient, err := s.postOffice.Find(targetCallsign)
 	if err != nil {
 		client.SendError(NoSuchCallsignError, "No such callsign: "+targetCallsign)
 		return
@@ -424,7 +424,7 @@ func (s *Server) handleKillRequest(client *session.Session, packet []byte) {
 
 	// Attempt to find the victim client
 	recipient := getField(packet, 1)
-	victim, err := s.postOffice.find(string(recipient))
+	victim, err := s.postOffice.Find(string(recipient))
 	if err != nil {
 		client.SendError(NoSuchCallsignError, "No such callsign")
 		return
@@ -480,7 +480,7 @@ func (s *Server) handleAmendFlightplan(client *session.Session, packet []byte) {
 	fplInfo := extractFlightplanInfoSection(packet)
 
 	targetCallsign := string(getField(packet, 2))
-	targetClient, err := s.postOffice.find(targetCallsign)
+	targetClient, err := s.postOffice.Find(targetCallsign)
 	if err != nil {
 		client.SendError(NoSuchCallsignError, "No such callsign: "+targetCallsign)
 		return

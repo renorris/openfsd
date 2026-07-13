@@ -14,7 +14,8 @@ import (
 	"time"
 
 	"github.com/renorris/openfsd/db"
-"github.com/renorris/openfsd/internal/auth"
+	"github.com/renorris/openfsd/internal/auth"
+	"github.com/renorris/openfsd/internal/postoffice"
 	"github.com/renorris/openfsd/internal/session"
 	"github.com/renorris/openfsd/pkg/protocol"
 )
@@ -69,13 +70,13 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 	}
 
 	// Attempt to register to post office
-	if err = s.postOffice.register(client); err != nil {
-		if errors.Is(err, ErrCallsignInUse) {
+	if err = s.postOffice.Register(client); err != nil {
+		if errors.Is(err, postoffice.ErrCallsignInUse) {
 			sendError(conn, CallsignInUseError, "Callsign already in use")
 		}
 		return
 	}
-	defer s.postOffice.release(client)
+	defer s.postOffice.Release(client)
 
 	// Start sender before any post-login outbound traffic (MOTD, etc.).
 	// After this point, all writes go through client.Send → SenderWorker.

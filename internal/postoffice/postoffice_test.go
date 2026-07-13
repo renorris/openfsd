@@ -1,4 +1,4 @@
-package fsd
+package postoffice
 
 import (
 	"context"
@@ -23,39 +23,41 @@ func newTestClient(callsign string, lat, lon, visRange float64) *session.Session
 
 // TestRegister tests the registration of clients with unique and duplicate callsigns.
 func TestRegister(t *testing.T) {
-	p := newPostOffice()
+	p := New()
 	client1 := newTestClient("client1", 0, 0, 100000)
-	err := p.register(client1)
+	err := p.Register(client1)
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
 	}
-	if p.clientMap["client1"] != client1 {
-		t.Errorf("expected client1 in map")
+	got, err := p.Find("client1")
+	if err != nil || got != client1 {
+		t.Errorf("expected client1 in registry")
 	}
 	client2 := newTestClient("client1", 0, 0, 100000)
-	err = p.register(client2)
+	err = p.Register(client2)
 	if err != ErrCallsignInUse {
 		t.Errorf("expected ErrCallsignInUse, got %v", err)
 	}
-	if p.clientMap["client1"] != client1 {
-		t.Errorf("expected original client1 in map")
+	got, err = p.Find("client1")
+	if err != nil || got != client1 {
+		t.Errorf("expected original client1 in registry")
 	}
 }
 
 // TestRelease tests the removal of a client and its effect on search results.
 func TestRelease(t *testing.T) {
-	p := newPostOffice()
+	p := New()
 	client1 := newTestClient("client1", 0, 0, 100000)
-	if err := p.register(client1); err != nil {
+	if err := p.Register(client1); err != nil {
 		t.Fatal(err)
 	}
 	client2 := newTestClient("client2", 0, 0, 200000)
-	if err := p.register(client2); err != nil {
+	if err := p.Register(client2); err != nil {
 		t.Fatal(err)
 	}
 
 	var found []*session.Session
-	p.search(client2, func(recipient *session.Session) bool {
+	p.Search(client2, func(recipient *session.Session) bool {
 		found = append(found, recipient)
 		return true
 	})
@@ -63,13 +65,13 @@ func TestRelease(t *testing.T) {
 		t.Errorf("expected to find client1, got %v", found)
 	}
 
-	p.release(client1)
-	if _, exists := p.clientMap["client1"]; exists {
+	p.Release(client1)
+	if _, err := p.Find("client1"); err != ErrCallsignDoesNotExist {
 		t.Errorf("expected client1 to be removed from map")
 	}
 
 	found = nil
-	p.search(client2, func(recipient *session.Session) bool {
+	p.Search(client2, func(recipient *session.Session) bool {
 		found = append(found, recipient)
 		return true
 	})
@@ -80,18 +82,18 @@ func TestRelease(t *testing.T) {
 
 // TestUpdatePosition tests updating a client's position and its effect on search.
 func TestUpdatePosition(t *testing.T) {
-	p := newPostOffice()
+	p := New()
 	client1 := newTestClient("client1", 0, 0, 100000)
-	if err := p.register(client1); err != nil {
+	if err := p.Register(client1); err != nil {
 		t.Fatal(err)
 	}
 	client2 := newTestClient("client2", 0.5, 0.5, 100000)
-	if err := p.register(client2); err != nil {
+	if err := p.Register(client2); err != nil {
 		t.Fatal(err)
 	}
 
 	var found []*session.Session
-	p.search(client1, func(recipient *session.Session) bool {
+	p.Search(client1, func(recipient *session.Session) bool {
 		found = append(found, recipient)
 		return true
 	})
@@ -99,10 +101,10 @@ func TestUpdatePosition(t *testing.T) {
 		t.Errorf("expected to find client2, got %v", found)
 	}
 
-	p.updatePosition(client2, [2]float64{100.0, 100.0}, 100000)
+	p.UpdatePosition(client2, [2]float64{100.0, 100.0}, 100000)
 
 	found = nil
-	p.search(client1, func(recipient *session.Session) bool {
+	p.Search(client1, func(recipient *session.Session) bool {
 		found = append(found, recipient)
 		return true
 	})
@@ -115,18 +117,18 @@ func TestUpdatePosition(t *testing.T) {
 // derived bounding box does not change, and asserts the client remains
 // searchable (still present in the tree after the noop update).
 func TestUpdatePosition_NoopKeepsIndexed(t *testing.T) {
-	p := newPostOffice()
+	p := New()
 	client1 := newTestClient("client1", 10, 20, 50000)
-	if err := p.register(client1); err != nil {
+	if err := p.Register(client1); err != nil {
 		t.Fatal(err)
 	}
 	peer := newTestClient("peer", 10, 20, 50000)
-	if err := p.register(peer); err != nil {
+	if err := p.Register(peer); err != nil {
 		t.Fatal(err)
 	}
 
 	// Same center and range → identical bbox → early return (no tree rewrite).
-	p.updatePosition(client1, [2]float64{10, 20}, 50000)
+	p.UpdatePosition(client1, [2]float64{10, 20}, 50000)
 	latLon := client1.LatLon()
 	if latLon[0] != 10 || latLon[1] != 20 {
 		t.Fatalf("latLon after noop update = %v", latLon)
@@ -137,7 +139,7 @@ func TestUpdatePosition_NoopKeepsIndexed(t *testing.T) {
 
 	// Peer must still find client1, proving the tree entry remains valid.
 	var found []*session.Session
-	p.search(peer, func(recipient *session.Session) bool {
+	p.Search(peer, func(recipient *session.Session) bool {
 		found = append(found, recipient)
 		return true
 	})
@@ -148,22 +150,22 @@ func TestUpdatePosition_NoopKeepsIndexed(t *testing.T) {
 
 // TestSearch tests the search functionality with multiple clients.
 func TestSearch(t *testing.T) {
-	p := newPostOffice()
+	p := New()
 	client1 := newTestClient("client1", 32.0, -117.0, 100000)
-	if err := p.register(client1); err != nil {
+	if err := p.Register(client1); err != nil {
 		t.Fatal(err)
 	}
 	client2 := newTestClient("client2", 33.0, -117.0, 50000)
-	if err := p.register(client2); err != nil {
+	if err := p.Register(client2); err != nil {
 		t.Fatal(err)
 	}
 	client3 := newTestClient("client3", 34.0, -117.0, 50000)
-	if err := p.register(client3); err != nil {
+	if err := p.Register(client3); err != nil {
 		t.Fatal(err)
 	}
 
 	var found []*session.Session
-	p.search(client1, func(recipient *session.Session) bool {
+	p.Search(client1, func(recipient *session.Session) bool {
 		found = append(found, recipient)
 		return true
 	})
@@ -172,7 +174,7 @@ func TestSearch(t *testing.T) {
 	}
 
 	found = nil
-	p.search(client2, func(recipient *session.Session) bool {
+	p.Search(client2, func(recipient *session.Session) bool {
 		found = append(found, recipient)
 		return true
 	})
@@ -181,7 +183,7 @@ func TestSearch(t *testing.T) {
 	}
 
 	found = nil
-	p.search(client3, func(recipient *session.Session) bool {
+	p.Search(client3, func(recipient *session.Session) bool {
 		found = append(found, recipient)
 		return true
 	})
@@ -190,12 +192,12 @@ func TestSearch(t *testing.T) {
 	}
 
 	client4 := newTestClient("client4", 31.0, -117.0, 50000)
-	if err := p.register(client4); err != nil {
+	if err := p.Register(client4); err != nil {
 		t.Fatal(err)
 	}
 
 	found = nil
-	p.search(client1, func(recipient *session.Session) bool {
+	p.Search(client1, func(recipient *session.Session) bool {
 		found = append(found, recipient)
 		return true
 	})
@@ -220,27 +222,27 @@ func TestSearch(t *testing.T) {
 // TestSearch_ClosestVelocityDistance ensures proto-101 pilot pairs update
 // ClosestVelocityClientDistance via geo.Distance.
 func TestSearch_ClosestVelocityDistance(t *testing.T) {
-	p := newPostOffice()
+	p := New()
 	client1 := newTestClient("v1", 0, 0, 500000)
 	client1.ProtoRevision = 101
 	client1.IsAtc = false
-	if err := p.register(client1); err != nil {
+	if err := p.Register(client1); err != nil {
 		t.Fatal(err)
 	}
 	client2 := newTestClient("v2", 0.1, 0, 500000)
 	client2.ProtoRevision = 101
 	client2.IsAtc = false
-	if err := p.register(client2); err != nil {
+	if err := p.Register(client2); err != nil {
 		t.Fatal(err)
 	}
 	// Non-101 neighbor should not affect closest velocity distance.
 	client3 := newTestClient("old", 0.05, 0, 500000)
 	client3.ProtoRevision = 100
-	if err := p.register(client3); err != nil {
+	if err := p.Register(client3); err != nil {
 		t.Fatal(err)
 	}
 
-	p.search(client1, func(recipient *session.Session) bool { return true })
+	p.Search(client1, func(recipient *session.Session) bool { return true })
 
 	want := geo.Distance(0, 0, 0.1, 0)
 	if !approxEqual(client1.ClosestVelocityClientDistance, want) {
@@ -248,20 +250,43 @@ func TestSearch_ClosestVelocityDistance(t *testing.T) {
 	}
 }
 
+// TestSearch_EarlyStop honors false from the callback.
+func TestSearch_EarlyStop(t *testing.T) {
+	p := New()
+	// Co-located so all are in range of each other.
+	self := newTestClient("self", 0, 0, 500000)
+	a := newTestClient("a", 0, 0, 500000)
+	b := newTestClient("b", 0, 0, 500000)
+	for _, c := range []*session.Session{self, a, b} {
+		if err := p.Register(c); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	count := 0
+	p.Search(self, func(recipient *session.Session) bool {
+		count++
+		return false
+	})
+	if count != 1 {
+		t.Fatalf("early-stop Search invoked callback %d times, want 1", count)
+	}
+}
+
 // TestFind covers lookup success and ErrCallsignDoesNotExist.
 func TestFind(t *testing.T) {
-	p := newPostOffice()
+	p := New()
 	client1 := newTestClient("N123", 1, 2, 1000)
-	if err := p.register(client1); err != nil {
+	if err := p.Register(client1); err != nil {
 		t.Fatal(err)
 	}
 
-	got, err := p.find("N123")
+	got, err := p.Find("N123")
 	if err != nil || got != client1 {
 		t.Fatalf("find existing: got (%v, %v), want client1", got, err)
 	}
 
-	_, err = p.find("MISSING")
+	_, err = p.Find("MISSING")
 	if err != ErrCallsignDoesNotExist {
 		t.Fatalf("find missing: err = %v, want ErrCallsignDoesNotExist", err)
 	}
@@ -269,18 +294,18 @@ func TestFind(t *testing.T) {
 
 // TestAll iterates all other clients and honors early stop.
 func TestAll(t *testing.T) {
-	p := newPostOffice()
+	p := New()
 	self := newTestClient("self", 0, 0, 1000)
 	a := newTestClient("a", 0, 0, 1000)
 	b := newTestClient("b", 0, 0, 1000)
 	for _, c := range []*session.Session{self, a, b} {
-		if err := p.register(c); err != nil {
+		if err := p.Register(c); err != nil {
 			t.Fatal(err)
 		}
 	}
 
 	var seen []string
-	p.all(self, func(recipient *session.Session) bool {
+	p.All(self, func(recipient *session.Session) bool {
 		seen = append(seen, recipient.Callsign)
 		return true
 	})
@@ -291,7 +316,7 @@ func TestAll(t *testing.T) {
 
 	// Early stop: callback returns false.
 	count := 0
-	p.all(self, func(recipient *session.Session) bool {
+	p.All(self, func(recipient *session.Session) bool {
 		count++
 		return false
 	})
@@ -302,18 +327,18 @@ func TestAll(t *testing.T) {
 
 // TestSend delivers a packet to a registered client and errors for missing callsigns.
 func TestSend(t *testing.T) {
-	p := newPostOffice()
+	p := New()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	client := session.New(ctx, nil, nil, session.LoginData{Callsign: "RECV"})
 	client.SetLatLon(0, 0)
 	client.VisRange.Store(1000)
-	if err := p.register(client); err != nil {
+	if err := p.Register(client); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := p.send("RECV", "hello\r\n"); err != nil {
+	if err := p.Send("RECV", "hello\r\n"); err != nil {
 		t.Fatalf("send existing: %v", err)
 	}
 	pkt, ok := client.DequeueOutbound()
@@ -324,8 +349,43 @@ func TestSend(t *testing.T) {
 		t.Fatalf("packet = %q, want hello\\r\\n", pkt)
 	}
 
-	if err := p.send("NOPE", "x"); err != ErrCallsignDoesNotExist {
+	if err := p.Send("NOPE", "x"); err != ErrCallsignDoesNotExist {
 		t.Fatalf("send missing: err = %v, want ErrCallsignDoesNotExist", err)
+	}
+}
+
+// TestSnapshot returns a consistent copy of registered sessions.
+func TestSnapshot(t *testing.T) {
+	p := New()
+	if got := p.Snapshot(); len(got) != 0 {
+		t.Fatalf("empty Snapshot = %v, want empty", got)
+	}
+
+	a := newTestClient("a", 0, 0, 1000)
+	b := newTestClient("b", 1, 1, 1000)
+	if err := p.Register(a); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Register(b); err != nil {
+		t.Fatal(err)
+	}
+
+	snap := p.Snapshot()
+	if len(snap) != 2 {
+		t.Fatalf("Snapshot len = %d, want 2", len(snap))
+	}
+	// Mutating the snapshot slice must not affect the registry.
+	snap[0] = nil
+	got, err := p.Find("a")
+	if err != nil || got != a {
+		t.Fatalf("registry mutated via Snapshot slice: got %v err %v", got, err)
+	}
+
+	// After release, snapshot must not include the released session.
+	p.Release(a)
+	snap = p.Snapshot()
+	if len(snap) != 1 || snap[0] != b {
+		t.Fatalf("Snapshot after release = %v, want [b]", snap)
 	}
 }
 
@@ -334,10 +394,10 @@ func approxEqual(a, b float64) bool {
 	return math.Abs(a-b) < epsilon
 }
 
-// TestPostOfficeConcurrent exercises register/search/updatePosition/release
+// TestPostOfficeConcurrent exercises Register/Search/UpdatePosition/Release
 // across goroutines under the race detector.
 func TestPostOfficeConcurrent(t *testing.T) {
-	p := newPostOffice()
+	p := New()
 	const n = 64
 	clients := make([]*session.Session, n)
 	for i := 0; i < n; i++ {
@@ -350,7 +410,7 @@ func TestPostOfficeConcurrent(t *testing.T) {
 		wg.Add(1)
 		go func(c *session.Session) {
 			defer wg.Done()
-			if err := p.register(c); err != nil {
+			if err := p.Register(c); err != nil {
 				t.Errorf("register %s: %v", c.Callsign, err)
 			}
 		}(clients[i])
@@ -362,10 +422,10 @@ func TestPostOfficeConcurrent(t *testing.T) {
 		wg.Add(1)
 		go func(c *session.Session) {
 			defer wg.Done()
-			p.search(c, func(recipient *session.Session) bool { return true })
+			p.Search(c, func(recipient *session.Session) bool { return true })
 			ll := c.LatLon()
-			p.updatePosition(c, [2]float64{ll[0] + 0.01, ll[1] - 0.01}, 150000)
-			p.search(c, func(recipient *session.Session) bool { return true })
+			p.UpdatePosition(c, [2]float64{ll[0] + 0.01, ll[1] - 0.01}, 150000)
+			p.Search(c, func(recipient *session.Session) bool { return true })
 		}(clients[i])
 	}
 	wg.Wait()
@@ -375,13 +435,13 @@ func TestPostOfficeConcurrent(t *testing.T) {
 		wg.Add(1)
 		go func(c *session.Session) {
 			defer wg.Done()
-			p.release(c)
+			p.Release(c)
 		}(clients[i])
 	}
 	wg.Wait()
 
-	if len(p.clientMap) != 0 {
-		t.Fatalf("clientMap not empty after release-all: %d entries", len(p.clientMap))
+	if len(p.Snapshot()) != 0 {
+		t.Fatalf("registry not empty after release-all: %d entries", len(p.Snapshot()))
 	}
 }
 
@@ -398,11 +458,11 @@ func BenchmarkRegister(b *testing.B) {
 		)
 	}
 
-	p := newPostOffice()
+	p := New()
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if err := p.register(clients[i]); err != nil {
+		if err := p.Register(clients[i]); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -410,7 +470,7 @@ func BenchmarkRegister(b *testing.B) {
 
 // benchmarkSearchWithN benchmarks search performance with n clients.
 func benchmarkSearchWithN(b *testing.B, n int) {
-	p := newPostOffice()
+	p := New()
 	r := rand.New(rand.NewSource(42))
 
 	clients := make([]*session.Session, n)
@@ -421,7 +481,7 @@ func benchmarkSearchWithN(b *testing.B, n int) {
 			-180+r.Float64()*360,
 			10000,
 		)
-		if err := p.register(clients[i]); err != nil {
+		if err := p.Register(clients[i]); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -435,7 +495,7 @@ func benchmarkSearchWithN(b *testing.B, n int) {
 
 	for i := 0; i < b.N; i++ {
 		searchClient := clients[i%10]
-		p.search(searchClient, callback)
+		p.Search(searchClient, callback)
 	}
 }
 

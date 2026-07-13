@@ -7,16 +7,18 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"github.com/renorris/openfsd/db"
 	"io"
 	"log/slog"
 	"net"
 	"sync"
+
+	"github.com/renorris/openfsd/db"
+	"github.com/renorris/openfsd/internal/postoffice"
 )
 
 type Server struct {
 	cfg          *ServerConfig
-	postOffice   *postOffice
+	postOffice   *postoffice.PostOffice
 	metarService *metarService
 	dbRepo       *db.Repositories
 }
@@ -27,7 +29,7 @@ type Server struct {
 func NewServer(cfg *ServerConfig, dbRepo *db.Repositories, numMetarWorkers int) (server *Server, err error) {
 	server = &Server{
 		cfg:          cfg,
-		postOffice:   newPostOffice(),
+		postOffice:   postoffice.New(),
 		metarService: newMetarService(numMetarWorkers),
 		dbRepo:       dbRepo,
 	}
