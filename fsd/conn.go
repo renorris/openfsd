@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/renorris/openfsd/db"
+	"github.com/renorris/openfsd/internal/auth"
 	"github.com/renorris/openfsd/pkg/protocol"
 )
 
@@ -271,8 +272,8 @@ func (s *Server) attemptAuthentication(client *Client, token string) (err error)
 			return
 		}
 
-		var jwtToken *JwtToken
-		if jwtToken, err = ParseJwtToken(token, []byte(jwtSecret)); err != nil {
+		var jwtToken *auth.JwtToken
+		if jwtToken, err = auth.ParseJwtToken(token, []byte(jwtSecret)); err != nil {
 			err = ErrInvalidAddPacket
 			sendError(client.conn, InvalidLogonError, invalidLogonMsg)
 			return

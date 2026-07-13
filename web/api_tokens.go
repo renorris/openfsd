@@ -1,16 +1,18 @@
 package main
 
 import (
-	"github.com/gin-gonic/gin"
-	"github.com/renorris/openfsd/db"
-	"github.com/renorris/openfsd/fsd"
 	"net/http"
 	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/renorris/openfsd/db"
+	"github.com/renorris/openfsd/internal/auth"
+	"github.com/renorris/openfsd/pkg/protocol"
 )
 
 func (s *Server) handleCreateNewAPIToken(c *gin.Context) {
 	claims := getJwtContext(c)
-	if claims.NetworkRating < fsd.NetworkRatingAdministator {
+	if claims.NetworkRating < protocol.NetworkRatingAdministator {
 		writeAPIV1Response(c, http.StatusForbidden, &genericAPIV1Forbidden)
 		return
 	}
@@ -34,10 +36,10 @@ func (s *Server) handleCreateNewAPIToken(c *gin.Context) {
 
 	validityDuration := reqBody.ExpiryDateTime.Sub(now)
 
-	accessToken, err := fsd.MakeJwtToken(&fsd.CustomFields{
+	accessToken, err := auth.MakeJwtToken(&auth.CustomFields{
 		TokenType:     "access",
 		CID:           claims.CID,
-		NetworkRating: fsd.NetworkRatingAdministator,
+		NetworkRating: protocol.NetworkRatingAdministator,
 	}, validityDuration)
 	if err != nil {
 		writeAPIV1Response(c, http.StatusInternalServerError, &genericAPIV1InternalServerError)

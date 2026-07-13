@@ -1,4 +1,4 @@
-package fsd
+package auth
 
 import (
 	"crypto/md5"
@@ -20,22 +20,23 @@ var vatsimAuthKeys = map[uint16]string{
 	56862: "3518a62c421937ffa46ac3316957da43", // VRC
 }
 
-type vatsimAuthState struct {
+// AuthState holds VATSIM client auth challenge/response state.
+type AuthState struct {
 	init, curr [16]byte
 	clientId   uint16
 }
 
-func (s *vatsimAuthState) initAsHex() (d [32]byte) {
+func (s *AuthState) initAsHex() (d [32]byte) {
 	hex.Encode(d[:], s.init[:])
 	return
 }
 
-func (s *vatsimAuthState) currAsHex() (d [32]byte) {
+func (s *AuthState) currAsHex() (d [32]byte) {
 	hex.Encode(d[:], s.curr[:])
 	return
 }
 
-func (s *vatsimAuthState) Initialize(clientId uint16, initialChallenge []byte) (err error) {
+func (s *AuthState) Initialize(clientId uint16, initialChallenge []byte) (err error) {
 	keyStr, ok := vatsimAuthKeys[clientId]
 	if !ok {
 		err = ErrUnsupportedAuthClient
@@ -51,18 +52,18 @@ func (s *vatsimAuthState) Initialize(clientId uint16, initialChallenge []byte) (
 	return
 }
 
-func (s *vatsimAuthState) IsInitialized() bool {
+func (s *AuthState) IsInitialized() bool {
 	return s.clientId != 0
 }
 
-func (s *vatsimAuthState) GetResponseForChallenge(challenge []byte) (res [32]byte) {
+func (s *AuthState) GetResponseForChallenge(challenge []byte) (res [32]byte) {
 	curr := s.currAsHex()
 	round := s.runObfuscationRound(&curr, challenge)
 	hex.Encode(res[:], round[:])
 	return
 }
 
-func (s *vatsimAuthState) UpdateState(d *[32]byte) {
+func (s *AuthState) UpdateState(d *[32]byte) {
 	init := s.initAsHex()
 	tmp := [64]byte{}
 	copy(tmp[:32], init[:])
@@ -71,7 +72,7 @@ func (s *vatsimAuthState) UpdateState(d *[32]byte) {
 	s.curr = md5.Sum(tmp[:])
 }
 
-func (s *vatsimAuthState) runObfuscationRound(curr *[32]byte, challenge []byte) (res [16]byte) {
+func (s *AuthState) runObfuscationRound(curr *[32]byte, challenge []byte) (res [16]byte) {
 	c1, c2 := challenge[0:(len(challenge)/2)], challenge[(len(challenge)/2):]
 
 	if (s.clientId & 1) == 1 {

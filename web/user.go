@@ -3,10 +3,11 @@ package main
 import (
 	"database/sql"
 	"errors"
+	"net/http"
+
 	"github.com/gin-gonic/gin"
 	"github.com/renorris/openfsd/db"
-	"github.com/renorris/openfsd/fsd"
-	"net/http"
+	"github.com/renorris/openfsd/pkg/protocol"
 )
 
 // getUserByCID returns the user info of the specified CID.
@@ -24,7 +25,7 @@ func (s *Server) getUserByCID(c *gin.Context) {
 
 	claims := getJwtContext(c)
 
-	if reqBody.CID != claims.CID && claims.NetworkRating < fsd.NetworkRatingSupervisor {
+	if reqBody.CID != claims.CID && claims.NetworkRating < protocol.NetworkRatingSupervisor {
 		writeAPIV1Response(c, http.StatusForbidden, &genericAPIV1Forbidden)
 		return
 	}
@@ -63,7 +64,7 @@ func (s *Server) getUserByCID(c *gin.Context) {
 // Only >= SUP can update CIDs other than what is indicated in their bearer token.
 func (s *Server) updateUser(c *gin.Context) {
 	claims := getJwtContext(c)
-	if claims.NetworkRating < fsd.NetworkRatingSupervisor {
+	if claims.NetworkRating < protocol.NetworkRatingSupervisor {
 		writeAPIV1Response(c, http.StatusForbidden, &genericAPIV1Forbidden)
 		return
 	}
@@ -149,7 +150,7 @@ func (s *Server) createUser(c *gin.Context) {
 	}
 
 	claims := getJwtContext(c)
-	if claims.NetworkRating < fsd.NetworkRatingSupervisor ||
+	if claims.NetworkRating < protocol.NetworkRatingSupervisor ||
 		reqBody.NetworkRating > int(claims.NetworkRating) {
 		writeAPIV1Response(c, http.StatusForbidden, &genericAPIV1Forbidden)
 		return

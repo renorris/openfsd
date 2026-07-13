@@ -1,9 +1,11 @@
-package fsd
+package auth
 
 import (
+	"time"
+
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
-	"time"
+	"github.com/renorris/openfsd/pkg/protocol"
 )
 
 const issuer = "openfsd"
@@ -18,11 +20,11 @@ type CustomClaims struct {
 }
 
 type CustomFields struct {
-	TokenType     string        `json:"token_type"`
-	CID           int           `json:"cid"`
-	FirstName     string        `json:"first_name,omitempty"`
-	LastName      string        `json:"last_name,omitempty"`
-	NetworkRating NetworkRating `json:"network_rating"`
+	TokenType     string                 `json:"token_type"`
+	CID           int                    `json:"cid"`
+	FirstName     string                 `json:"first_name,omitempty"`
+	LastName      string                 `json:"last_name,omitempty"`
+	NetworkRating protocol.NetworkRating `json:"network_rating"`
 }
 
 func (t *JwtToken) CustomClaims() *CustomClaims {

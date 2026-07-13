@@ -4,13 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/gin-gonic/gin"
-	"github.com/renorris/openfsd/db"
 	"log/slog"
 	"maps"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/renorris/openfsd/db"
+	"github.com/renorris/openfsd/internal/auth"
 )
 
 // runServiceHTTP starts the admin service HTTP server used for
@@ -47,7 +49,7 @@ func (s *Server) authMiddleware(c *gin.Context) {
 		return
 	}
 
-	accessToken, err := ParseJwtToken(authHeader, []byte(jwtSecret))
+	accessToken, err := auth.ParseJwtToken(authHeader, []byte(jwtSecret))
 	if err != nil {
 		c.AbortWithStatus(http.StatusBadRequest)
 		return

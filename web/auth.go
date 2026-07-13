@@ -3,13 +3,15 @@ package main
 import (
 	"database/sql"
 	"errors"
-	"github.com/gin-gonic/gin"
-	"github.com/renorris/openfsd/db"
-	"github.com/renorris/openfsd/fsd"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/renorris/openfsd/db"
+	"github.com/renorris/openfsd/internal/auth"
+	"github.com/renorris/openfsd/pkg/protocol"
 )
 
 // getAccessRefreshTokens returns access and refresh tokens given FSD login credentials
@@ -77,7 +79,7 @@ func (s *Server) refreshAccessToken(c *gin.Context) {
 		return
 	}
 
-	refreshToken, err := fsd.ParseJwtToken(reqBody.RefreshToken, []byte(jwtSecret))
+	refreshToken, err := auth.ParseJwtToken(reqBody.RefreshToken, []byte(jwtSecret))
 	if err != nil {
 		writeAPIV1Response(c, http.StatusUnauthorized, &badTokenRes)
 		return
@@ -157,7 +159,7 @@ func (s *Server) getFsdJwt(c *gin.Context) {
 		return
 	}
 
-	if user.NetworkRating <= int(fsd.NetworkRatingSuspended) {
+	if user.NetworkRating <= int(protocol.NetworkRatingSuspended) {
 		resBody := ResponseBody{
 			ErrorMsg: "Certificate suspended or inactive",
 		}
@@ -165,12 +167,12 @@ func (s *Server) getFsdJwt(c *gin.Context) {
 		return
 	}
 
-	fsdJwtToken, err := fsd.MakeJwtToken(&fsd.CustomFields{
+	fsdJwtToken, err := auth.MakeJwtToken(&auth.CustomFields{
 		TokenType:     "fsd",
 		CID:           user.CID,
 		FirstName:     safeStr(user.FirstName),
 		LastName:      safeStr(user.LastName),
-		NetworkRating: fsd.NetworkRating(user.NetworkRating),
+		NetworkRating: protocol.NetworkRating(user.NetworkRating),
 	}, 5*time.Minute)
 	if err != nil {
 		resBody := ResponseBody{
@@ -223,7 +225,7 @@ func (s *Server) jwtBearerMiddleware(c *gin.Context) {
 		return
 	}
 
-	accessToken, err := fsd.ParseJwtToken(authHeader, []byte(jwtSecret))
+	accessToken, err := auth.ParseJwtToken(authHeader, []byte(jwtSecret))
 	if err != nil {
 		res := newAPIV1Failure("invalid bearer token")
 		writeAPIV1Response(c, http.StatusUnauthorized, &res)
@@ -247,17 +249,17 @@ func (s *Server) jwtBearerMiddleware(c *gin.Context) {
 
 const jwtContextKey = "jwtbearer"
 
-func setJwtContext(c *gin.Context, claims *fsd.CustomClaims) {
+func setJwtContext(c *gin.Context, claims *auth.CustomClaims) {
 	c.Set(jwtContextKey, claims)
 }
 
-func getJwtContext(c *gin.Context) (claims *fsd.CustomClaims) {
+func getJwtContext(c *gin.Context) (claims *auth.CustomClaims) {
 	val, exists := c.Get(jwtContextKey)
 	if !exists {
 		panic("attempted to load non-existent jwt context")
 	}
 
-	claims = val.(*fsd.CustomClaims)
+	claims = val.(*auth.CustomClaims)
 
 	return
 }
@@ -283,12 +285,12 @@ func (s *Server) makeAccessRefreshTokens(user *db.User, rememberMe bool) (access
 
 func (s *Server) makeAccessToken(user *db.User, jwtSecret []byte) (access string, err error) {
 	// Make access token
-	accessToken, err := fsd.MakeJwtToken(&fsd.CustomFields{
+	accessToken, err := auth.MakeJwtToken(&auth.CustomFields{
 		TokenType:     "access",
 		CID:           user.CID,
 		FirstName:     safeStr(user.FirstName),
 		LastName:      safeStr(user.LastName),
-		NetworkRating: fsd.NetworkRating(user.NetworkRating),
+		NetworkRating: protocol.NetworkRating(user.NetworkRating),
 	}, 15*time.Minute)
 	if err != nil {
 		return
@@ -309,12 +311,12 @@ func (s *Server) makeRefreshToken(user *db.User, rememberMe bool, jwtSecret []by
 	}
 
 	// Make refresh token
-	refreshToken, err := fsd.MakeJwtToken(&fsd.CustomFields{
+	refreshToken, err := auth.MakeJwtToken(&auth.CustomFields{
 		TokenType:     "refresh",
 		CID:           user.CID,
 		FirstName:     safeStr(user.FirstName),
 		LastName:      safeStr(user.LastName),
-		NetworkRating: fsd.NetworkRating(user.NetworkRating),
+		NetworkRating: protocol.NetworkRating(user.NetworkRating),
 	}, refreshTokenDuration)
 	if err != nil {
 		return

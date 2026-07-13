@@ -11,6 +11,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/renorris/openfsd/db"
 	"github.com/renorris/openfsd/fsd"
+	"github.com/renorris/openfsd/internal/auth"
+	"github.com/renorris/openfsd/pkg/protocol"
 	"go.uber.org/atomic"
 	"io"
 	"log/slog"
@@ -417,12 +419,12 @@ func (s *Server) generateDatafeed() (feed *DatafeedCache, err error) {
 // method sets the HTTP method, path is the relative HTTP path (e.g. /online_users), and body is an optional request body.
 func (s *Server) makeFsdHttpServiceHttpRequest(method string, path string, body io.Reader) (req *http.Request, err error) {
 	// Generate JWT bearer token
-	customFields := fsd.CustomFields{
+	customFields := auth.CustomFields{
 		TokenType:     "fsd_service",
 		CID:           -1,
-		NetworkRating: fsd.NetworkRatingAdministator,
+		NetworkRating: protocol.NetworkRatingAdministator,
 	}
-	token, err := fsd.MakeJwtToken(&customFields, 15*time.Minute)
+	token, err := auth.MakeJwtToken(&customFields, 15*time.Minute)
 	if err != nil {
 		return
 	}

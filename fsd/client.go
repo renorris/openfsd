@@ -5,6 +5,7 @@ import (
 	"context"
 	"net"
 
+	"github.com/renorris/openfsd/internal/auth"
 	"github.com/renorris/openfsd/pkg/protocol"
 	"go.uber.org/atomic"
 )
@@ -33,7 +34,7 @@ type Client struct {
 	facilityType int // ATC facility type. This value is only relevant for ATC
 	loginData
 
-	authState       vatsimAuthState
+	authState       auth.AuthState
 	sendFastEnabled bool
 }
 

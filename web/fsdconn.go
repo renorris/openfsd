@@ -3,14 +3,15 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"github.com/gin-gonic/gin"
-	"github.com/renorris/openfsd/fsd"
 	"net/http"
+
+	"github.com/gin-gonic/gin"
+	"github.com/renorris/openfsd/pkg/protocol"
 )
 
 func (s *Server) handleKickActiveConnection(c *gin.Context) {
 	claims := getJwtContext(c)
-	if claims.NetworkRating < fsd.NetworkRatingSupervisor {
+	if claims.NetworkRating < protocol.NetworkRatingSupervisor {
 		writeAPIV1Response(c, http.StatusForbidden, &genericAPIV1Forbidden)
 		return
 	}

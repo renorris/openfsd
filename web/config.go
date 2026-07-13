@@ -2,10 +2,11 @@ package main
 
 import (
 	"errors"
+	"net/http"
+
 	"github.com/gin-gonic/gin"
 	"github.com/renorris/openfsd/db"
-	"github.com/renorris/openfsd/fsd"
-	"net/http"
+	"github.com/renorris/openfsd/pkg/protocol"
 )
 
 type KeyValuePair struct {
@@ -15,7 +16,7 @@ type KeyValuePair struct {
 
 func (s *Server) handleGetConfig(c *gin.Context) {
 	claims := getJwtContext(c)
-	if claims.NetworkRating < fsd.NetworkRatingAdministator {
+	if claims.NetworkRating < protocol.NetworkRatingAdministator {
 		writeAPIV1Response(c, http.StatusForbidden, &genericAPIV1Forbidden)
 		return
 	}
@@ -61,7 +62,7 @@ func (s *Server) handleGetConfig(c *gin.Context) {
 
 func (s *Server) handleUpdateConfig(c *gin.Context) {
 	claims := getJwtContext(c)
-	if claims.NetworkRating < fsd.NetworkRatingAdministator {
+	if claims.NetworkRating < protocol.NetworkRatingAdministator {
 		writeAPIV1Response(c, http.StatusForbidden, &genericAPIV1Forbidden)
 		return
 	}
@@ -90,7 +91,7 @@ func (s *Server) handleUpdateConfig(c *gin.Context) {
 
 func (s *Server) handleResetSecretKey(c *gin.Context) {
 	claims := getJwtContext(c)
-	if claims.NetworkRating < fsd.NetworkRatingAdministator {
+	if claims.NetworkRating < protocol.NetworkRatingAdministator {
 		writeAPIV1Response(c, http.StatusForbidden, &genericAPIV1Forbidden)
 		return
 	}
