@@ -9,7 +9,7 @@ import (
 func TestVatsimAuth(t *testing.T) {
 	s := AuthState{}
 
-	// 35044 = vPilot, 30984979d8caed23 = initial challenge
+	// 35044 = vPilot (even, %3==1), 30984979d8caed23 = initial challenge
 	err := s.Initialize(35044, []byte("30984979d8caed23"))
 	assert.Nil(t, err)
 
@@ -26,7 +26,7 @@ func TestVatsimAuth(t *testing.T) {
 	assert.Equal(t, expected, actual)
 
 	s = AuthState{}
-	// 48312 = TWRTrainer, 3ae3baf4 = initial challenge
+	// 48312 = TWRTrainer (even, %3==0), 3ae3baf4 = initial challenge
 	err = s.Initialize(48312, []byte("3ae3baf4"))
 	assert.Nil(t, err)
 
@@ -34,6 +34,36 @@ func TestVatsimAuth(t *testing.T) {
 	actual = string(dst[:])
 	expected = "60ef113425658b09a1e555279d27f64a"
 	assert.Equal(t, expected, actual)
+}
+
+// Wire-locked goldens covering branches the historical vectors miss:
+// odd clientId (challenge half-swap) and clientId%3==2 permutation.
+func TestVatsimAuthOddClientAndMod3BranchGoldens(t *testing.T) {
+	// 27095 = Euroscope: odd (clientId&1), %3==2
+	s := AuthState{}
+	err := s.Initialize(27095, []byte("0123456789abcdef"))
+	assert.NoError(t, err)
+
+	dst := s.GetResponseForChallenge([]byte("de6acb8e"))
+	assert.Equal(t, "6c7d657f338683d2f77883631dceb9eb", string(dst[:]))
+
+	s.UpdateState(&dst)
+	dst = s.GetResponseForChallenge([]byte("65b479573b0e"))
+	assert.Equal(t, "b5931c1b1dffedfb0f088779cec8b927", string(dst[:]))
+
+	// 24515 = vatSys: odd, %3==2 (different key material)
+	s = AuthState{}
+	err = s.Initialize(24515, []byte("3ae3baf4abcd1234"))
+	assert.NoError(t, err)
+	dst = s.GetResponseForChallenge([]byte("abcdef12"))
+	assert.Equal(t, "1abfc1856275a6f4445749df59e1400a", string(dst[:]))
+
+	// 8464 = vSTARS: even, %3==1 (locks a non-vPilot %3==1 key)
+	s = AuthState{}
+	err = s.Initialize(8464, []byte("30984979d8caed23"))
+	assert.NoError(t, err)
+	dst = s.GetResponseForChallenge([]byte("de6acb8e"))
+	assert.Equal(t, "d1cc03852d9a8364d3fb76234e70d96a", string(dst[:]))
 }
 
 func TestVatsimAuthUnsupportedClient(t *testing.T) {

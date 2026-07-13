@@ -25,6 +25,9 @@ func TestMakeAndParseJwtToken(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, token)
 
+	// MakeJwtToken returns *JwtToken; CustomClaims works before signing.
+	assert.Equal(t, "access", token.CustomClaims().TokenType)
+
 	signed, err := token.SignedString(secret)
 	require.NoError(t, err)
 	assert.NotEmpty(t, signed)

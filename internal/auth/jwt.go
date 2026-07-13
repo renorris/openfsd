@@ -31,7 +31,9 @@ func (t *JwtToken) CustomClaims() *CustomClaims {
 	return t.Claims.(*CustomClaims)
 }
 
-func MakeJwtToken(customFields *CustomFields, validityDuration time.Duration) (token *jwt.Token, err error) {
+// MakeJwtToken builds a signed-ready JWT with openfsd claims.
+// The returned *JwtToken embeds *jwt.Token so callers may use SignedString directly.
+func MakeJwtToken(customFields *CustomFields, validityDuration time.Duration) (token *JwtToken, err error) {
 	// Generate random ID
 	id, err := uuid.NewRandom()
 	if err != nil {
@@ -50,7 +52,7 @@ func MakeJwtToken(customFields *CustomFields, validityDuration time.Duration) (t
 		*customFields,
 	}
 
-	token = jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	token = &JwtToken{jwt.NewWithClaims(jwt.SigningMethodHS256, claims)}
 	return
 }
 
