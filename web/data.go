@@ -9,7 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/gin-gonic/gin"
-	"github.com/renorris/openfsd/db"
+	"github.com/renorris/openfsd/internal/db"
 	"github.com/renorris/openfsd/internal/auth"
 	"github.com/renorris/openfsd/internal/server"
 	"github.com/renorris/openfsd/pkg/protocol"

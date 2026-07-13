@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"github.com/renorris/openfsd/db"
+	"github.com/renorris/openfsd/internal/db"
 	"log/slog"
 	"net"
 )

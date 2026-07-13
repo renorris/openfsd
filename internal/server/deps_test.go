@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/renorris/openfsd/db"
+	"github.com/renorris/openfsd/internal/db"
 	"github.com/renorris/openfsd/internal/postoffice"
 	"github.com/renorris/openfsd/internal/session"
 )

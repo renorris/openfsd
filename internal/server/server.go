@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/renorris/openfsd/db"
+	"github.com/renorris/openfsd/internal/db"
 	"github.com/renorris/openfsd/internal/metar"
 	"github.com/renorris/openfsd/internal/postoffice"
 	"github.com/renorris/openfsd/pkg/protocol"
