@@ -51,19 +51,24 @@ type LatLon struct {
 //
 // # Field ownership
 //
-// Read-loop only (eventLoop / packet handlers on this connection's goroutine;
-// do not read or write from other goroutines without additional sync):
-//   - FacilityType, SendFastEnabled, ClosestVelocityClientDistance
-//   - Auth (Initialize / challenge handling)
-//   - Scanner (owned exclusively by the read loop)
-//   - Conn for RemoteAddr-style metadata reads from the read loop
+// Writer: owning read loop only (eventLoop / packet handlers on this connection).
+// Concurrent readers without extra sync are allowed for the fields below where
+// noted; they may observe a torn value — acceptable for snapshot/privilege checks:
+//   - FacilityType — writer: read loop (handleATCPosition); concurrent readers
+//     (HTTP online-users snapshot, CQ ATC checks on other sessions) may observe a
+//     torn int; acceptable. Switch to atomic later if stronger consistency is needed.
+//   - SendFastEnabled, ClosestVelocityClientDistance — read-loop only; not read
+//     across sessions.
+//   - Auth (Initialize / challenge handling) — read-loop only.
+//   - Scanner — owned exclusively by the read loop.
 //
 // Atomic / concurrent-safe (may be read by postoffice, HTTP service, or other
 // session goroutines; writers are typically the owning read loop or postoffice
 // position updates):
 //   - Coords (via LatLon/SetLatLon), VisRange
 //   - FlightPlan, AssignedBeaconCode
-//   - Frequency, Altitude, Groundspeed, Transponder, Heading, LastUpdated
+//   - Frequency (ATC % position field 1; stored by handleATCPosition), Altitude,
+//     Groundspeed, Transponder, Heading, LastUpdated
 //
 // Immutable after login (set during login; safe to read concurrently afterward):
 //   - LoginData fields (Callsign, CID, RealName, NetworkRating, ProtoRevision, …)
@@ -78,8 +83,13 @@ type LatLon struct {
 // After login, all packet writes to the client MUST go through Send → sendChan →
 // SenderWorker. Direct Conn.Write outside SenderWorker is forbidden post-login
 // (login-phase errors may still use protocol.WriteError on the raw connection
-// before SenderWorker is started).
+// before SenderWorker is started). Conn remains exported for RemoteAddr and
+// login-phase WriteError; do not use Conn.Write after SenderWorker starts.
+// Future CI may allowlist only SenderWorker + login-phase files for Conn.Write.
 type Session struct {
+	// Conn is the underlying network connection.
+	// Exported for RemoteAddr and login-phase protocol.WriteError only.
+	// Post-login packet writes MUST use Send, not Conn.Write.
 	Conn     net.Conn
 	Scanner  *bufio.Scanner
 	Ctx      context.Context
@@ -94,14 +104,16 @@ type Session struct {
 	FlightPlan         atomic.String
 	AssignedBeaconCode atomic.String
 
-	Frequency   atomic.String // ATC frequency
+	Frequency   atomic.String // ATC frequency (raw % field 1, e.g. "28550")
 	Altitude    atomic.Int32  // Pilot altitude
 	Groundspeed atomic.Int32  // Pilot ground speed
 	Transponder atomic.String // Active pilot transponder
 	Heading     atomic.Int32  // Pilot heading
 	LastUpdated atomic.Time   // Last position/state update time
 
-	FacilityType int // ATC facility type (ATC only)
+	// FacilityType is ATC facility type (ATC only). Writer: read loop.
+	// Concurrent snapshot readers may see a torn int; acceptable.
+	FacilityType int
 	LoginData
 
 	Auth            Auth // Optional; set by fsd when client auth is used

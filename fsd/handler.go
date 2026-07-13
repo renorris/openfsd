@@ -114,6 +114,9 @@ func (s *Server) handleATCPosition(client *session.Session, packet []byte) {
 
 	client.FacilityType = int(facilityType)
 
+	// ATC frequency field (raw &-delimited wire value, e.g. "28550")
+	client.Frequency.Store(string(getField(packet, 1)))
+
 	// Extract location and visibility range
 	lat, lon, ok := parseLatLon(packet, 5, 6)
 	if !ok {
