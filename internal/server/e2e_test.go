@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -110,6 +111,142 @@ func loginATC(t *testing.T, c *fsdclient.Client, callsign string, cid int, token
 	}
 }
 
+func serviceClient() *http.Client {
+	return &http.Client{Timeout: 2 * time.Second}
+}
+
+// waitOnlinePilot polls GET /online_users until callsign appears (predicate, no bare sleep-assert).
+func waitOnlinePilot(t *testing.T, ts *server.TestServer, callsign string, wantCID int) server.OnlineUserPilot {
+	t.Helper()
+	tok, err := ts.MakeServiceJWT()
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := serviceClient()
+	deadline := time.Now().Add(5 * time.Second)
+	url := ts.HTTPBaseURL() + "/online_users"
+	for time.Now().Before(deadline) {
+		req, err := http.NewRequest(http.MethodGet, url, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Authorization", "Bearer "+tok)
+		resp, err := client.Do(req)
+		if err != nil {
+			time.Sleep(20 * time.Millisecond)
+			continue
+		}
+		var data server.OnlineUsersResponseData
+		err = json.NewDecoder(resp.Body).Decode(&data)
+		_ = resp.Body.Close()
+		if err != nil {
+			time.Sleep(20 * time.Millisecond)
+			continue
+		}
+		for _, p := range data.Pilots {
+			if p.Callsign == callsign && p.CID == wantCID {
+				return p
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("pilot %s (cid=%d) not in online_users within timeout", callsign, wantCID)
+	return server.OnlineUserPilot{}
+}
+
+// nearKJFK returns a pilot position near KJFK.
+func nearKJFK(cs string) protocol.PilotPosition {
+	return protocol.PilotPosition{
+		TransponderMode:    "S",
+		Callsign:           cs,
+		TransponderCode:    "1200",
+		NetworkRating:      protocol.NetworkRatingObserver,
+		Latitude:           40.64,
+		Longitude:          -73.78,
+		TrueAltitude:       1000,
+		Groundspeed:        180,
+		PitchBankHeading:   0,
+		AltitudeCorrection: 0,
+	}
+}
+
+// exchangeInRangePositions pumps @ positions until each peer sees the other.
+// Joins both WaitFor goroutines before returning (including on failure).
+func exchangeInRangePositions(t *testing.T, a, b *fsdclient.Client, callA, callB string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	seenB := make(chan error, 1)
+	seenA := make(chan error, 1)
+	go func() {
+		defer wg.Done()
+		_, err := a.WaitFor(ctx, func(r fsdclient.Received) bool {
+			return r.Type == protocol.PacketTypePilotPosition && bytes.Contains(r.Raw, []byte(callB))
+		})
+		seenB <- err
+	}()
+	go func() {
+		defer wg.Done()
+		_, err := b.WaitFor(ctx, func(r fsdclient.Received) bool {
+			return r.Type == protocol.PacketTypePilotPosition && bytes.Contains(r.Raw, []byte(callA))
+		})
+		seenA <- err
+	}()
+
+	ticker := time.NewTicker(40 * time.Millisecond)
+	defer ticker.Stop()
+	gotA, gotB := false, false
+	var errA, errB error
+	for !gotA || !gotB {
+		if err := a.SendPilotPosition(nearKJFK(callA)); err != nil {
+			cancel()
+			wg.Wait()
+			t.Fatal(err)
+		}
+		if err := b.SendPilotPosition(nearKJFK(callB)); err != nil {
+			cancel()
+			wg.Wait()
+			t.Fatal(err)
+		}
+		if !gotA {
+			select {
+			case errA = <-seenA:
+				gotA = true
+			default:
+			}
+		}
+		if !gotB {
+			select {
+			case errB = <-seenB:
+				gotB = true
+			default:
+			}
+		}
+		if gotA && gotB {
+			break
+		}
+		select {
+		case <-ticker.C:
+		case <-ctx.Done():
+			cancel()
+			wg.Wait()
+			t.Fatalf("in-range exchange timeout gotA=%v gotB=%v (A=%v B=%v)",
+				gotA, gotB, a.Recorder().Received(), b.Recorder().Received())
+		}
+	}
+	cancel()
+	wg.Wait()
+	if errA != nil {
+		t.Fatalf("B did not see A: %v (B recv=%v)", errA, b.Recorder().Received())
+	}
+	if errB != nil {
+		t.Fatalf("A did not see B: %v (A recv=%v)", errB, a.Recorder().Received())
+	}
+}
+
 func TestE2E_PilotLoginPassword(t *testing.T) {
 	ts := server.StartTestServer(t)
 	c := dial(t, ts)
@@ -184,75 +321,9 @@ func TestE2E_InRangeVisibility(t *testing.T) {
 	loginPilot(t, b, "NEAR_B", ts.Pilot2CID, ts.PilotPassword, protocol.NetworkRatingObserver)
 	waitMOTD(t, b, "NEAR_B")
 
-	// Drain B's view of A's add packet if any, then exchange positions near KJFK.
-	nearPos := func(cs string) protocol.PilotPosition {
-		return protocol.PilotPosition{
-			TransponderMode:    "S",
-			Callsign:           cs,
-			TransponderCode:    "1200",
-			NetworkRating:      protocol.NetworkRatingObserver,
-			Latitude:           40.64,
-			Longitude:          -73.78,
-			TrueAltitude:       1000,
-			Groundspeed:        180,
-			PitchBankHeading:   0,
-			AltitudeCorrection: 0,
-		}
-	}
-
-	// Seed both into the geo index near KJFK, then re-broadcast until each
-	// sees the other (Send returns before the server finishes handling).
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-	defer cancel()
-
-	seenB := make(chan error, 1)
-	go func() {
-		_, err := a.WaitFor(ctx, func(r fsdclient.Received) bool {
-			return r.Type == protocol.PacketTypePilotPosition && bytes.Contains(r.Raw, []byte("NEAR_B"))
-		})
-		seenB <- err
-	}()
-	seenA := make(chan error, 1)
-	go func() {
-		_, err := b.WaitFor(ctx, func(r fsdclient.Received) bool {
-			return r.Type == protocol.PacketTypePilotPosition && bytes.Contains(r.Raw, []byte("NEAR_A"))
-		})
-		seenA <- err
-	}()
-
-	// Pump positions until both receivers succeed or ctx expires.
-	ticker := time.NewTicker(40 * time.Millisecond)
-	defer ticker.Stop()
-	var errA, errB error
-	gotA, gotB := false, false
-	for !gotA || !gotB {
-		if err := a.SendPilotPosition(nearPos("NEAR_A")); err != nil {
-			t.Fatal(err)
-		}
-		if err := b.SendPilotPosition(nearPos("NEAR_B")); err != nil {
-			t.Fatal(err)
-		}
-		select {
-		case errA = <-seenA:
-			gotA = true
-			if errA != nil {
-				t.Fatalf("B did not see A: %v (B recv=%v)", errA, b.Recorder().Received())
-			}
-		case errB = <-seenB:
-			gotB = true
-			if errB != nil {
-				t.Fatalf("A did not see B: %v (A recv=%v)", errB, a.Recorder().Received())
-			}
-		case <-ticker.C:
-		case <-ctx.Done():
-			t.Fatalf("in-range exchange timeout gotA=%v gotB=%v (A=%v B=%v)",
-				gotA, gotB, a.Recorder().Received(), b.Recorder().Received())
-		}
-	}
+	exchangeInRangePositions(t, a, b, "NEAR_A", "NEAR_B")
 
 	// Far client should not receive near traffic.
-	// Reuse supervisor CID as a third pilot account isn't available; use SUP with observer rating
-	// — rating may be up to max, so login as observer with sup credentials is fine if rating <= max.
 	c := dial(t, ts)
 	loginPilot(t, c, "FAR_C", ts.SupCID, ts.SupPassword, protocol.NetworkRatingObserver)
 	waitMOTD(t, c, "FAR_C")
@@ -268,22 +339,129 @@ func TestE2E_InRangeVisibility(t *testing.T) {
 		Groundspeed:      250,
 		PitchBankHeading: 0,
 	}
-	if err := c.SendPilotPosition(farPos); err != nil {
+	// Predicate-poll until snapshot shows FAR_C geo in southern hemisphere (indexed).
+	tok, err := ts.MakeServiceJWT()
+	if err != nil {
 		t.Fatal(err)
 	}
-	// Give server time to index FAR_C position.
-	time.Sleep(50 * time.Millisecond)
+	httpCl := serviceClient()
+	indexDeadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(indexDeadline) {
+		if err := c.SendPilotPosition(farPos); err != nil {
+			t.Fatal(err)
+		}
+		req, err := http.NewRequest(http.MethodGet, ts.HTTPBaseURL()+"/online_users", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Authorization", "Bearer "+tok)
+		resp, err := httpCl.Do(req)
+		if err != nil {
+			time.Sleep(20 * time.Millisecond)
+			continue
+		}
+		var data server.OnlineUsersResponseData
+		_ = json.NewDecoder(resp.Body).Decode(&data)
+		_ = resp.Body.Close()
+		for _, pl := range data.Pilots {
+			if pl.Callsign == "FAR_C" && pl.Latitude < -30 {
+				goto farIndexed
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("FAR_C geo not indexed in online_users")
+farIndexed:
 
-	if err := a.SendPilotPosition(nearPos("NEAR_A")); err != nil {
+	// Multi-send absence window: repeatedly send NEAR_A while asserting FAR_C never gets it.
+	absCtx, absCancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer absCancel()
+	hit := make(chan struct{}, 1)
+	go func() {
+		_, err := c.WaitFor(absCtx, func(r fsdclient.Received) bool {
+			return r.Type == protocol.PacketTypePilotPosition && bytes.Contains(r.Raw, []byte("NEAR_A"))
+		})
+		if err == nil {
+			select {
+			case hit <- struct{}{}:
+			default:
+			}
+		}
+	}()
+	ticker := time.NewTicker(40 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-hit:
+			t.Fatal("FAR_C unexpectedly received NEAR_A position")
+		case <-absCtx.Done():
+			return // timeout with no hit = pass
+		case <-ticker.C:
+			if err := a.SendPilotPosition(nearKJFK("NEAR_A")); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+}
+
+func TestE2E_FrequencyBroadcast(t *testing.T) {
+	ts := server.StartTestServer(t)
+
+	a := dial(t, ts)
+	loginPilot(t, a, "FREQ_A", ts.PilotCID, ts.PilotPassword, protocol.NetworkRatingObserver)
+	waitMOTD(t, a, "FREQ_A")
+
+	b := dial(t, ts)
+	loginPilot(t, b, "FREQ_B", ts.Pilot2CID, ts.PilotPassword, protocol.NetworkRatingObserver)
+	waitMOTD(t, b, "FREQ_B")
+
+	// Place both in range so @-recipient text uses broadcastRanged.
+	exchangeInRangePositions(t, a, b, "FREQ_A", "FREQ_B")
+
+	// Far pilot should not receive frequency traffic.
+	far := dial(t, ts)
+	loginPilot(t, far, "FREQ_F", ts.SupCID, ts.SupPassword, protocol.NetworkRatingObserver)
+	waitMOTD(t, far, "FREQ_F")
+	if err := far.SendPilotPosition(protocol.PilotPosition{
+		TransponderMode: "S",
+		Callsign:        "FREQ_F",
+		TransponderCode: "1200",
+		NetworkRating:   protocol.NetworkRatingObserver,
+		Latitude:        -33.95,
+		Longitude:       151.18,
+		TrueAltitude:    3000,
+		Groundspeed:     100,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Wait until far is online (geo presence) without bare sleep-assert.
+	_ = waitOnlinePilot(t, ts, "FREQ_F", ts.SupCID)
+
+	const freqMsg = "freq traffic e2e"
+	// Frequency-addressed text: recipient starts with @
+	if err := a.Send([]byte("#TMFREQ_A:@22800:" + freqMsg)); err != nil {
 		t.Fatal(err)
 	}
 
-	short, cancel2 := context.WithTimeout(context.Background(), 300*time.Millisecond)
-	defer cancel2()
-	if _, err := c.WaitFor(short, func(r fsdclient.Received) bool {
-		return r.Type == protocol.PacketTypePilotPosition && bytes.Contains(r.Raw, []byte("NEAR_A"))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	got, err := b.WaitFor(ctx, func(r fsdclient.Received) bool {
+		return r.Type == protocol.PacketTypeTextMessage && bytes.Contains(r.Raw, []byte(freqMsg))
+	})
+	if err != nil {
+		t.Fatalf("in-range peer did not receive frequency broadcast: %v (recv=%v)", err, b.Recorder().Received())
+	}
+	if !bytes.Contains(got.Raw, []byte("@22800")) {
+		t.Fatalf("unexpected frequency wire: %q", got.Raw)
+	}
+
+	// Absence window for far client.
+	absCtx, absCancel := context.WithTimeout(context.Background(), 800*time.Millisecond)
+	defer absCancel()
+	if _, err := far.WaitFor(absCtx, func(r fsdclient.Received) bool {
+		return r.Type == protocol.PacketTypeTextMessage && bytes.Contains(r.Raw, []byte(freqMsg))
 	}); err == nil {
-		t.Fatal("FAR_C unexpectedly received NEAR_A position")
+		t.Fatal("far client unexpectedly received frequency broadcast")
 	}
 }
 
@@ -360,7 +538,8 @@ func TestE2E_Disconnect(t *testing.T) {
 	waitMOTD(t, b, "DISCB")
 
 	// openfsd verifyPacket requires ≥3 fields; wire #DP with SERVER + CID.
-	// Closing also triggers broadcastDisconnectPacket via handleConn defer.
+	// Note: handleDelete broadcasts then Cancel; defer broadcastDisconnectPacket may
+	// emit a second #DP — peer WaitFor accepts the first matching delete.
 	if err := a.Send([]byte("#DPDISCA:SERVER:" + strconv.Itoa(ts.PilotCID))); err != nil {
 		t.Fatal(err)
 	}
@@ -395,7 +574,6 @@ func TestE2E_KillSupervisor(t *testing.T) {
 	defer cancel()
 	_, err := victim.Next(ctx)
 	if err == nil {
-		// Drain until error/close
 		for {
 			_, err = victim.Next(ctx)
 			if err != nil {
@@ -421,7 +599,7 @@ func TestE2E_METARMock(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	got, err := c.WaitFor(ctx, func(r fsdclient.Received) bool {
-		// $AR not classified by TypeOf as a known type always — match raw.
+		// $AR is not in protocol.TypeOf; match wire prefix + station.
 		return bytes.HasPrefix(bytes.TrimRight(r.Raw, "\r\n"), []byte("$AR")) &&
 			bytes.Contains(r.Raw, []byte("KJFK"))
 	})
@@ -430,6 +608,10 @@ func TestE2E_METARMock(t *testing.T) {
 	}
 	if !bytes.Contains(got.Raw, []byte("18010KT")) {
 		t.Fatalf("unexpected METAR body: %q", got.Raw)
+	}
+	// Mock is path-keyed; wrong station would 404 and yield $ER — success implies /KJFK.TXT path.
+	if !bytes.Contains(got.Raw, []byte("METAR:")) {
+		t.Fatalf("missing METAR field: %q", got.Raw)
 	}
 }
 
@@ -440,54 +622,75 @@ func TestE2E_ServiceHTTPOnlineUsersAndKick(t *testing.T) {
 	loginPilot(t, c, "HTTP1", ts.PilotCID, ts.PilotPassword, protocol.NetworkRatingObserver)
 	waitMOTD(t, c, "HTTP1")
 
-	// Position so snapshot has lat/lon.
+	const wantLat, wantLon = 40.0, -74.0
+	const wantAlt = 5000
 	if err := c.SendPilotPosition(protocol.PilotPosition{
 		TransponderMode: "S",
 		Callsign:        "HTTP1",
 		TransponderCode: "2000",
 		NetworkRating:   protocol.NetworkRatingObserver,
-		Latitude:        40.0,
-		Longitude:       -74.0,
-		TrueAltitude:    5000,
+		Latitude:        wantLat,
+		Longitude:       wantLon,
+		TrueAltitude:    wantAlt,
 		Groundspeed:     200,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(50 * time.Millisecond)
 
-	svcTok, err := ts.MakeServiceJWT()
+	// Poll until snapshot shows callsign with updated coordinates (no bare sleep).
+	tok, err := ts.MakeServiceJWT()
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	req, err := http.NewRequest(http.MethodGet, ts.HTTPBaseURL()+"/online_users", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	req.Header.Set("Authorization", "Bearer "+svcTok)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		t.Fatalf("online_users status %d body %s", resp.StatusCode, body)
-	}
-
-	var data server.OnlineUsersResponseData
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		t.Fatal(err)
-	}
+	client := serviceClient()
+	deadline := time.Now().Add(5 * time.Second)
+	var pilot server.OnlineUserPilot
 	found := false
-	for _, p := range data.Pilots {
-		if p.Callsign == "HTTP1" && p.CID == ts.PilotCID {
-			found = true
+	for time.Now().Before(deadline) {
+		_ = c.SendPilotPosition(protocol.PilotPosition{
+			TransponderMode: "S",
+			Callsign:        "HTTP1",
+			TransponderCode: "2000",
+			NetworkRating:   protocol.NetworkRatingObserver,
+			Latitude:        wantLat,
+			Longitude:       wantLon,
+			TrueAltitude:    wantAlt,
+			Groundspeed:     200,
+		})
+		req, err := http.NewRequest(http.MethodGet, ts.HTTPBaseURL()+"/online_users", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Authorization", "Bearer "+tok)
+		resp, err := client.Do(req)
+		if err != nil {
+			time.Sleep(20 * time.Millisecond)
+			continue
+		}
+		var data server.OnlineUsersResponseData
+		err = json.NewDecoder(resp.Body).Decode(&data)
+		_ = resp.Body.Close()
+		if err != nil {
+			continue
+		}
+		for _, p := range data.Pilots {
+			if p.Callsign == "HTTP1" && p.CID == ts.PilotCID &&
+				p.Latitude == wantLat && p.Longitude == wantLon {
+				pilot = p
+				found = true
+				break
+			}
+		}
+		if found {
 			break
 		}
+		time.Sleep(20 * time.Millisecond)
 	}
 	if !found {
-		t.Fatalf("HTTP1 not in online_users: %+v", data)
+		t.Fatalf("HTTP1 with lat/lon not in online_users")
+	}
+	if pilot.Altitude != wantAlt {
+		t.Fatalf("altitude = %d, want %d", pilot.Altitude, wantAlt)
 	}
 
 	// Kick via service HTTP
@@ -496,15 +699,15 @@ func TestE2E_ServiceHTTPOnlineUsersAndKick(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	kickReq.Header.Set("Authorization", "Bearer "+svcTok)
+	kickReq.Header.Set("Authorization", "Bearer "+tok)
 	kickReq.Header.Set("Content-Type", "application/json")
-	kickResp, err := http.DefaultClient.Do(kickReq)
+	kickResp, err := client.Do(kickReq)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer kickResp.Body.Close()
+	body, _ := io.ReadAll(kickResp.Body)
+	_ = kickResp.Body.Close()
 	if kickResp.StatusCode != http.StatusNoContent {
-		body, _ := io.ReadAll(kickResp.Body)
 		t.Fatalf("kick status %d body %s", kickResp.StatusCode, body)
 	}
 

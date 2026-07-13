@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/renorris/openfsd/db"
 	"github.com/renorris/openfsd/internal/metar"
@@ -20,14 +21,17 @@ import (
 
 // Server is the FSD server orchestration layer.
 type Server struct {
-	cfg      *Config
-	users    UserStore
-	configKV ConfigStore
-	registry Registry
-	metar    MetarQueue
-	clock    Clock
-	logger   *slog.Logger
-	listen   func(ctx context.Context, network, addr string) (net.Listener, error)
+	cfg        *Config
+	users      UserStore
+	configKV   ConfigStore
+	registry   Registry
+	metar      MetarQueue
+	clock      Clock
+	logger     *slog.Logger
+	listen     func(ctx context.Context, network, addr string) (net.Listener, error)
+	httpListen func(network, addr string) (net.Listener, error)
+	// httpDone is closed when runServiceHTTP returns (after Serve exits).
+	httpDone chan struct{}
 }
 
 // New constructs a Server from injected Deps.
@@ -62,14 +66,16 @@ func New(d Deps) (*Server, error) {
 	}
 
 	return &Server{
-		cfg:      d.Config,
-		users:    d.Users,
-		configKV: d.ConfigKV,
-		registry: d.Registry,
-		metar:    d.Metar,
-		clock:    clock,
-		logger:   logger,
-		listen:   listen,
+		cfg:        d.Config,
+		users:      d.Users,
+		configKV:   d.ConfigKV,
+		registry:   d.Registry,
+		metar:      d.Metar,
+		clock:      clock,
+		logger:     logger,
+		listen:     listen,
+		httpListen: d.HTTPListen,
+		httpDone:   make(chan struct{}),
 	}, nil
 }
 
@@ -204,11 +210,22 @@ func (s *Server) Run(ctx context.Context) (err error) {
 	}
 
 	if len(startupErrors) > 0 {
+		// Best-effort join HTTP (ctx may still be live on bind failure).
+		select {
+		case <-s.httpDone:
+		case <-time.After(2 * time.Second):
+		}
 		return fmt.Errorf("some listeners failed: %v", startupErrors)
 	}
 
-	// All listeners started successfully; wait for context to be cancelled
+	// All listeners exited (normally after ctx cancel); wait for context if still active.
 	<-ctx.Done()
+
+	// Join service HTTP so callers (and tests) can close shared resources safely.
+	select {
+	case <-s.httpDone:
+	case <-time.After(5 * time.Second):
+	}
 
 	return
 }

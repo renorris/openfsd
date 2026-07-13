@@ -67,9 +67,13 @@ type Deps struct {
 	Metar    MetarQueue
 	Clock    Clock // nil => real clock
 	Logger   *slog.Logger
-	// Listen optionally injects net listener creation (tests).
+	// Listen optionally injects FSD net listener creation (tests).
 	// nil => net.ListenConfig{}.Listen
 	Listen func(ctx context.Context, network, addr string) (net.Listener, error)
+	// HTTPListen optionally injects service HTTP listener creation (tests).
+	// Signature matches net.Listen. nil => net.Listen("tcp", ServiceHTTPListenAddr).
+	// Prefer returning a pre-bound listener so tests avoid bind/close/rebind TOCTOU.
+	HTTPListen func(network, addr string) (net.Listener, error)
 }
 
 type realClock struct{}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -15,20 +16,29 @@ import (
 
 // runServiceHTTP starts the admin service HTTP server used for
 // internal communication between the API HTTP server and this FSD server.
-// It shuts down when ctx is cancelled.
+// It shuts down when ctx is cancelled and closes s.httpDone when Serve returns.
 func (s *Server) runServiceHTTP(ctx context.Context) {
+	defer close(s.httpDone)
+
 	e := s.setupRoutes()
-	httpSrv := &http.Server{
-		Addr:    s.cfg.ServiceHTTPListenAddr,
-		Handler: e,
+	listen := s.httpListen
+	if listen == nil {
+		listen = net.Listen
 	}
+	ln, err := listen("tcp", s.cfg.ServiceHTTPListenAddr)
+	if err != nil {
+		s.logger.Error(err.Error())
+		return
+	}
+
+	httpSrv := &http.Server{Handler: e}
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		_ = httpSrv.Shutdown(shutdownCtx)
 	}()
-	if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	if err := httpSrv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		s.logger.Error(err.Error())
 	}
 }

@@ -34,18 +34,53 @@ const (
 	TestSupPassword   = "sup-pass"
 )
 
+// TestMETARKJFKBody is the NOAA station-file body served for KJFK by the fake transport.
+const TestMETARKJFKBody = "2024/01/15 12:00\nKJFK 151200Z 18010KT 10SM FEW050 22/12 A3001\n"
+
 // fakeMetarHTTP is an injectable metar.HTTPDoer that never hits NOAA.
+// It maps ICAO codes extracted from the stations path to bodies.
 type fakeMetarHTTP struct {
-	body string
+	stations map[string]string // uppercase ICAO -> NOAA station file body
 }
 
 func (f *fakeMetarHTTP) Do(req *http.Request) (*http.Response, error) {
-	_ = req
+	if req.Method != http.MethodGet {
+		return &http.Response{
+			StatusCode: http.StatusMethodNotAllowed,
+			Body:       io.NopCloser(strings.NewReader("")),
+			Header:     make(http.Header),
+		}, nil
+	}
+	icao := icaoFromMetarPath(req.URL.Path)
+	body, ok := f.stations[icao]
+	if !ok || body == "" {
+		return &http.Response{
+			StatusCode: http.StatusNotFound,
+			Body:       io.NopCloser(strings.NewReader("")),
+			Header:     make(http.Header),
+		}, nil
+	}
 	return &http.Response{
 		StatusCode: http.StatusOK,
-		Body:       io.NopCloser(strings.NewReader(f.body)),
+		Body:       io.NopCloser(strings.NewReader(body)),
 		Header:     make(http.Header),
 	}, nil
+}
+
+// icaoFromMetarPath extracts ICAO from .../stations/KJFK.TXT style paths.
+func icaoFromMetarPath(path string) string {
+	const marker = "/stations/"
+	i := strings.Index(path, marker)
+	if i < 0 {
+		return ""
+	}
+	rest := path[i+len(marker):]
+	rest = strings.TrimSuffix(rest, ".TXT")
+	rest = strings.TrimSuffix(rest, ".txt")
+	if len(rest) != 4 {
+		return ""
+	}
+	return strings.ToUpper(rest)
 }
 
 // TestServer is a fully wired FSD server for e2e tests.
@@ -81,7 +116,7 @@ type TestServer struct {
 //   - Fixed JWT secret
 //   - Fake METAR HTTP transport (no real NOAA)
 //   - FSD listen on 127.0.0.1:0
-//   - Service HTTP on a free 127.0.0.1 port
+//   - Service HTTP on a pre-bound 127.0.0.1 listener (no bind/close/rebind TOCTOU)
 //
 // Returns FSD/HTTP addresses and registers t.Cleanup for shutdown.
 func StartTestServer(t testing.TB) *TestServer {
@@ -175,11 +210,20 @@ func StartTestServer(t testing.TB) *TestServer {
 		t.Fatalf("set JWT secret: %v", err)
 	}
 
-	// NOAA station file format: timestamp line, METAR line, trailing newline.
-	const metarBody = "2024/01/15 12:00\nKJFK 151200Z 18010KT 10SM FEW050 22/12 A3001\n"
-	metarSvc := metar.New(2, &fakeMetarHTTP{body: metarBody})
+	metarSvc := metar.New(2, &fakeMetarHTTP{
+		stations: map[string]string{
+			"KJFK": TestMETARKJFKBody,
+		},
+	})
 
-	httpAddr := freeLocalAddr(t)
+	// Pre-bind HTTP listener and hand it to the server (no freeLocalAddr TOCTOU).
+	httpLn, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		_ = sqlDB.Close()
+		cancel()
+		t.Fatalf("http listen: %v", err)
+	}
+	httpAddr := httpLn.Addr().String()
 
 	var fsdOnce sync.Once
 	fsdAddrCh := make(chan string, 1)
@@ -202,10 +246,10 @@ func StartTestServer(t testing.TB) *TestServer {
 		Registry: postoffice.New(),
 		Metar:    metarSvc,
 		Logger:   logger,
+		// Pass through network/addr from listenLoop (proves config address wiring).
 		Listen: func(ctx context.Context, network, addr string) (net.Listener, error) {
-			_ = ctx
-			_ = addr
-			ln, err := net.Listen("tcp4", "127.0.0.1:0")
+			var lc net.ListenConfig
+			ln, err := lc.Listen(ctx, network, addr)
 			if err != nil {
 				return nil, err
 			}
@@ -214,8 +258,15 @@ func StartTestServer(t testing.TB) *TestServer {
 			})
 			return ln, nil
 		},
+		// Return the already-bound listener; never rebind.
+		HTTPListen: func(network, addr string) (net.Listener, error) {
+			_ = network
+			_ = addr
+			return httpLn, nil
+		},
 	})
 	if err != nil {
+		_ = httpLn.Close()
 		_ = sqlDB.Close()
 		cancel()
 		t.Fatalf("New: %v", err)
@@ -265,6 +316,7 @@ func StartTestServer(t testing.TB) *TestServer {
 }
 
 // Shutdown stops the server and closes the database. Idempotent; also registered via t.Cleanup.
+// Waits for Server.Run to return (which joins service HTTP) before closing sqlDB.
 func (ts *TestServer) Shutdown() {
 	if ts.cancel != nil {
 		ts.cancel()
@@ -273,7 +325,7 @@ func (ts *TestServer) Shutdown() {
 	if ts.done != nil {
 		select {
 		case <-ts.done:
-		case <-time.After(5 * time.Second):
+		case <-time.After(8 * time.Second):
 		}
 		ts.done = nil
 	}
@@ -314,28 +366,24 @@ func (ts *TestServer) HTTPBaseURL() string {
 	return "http://" + ts.HTTPAddr
 }
 
-func freeLocalAddr(t testing.TB) string {
-	t.Helper()
-	ln, err := net.Listen("tcp4", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("freeLocalAddr: %v", err)
-	}
-	addr := ln.Addr().String()
-	_ = ln.Close()
-	return addr
+// httpClient is a short-timeout client for readiness and e2e service HTTP polls.
+func httpClient() *http.Client {
+	return &http.Client{Timeout: 200 * time.Millisecond}
 }
 
 func waitHTTPReady(t testing.TB, addr string) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	url := fmt.Sprintf("http://%s/online_users", addr)
+	client := httpClient()
 	for time.Now().Before(deadline) {
-		resp, err := http.Get(url) //nolint:gosec // test-only loopback
+		resp, err := client.Get(url) //nolint:gosec // test-only loopback
 		if err == nil {
 			_ = resp.Body.Close()
 			// Auth middleware returns 400 without Bearer — any response means up.
 			return
 		}
+		// Connection errors only: brief backoff then retry (bounded by deadline).
 		time.Sleep(15 * time.Millisecond)
 	}
 	t.Fatalf("service HTTP not ready at %s", addr)
