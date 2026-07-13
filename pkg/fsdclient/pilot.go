@@ -1,11 +1,24 @@
 package fsdclient
 
 import (
+	"bytes"
 	"strconv"
 	"strings"
 
 	"github.com/renorris/openfsd/pkg/protocol"
 )
+
+// PrefixSendFast is the wire prefix for the server "Send Fast Positions" packet
+// ($SF). pkg/protocol.TypeOf does not classify $SF yet (returns Unknown); use
+// IsSendFast to observe it from Next/WaitFor in proto-101 e2e.
+const PrefixSendFast = "$SF"
+
+// IsSendFast reports whether raw is a $SF (send-fast-positions) packet.
+// Trailing \r\n is ignored.
+func IsSendFast(raw []byte) bool {
+	raw = bytes.TrimRight(raw, "\r\n")
+	return bytes.HasPrefix(raw, []byte(PrefixSendFast))
+}
 
 // SendPilotPosition marshals and sends a protocol 100 @ position update.
 func (c *Client) SendPilotPosition(pos protocol.PilotPosition) error {

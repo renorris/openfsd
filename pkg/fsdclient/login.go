@@ -39,19 +39,12 @@ type ATCLogin struct {
 	ClientIdent   *protocol.ClientIdent // optional $ID
 }
 
-// LoginPilot sends optional $ID then #AP. Token may be a password or JWT.
+// LoginPilot sends optional $ID then #AP under writeMu so concurrent Send
+// cannot interleave, and only one login succeeds (CAS on loggedIn).
+// Token may be a password or JWT.
 func (c *Client) LoginPilot(ctx context.Context, p PilotLogin) error {
 	if err := ctx.Err(); err != nil {
 		return err
-	}
-	if c.closed.Load() {
-		return ErrClosed
-	}
-	if c.conn == nil {
-		return ErrNotDialed
-	}
-	if c.loggedIn.Load() {
-		return ErrAlreadyLoggedIn
 	}
 	if p.Callsign == "" {
 		return errf("fsdclient: pilot login: empty callsign")
@@ -62,13 +55,12 @@ func (c *Client) LoginPilot(ctx context.Context, p PilotLogin) error {
 		protoRev = defaultProtoRevision
 	}
 
+	// Build packets outside the lock.
+	var idWire []byte
 	if p.ClientIdent != nil {
 		id := fillClientIdent(*p.ClientIdent, p.Callsign, p.CID)
-		if err := c.Send(id.Marshal()); err != nil {
-			return err
-		}
+		idWire = ensureCRLF(id.Marshal())
 	}
-
 	add := protocol.AddPilot{
 		Callsign:      p.Callsign,
 		To:            "SERVER",
@@ -79,29 +71,42 @@ func (c *Client) LoginPilot(ctx context.Context, p PilotLogin) error {
 		SimulatorType: p.SimulatorType,
 		RealName:      p.RealName,
 	}
-	if err := c.Send(add.Marshal()); err != nil {
-		return err
-	}
+	apWire := ensureCRLF(add.Marshal())
 
-	c.callsign.Store(p.Callsign)
-	c.isATC.Store(false)
-	c.loggedIn.Store(true)
-	return nil
-}
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
 
-// LoginATC sends optional $ID then #AA. Token may be a password or JWT.
-func (c *Client) LoginATC(ctx context.Context, p ATCLogin) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
 	if c.closed.Load() {
 		return ErrClosed
 	}
 	if c.conn == nil {
 		return ErrNotDialed
 	}
-	if c.loggedIn.Load() {
+	if !c.loggedIn.CompareAndSwap(false, true) {
 		return ErrAlreadyLoggedIn
+	}
+
+	if idWire != nil {
+		if err := c.sendLocked(idWire); err != nil {
+			c.loggedIn.Store(false)
+			return err
+		}
+	}
+	if err := c.sendLocked(apWire); err != nil {
+		c.loggedIn.Store(false)
+		return err
+	}
+
+	c.callsign.Store(p.Callsign)
+	c.isATC.Store(false)
+	return nil
+}
+
+// LoginATC sends optional $ID then #AA under writeMu (same atomicity as LoginPilot).
+// Token may be a password or JWT.
+func (c *Client) LoginATC(ctx context.Context, p ATCLogin) error {
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	if p.Callsign == "" {
 		return errf("fsdclient: atc login: empty callsign")
@@ -112,13 +117,11 @@ func (c *Client) LoginATC(ctx context.Context, p ATCLogin) error {
 		protoRev = defaultProtoRevision
 	}
 
+	var idWire []byte
 	if p.ClientIdent != nil {
 		id := fillClientIdent(*p.ClientIdent, p.Callsign, p.CID)
-		if err := c.Send(id.Marshal()); err != nil {
-			return err
-		}
+		idWire = ensureCRLF(id.Marshal())
 	}
-
 	add := protocol.AddATC{
 		Callsign:      p.Callsign,
 		To:            "SERVER",
@@ -128,13 +131,34 @@ func (c *Client) LoginATC(ctx context.Context, p ATCLogin) error {
 		NetworkRating: p.NetworkRating,
 		ProtoRevision: protoRev,
 	}
-	if err := c.Send(add.Marshal()); err != nil {
+	aaWire := ensureCRLF(add.Marshal())
+
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+
+	if c.closed.Load() {
+		return ErrClosed
+	}
+	if c.conn == nil {
+		return ErrNotDialed
+	}
+	if !c.loggedIn.CompareAndSwap(false, true) {
+		return ErrAlreadyLoggedIn
+	}
+
+	if idWire != nil {
+		if err := c.sendLocked(idWire); err != nil {
+			c.loggedIn.Store(false)
+			return err
+		}
+	}
+	if err := c.sendLocked(aaWire); err != nil {
+		c.loggedIn.Store(false)
 		return err
 	}
 
 	c.callsign.Store(p.Callsign)
 	c.isATC.Store(true)
-	c.loggedIn.Store(true)
 	return nil
 }
 

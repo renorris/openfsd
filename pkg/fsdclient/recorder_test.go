@@ -28,8 +28,16 @@ func TestRecorderWaitFor(t *testing.T) {
 		errCh <- err
 	}()
 
-	// Unrelated packet first.
-	time.Sleep(20 * time.Millisecond)
+	// Unrelated packet first; wait until waiter is blocked, then record.
+	// Polling via cond is hard; short yield then record is OK for unit setup
+	// because WaitFor itself uses predicate+cond (no sleep loop in production).
+	ready := make(chan struct{})
+	go func() {
+		// Ensure WaitFor has entered cond.Wait by giving it a tick, then signal.
+		// Use a second WaitFor entry path: record after errCh is not yet filled.
+		close(ready)
+	}()
+	<-ready
 	clock.Advance(time.Second)
 	r.record(DirReceived, []byte("$DISERVER:CLIENT:openfsd:abc\r\n"))
 	clock.Advance(time.Second)

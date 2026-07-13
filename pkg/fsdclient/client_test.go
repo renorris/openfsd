@@ -14,43 +14,6 @@ import (
 	"github.com/renorris/openfsd/pkg/protocol"
 )
 
-// startStubServer listens on a random port, sends $DI, then runs handler.
-func startStubServer(t *testing.T, handler func(net.Conn)) (addr string, cleanup func()) {
-	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for {
-			conn, err := ln.Accept()
-			if err != nil {
-				return
-			}
-			wg.Add(1)
-			go func(c net.Conn) {
-				defer wg.Done()
-				defer c.Close()
-				// Always send openfsd $DI first.
-				_, _ = c.Write([]byte("$DISERVER:CLIENT:openfsd:6f70656e667364\r\n"))
-				if handler != nil {
-					handler(c)
-				} else {
-					// Drain until client closes.
-					_, _ = io.Copy(io.Discard, c)
-				}
-			}(conn)
-		}
-	}()
-	return ln.Addr().String(), func() {
-		_ = ln.Close()
-		wg.Wait()
-	}
-}
-
 func TestDialAndServerIdent(t *testing.T) {
 	addr, cleanup := startStubServer(t, nil)
 	defer cleanup()
@@ -94,7 +57,8 @@ func TestDialBadServerIdent(t *testing.T) {
 		}
 		defer conn.Close()
 		_, _ = conn.Write([]byte("#TMFOO:BAR:not a di\r\n"))
-		time.Sleep(50 * time.Millisecond)
+		// Hold conn open briefly so dial can read.
+		_, _ = io.Copy(io.Discard, conn)
 	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -123,16 +87,8 @@ func TestLoginPilotPasswordAndJWT(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			var got []string
-			var mu sync.Mutex
-			addr, cleanup := startStubServer(t, func(conn net.Conn) {
-				sc := bufio.NewScanner(conn)
-				for sc.Scan() {
-					mu.Lock()
-					got = append(got, sc.Text())
-					mu.Unlock()
-				}
-			})
+			lc := newLineCollector(1)
+			addr, cleanup := startStubServer(t, lc.handler)
 			defer cleanup()
 
 			ctx := context.Background()
@@ -140,7 +96,6 @@ func TestLoginPilotPasswordAndJWT(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer c.Close(ctx)
 
 			err = c.LoginPilot(ctx, PilotLogin{
 				Callsign:      "N7938C",
@@ -154,17 +109,10 @@ func TestLoginPilotPasswordAndJWT(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			// Allow server to read.
-			time.Sleep(30 * time.Millisecond)
-			_ = c.Close(ctx)
-			time.Sleep(20 * time.Millisecond)
-
-			mu.Lock()
-			defer mu.Unlock()
+			got := waitClosed(t, c, lc)
 			if len(got) < 1 {
 				t.Fatalf("no packets received by server: %v", got)
 			}
-			// Last or only packet should be #AP
 			ap := got[len(got)-1]
 			if !strings.HasPrefix(ap, "#APN7938C:SERVER:100000:"+tc.token+":") {
 				t.Errorf("add pilot wire = %q", ap)
@@ -172,7 +120,6 @@ func TestLoginPilotPasswordAndJWT(t *testing.T) {
 			if !strings.Contains(ap, ":1:100:2:John Doe") {
 				t.Errorf("unexpected #AP fields: %q", ap)
 			}
-			// Default / explicit proto 100.
 			parsed, err := protocol.ParseAddPilot([]byte(ap))
 			if err != nil {
 				t.Fatal(err)
@@ -183,21 +130,16 @@ func TestLoginPilotPasswordAndJWT(t *testing.T) {
 			if parsed.ProtoRevision != 100 {
 				t.Errorf("proto = %d", parsed.ProtoRevision)
 			}
+			if c.IsATC() {
+				t.Error("IsATC true after pilot login")
+			}
 		})
 	}
 }
 
 func TestLoginPilotWithClientIdent(t *testing.T) {
-	var got []string
-	var mu sync.Mutex
-	addr, cleanup := startStubServer(t, func(conn net.Conn) {
-		sc := bufio.NewScanner(conn)
-		for sc.Scan() {
-			mu.Lock()
-			got = append(got, sc.Text())
-			mu.Unlock()
-		}
-	})
+	lc := newLineCollector(2)
+	addr, cleanup := startStubServer(t, lc.handler)
 	defer cleanup()
 
 	ctx := context.Background()
@@ -205,7 +147,6 @@ func TestLoginPilotWithClientIdent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close(ctx)
 
 	err = c.LoginPilot(ctx, PilotLogin{
 		Callsign:      "N172SP",
@@ -225,12 +166,7 @@ func TestLoginPilotWithClientIdent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(40 * time.Millisecond)
-	_ = c.Close(ctx)
-	time.Sleep(20 * time.Millisecond)
-
-	mu.Lock()
-	defer mu.Unlock()
+	got := waitClosed(t, c, lc)
 	if len(got) != 2 {
 		t.Fatalf("got %d packets, want $ID + #AP: %v", len(got), got)
 	}
@@ -240,7 +176,6 @@ func TestLoginPilotWithClientIdent(t *testing.T) {
 	if !strings.HasPrefix(got[1], "#APN172SP:") {
 		t.Errorf("#AP = %q", got[1])
 	}
-	// Proto default 100
 	ap, err := protocol.ParseAddPilot([]byte(got[1]))
 	if err != nil {
 		t.Fatal(err)
@@ -251,16 +186,8 @@ func TestLoginPilotWithClientIdent(t *testing.T) {
 }
 
 func TestLoginATC(t *testing.T) {
-	var got []string
-	var mu sync.Mutex
-	addr, cleanup := startStubServer(t, func(conn net.Conn) {
-		sc := bufio.NewScanner(conn)
-		for sc.Scan() {
-			mu.Lock()
-			got = append(got, sc.Text())
-			mu.Unlock()
-		}
-	})
+	lc := newLineCollector(2)
+	addr, cleanup := startStubServer(t, lc.handler)
 	defer cleanup()
 
 	ctx := context.Background()
@@ -268,7 +195,6 @@ func TestLoginATC(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close(ctx)
 
 	err = c.LoginATC(ctx, ATCLogin{
 		Callsign:      "RN_OBS",
@@ -287,12 +213,10 @@ func TestLoginATC(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(40 * time.Millisecond)
-	_ = c.Close(ctx)
-	time.Sleep(20 * time.Millisecond)
-
-	mu.Lock()
-	defer mu.Unlock()
+	if !c.IsATC() {
+		t.Error("IsATC false after ATC login")
+	}
+	got := waitClosed(t, c, lc)
 	if len(got) != 2 {
 		t.Fatalf("packets = %v", got)
 	}
@@ -310,7 +234,6 @@ func TestLoginATC(t *testing.T) {
 
 func TestSendPilotPositionAndNext(t *testing.T) {
 	addr, cleanup := startStubServer(t, func(conn net.Conn) {
-		// Read one position, then reply with a text message.
 		sc := bufio.NewScanner(conn)
 		if !sc.Scan() {
 			return
@@ -468,6 +391,55 @@ func TestConcurrentSendOnOneClient(t *testing.T) {
 	}
 }
 
+func TestConcurrentLoginOnlyOneWins(t *testing.T) {
+	addr, cleanup := startStubServer(t, func(conn net.Conn) {
+		_, _ = io.Copy(io.Discard, conn)
+	})
+	defer cleanup()
+
+	ctx := context.Background()
+	c, err := Dial(ctx, Config{Addr: addr})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close(ctx)
+
+	const n = 16
+	var wg sync.WaitGroup
+	errs := make(chan error, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			errs <- c.LoginPilot(ctx, PilotLogin{
+				Callsign: "CS",
+				CID:      "1",
+				Token:    "t",
+				RealName: "n",
+			})
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	var ok, already int
+	for err := range errs {
+		switch err {
+		case nil:
+			ok++
+		case ErrAlreadyLoggedIn:
+			already++
+		default:
+			t.Errorf("unexpected err: %v", err)
+		}
+	}
+	if ok != 1 || already != n-1 {
+		t.Fatalf("ok=%d already=%d want 1/%d", ok, already, n-1)
+	}
+	if c.Callsign() != "CS" {
+		t.Errorf("callsign = %q", c.Callsign())
+	}
+}
+
 func TestAlreadyLoggedIn(t *testing.T) {
 	addr, cleanup := startStubServer(t, func(conn net.Conn) {
 		_, _ = io.Copy(io.Discard, conn)
@@ -485,6 +457,9 @@ func TestAlreadyLoggedIn(t *testing.T) {
 	}
 	if err := c.LoginPilot(ctx, login); err != ErrAlreadyLoggedIn {
 		t.Errorf("err = %v", err)
+	}
+	if err := c.LoginATC(ctx, ATCLogin{Callsign: "B", CID: "1", Token: "t"}); err != ErrAlreadyLoggedIn {
+		t.Errorf("atc after pilot = %v", err)
 	}
 }
 
@@ -524,16 +499,8 @@ func TestEnsureCRLF(t *testing.T) {
 }
 
 func TestSendATCAndDelete(t *testing.T) {
-	var got []string
-	var mu sync.Mutex
-	addr, cleanup := startStubServer(t, func(conn net.Conn) {
-		sc := bufio.NewScanner(conn)
-		for sc.Scan() {
-			mu.Lock()
-			got = append(got, sc.Text())
-			mu.Unlock()
-		}
-	})
+	lc := newLineCollector(3)
+	addr, cleanup := startStubServer(t, lc.handler)
 	defer cleanup()
 
 	ctx := context.Background()
@@ -541,7 +508,6 @@ func TestSendATCAndDelete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close(ctx)
 
 	if err := c.SendATCPosition(protocol.ATCPosition{
 		Callsign:        "EWR_P_APP",
@@ -560,12 +526,7 @@ func TestSendATCAndDelete(t *testing.T) {
 	if err := c.SendDeletePilot("N7938C", "100000"); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(40 * time.Millisecond)
-	_ = c.Close(ctx)
-	time.Sleep(20 * time.Millisecond)
-
-	mu.Lock()
-	defer mu.Unlock()
+	got := waitClosed(t, c, lc)
 	if len(got) < 3 {
 		t.Fatalf("got %v", got)
 	}
@@ -581,16 +542,8 @@ func TestSendATCAndDelete(t *testing.T) {
 }
 
 func TestProto101Helpers(t *testing.T) {
-	var got []string
-	var mu sync.Mutex
-	addr, cleanup := startStubServer(t, func(conn net.Conn) {
-		sc := bufio.NewScanner(conn)
-		for sc.Scan() {
-			mu.Lock()
-			got = append(got, sc.Text())
-			mu.Unlock()
-		}
-	})
+	lc := newLineCollector(3)
+	addr, cleanup := startStubServer(t, lc.handler)
 	defer cleanup()
 
 	ctx := context.Background()
@@ -598,7 +551,6 @@ func TestProto101Helpers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close(ctx)
 
 	if err := c.SendFastPosition(FastPilotPosition{
 		Callsign:         "DAL1151",
@@ -623,12 +575,7 @@ func TestProto101Helpers(t *testing.T) {
 	if err := c.SendStoppedPosition([]byte("#STDAL2119:40.6:-73.7:13.56:-0.03:29360076:0.00")); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(40 * time.Millisecond)
-	_ = c.Close(ctx)
-	time.Sleep(20 * time.Millisecond)
-
-	mu.Lock()
-	defer mu.Unlock()
+	got := waitClosed(t, c, lc)
 	if len(got) < 3 {
 		t.Fatalf("got %v", got)
 	}
@@ -643,9 +590,17 @@ func TestProto101Helpers(t *testing.T) {
 	}
 }
 
+func TestIsSendFast(t *testing.T) {
+	if !IsSendFast([]byte("$SFSERVER:N1:1\r\n")) {
+		t.Fatal("expected true")
+	}
+	if IsSendFast([]byte("#TMSERVER:N1:hi\r\n")) {
+		t.Fatal("expected false")
+	}
+}
+
 func TestNextContextCancel(t *testing.T) {
 	addr, cleanup := startStubServer(t, func(conn net.Conn) {
-		// Never write after $DI; block on read.
 		_, _ = io.Copy(io.Discard, conn)
 	})
 	defer cleanup()
@@ -664,6 +619,37 @@ func TestNextContextCancel(t *testing.T) {
 	}
 }
 
+func TestNextReadTimeoutCapsLongCtx(t *testing.T) {
+	// Server sends $DI then never writes again.
+	addr, cleanup := startStubServer(t, func(conn net.Conn) {
+		_, _ = io.Copy(io.Discard, conn)
+	})
+	defer cleanup()
+
+	// Long parent context, short ReadTimeout safety cap.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	c, err := Dial(ctx, Config{
+		Addr:        addr,
+		ReadTimeout: 40 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close(context.Background())
+
+	start := time.Now()
+	_, err = c.Next(ctx)
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("expected read timeout error")
+	}
+	// Should fail near ReadTimeout, not wait for the 5s ctx.
+	if elapsed > 500*time.Millisecond {
+		t.Fatalf("Next took %v; ReadTimeout should cap under long ctx", elapsed)
+	}
+}
+
 func TestLoginEmptyCallsign(t *testing.T) {
 	addr, cleanup := startStubServer(t, nil)
 	defer cleanup()
@@ -677,5 +663,21 @@ func TestLoginEmptyCallsign(t *testing.T) {
 	}
 	if err := c.LoginATC(context.Background(), ATCLogin{}); err == nil {
 		t.Fatal("expected empty callsign error")
+	}
+}
+
+func TestRecorderRawIsolation(t *testing.T) {
+	r := newRecorder(nil)
+	r.record(DirReceived, []byte("#TMSERVER:C:hi\r\n"))
+	all := r.All()
+	all[0].Raw[0] = 'X'
+	again := r.All()
+	if again[0].Raw[0] == 'X' {
+		t.Fatal("mutating All() Raw corrupted history")
+	}
+	recv := r.Received()
+	recv[0].Raw[0] = 'Y'
+	if r.Received()[0].Raw[0] == 'Y' {
+		t.Fatal("mutating Received() Raw corrupted history")
 	}
 }

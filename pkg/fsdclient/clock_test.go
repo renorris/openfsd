@@ -1,6 +1,7 @@
 package fsdclient
 
 import (
+	"sync"
 	"testing"
 	"time"
 )
@@ -34,4 +35,21 @@ func TestResolveClock(t *testing.T) {
 	if time.Since(n) > time.Second || time.Since(n) < -time.Second {
 		t.Fatal(n)
 	}
+}
+
+func TestManualClockConcurrent(t *testing.T) {
+	c := NewManualClock(time.Unix(0, 0))
+	var wg sync.WaitGroup
+	for i := 0; i < 32; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 100; j++ {
+				c.Advance(time.Millisecond)
+				_ = c.Now()
+				c.Set(time.Unix(int64(j), 0))
+			}
+		}()
+	}
+	wg.Wait()
 }

@@ -19,6 +19,9 @@ const (
 )
 
 // Record is one recorded packet with a timestamp.
+//
+// Snapshot methods (All/Sent/Received/WaitFor) return Records whose Raw is a
+// defensive copy; mutating Raw does not affect the recorder's internal store.
 type Record struct {
 	At   time.Time
 	Dir  Direction
@@ -51,7 +54,7 @@ func newRecorder(clock Clock) *Recorder {
 	return r
 }
 
-// record appends a packet in the given direction.
+// record appends a packet in the given direction (copies raw).
 func (r *Recorder) record(dir Direction, raw []byte) Record {
 	rawCopy := append([]byte(nil), raw...)
 	rec := Record{
@@ -69,13 +72,24 @@ func (r *Recorder) record(dir Direction, raw []byte) Record {
 	return rec
 }
 
-// All returns a snapshot of all recorded packets (copy of the slice; raw
-// bytes are already owned copies).
+// copyRecord returns a Record with a defensive copy of Raw.
+func copyRecord(rec Record) Record {
+	return Record{
+		At:   rec.At,
+		Dir:  rec.Dir,
+		Raw:  append([]byte(nil), rec.Raw...),
+		Type: rec.Type,
+	}
+}
+
+// All returns a snapshot of all recorded packets (Raw bytes are copied).
 func (r *Recorder) All() []Record {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	out := make([]Record, len(r.records))
-	copy(out, r.records)
+	for i, rec := range r.records {
+		out[i] = copyRecord(rec)
+	}
 	return out
 }
 
@@ -95,7 +109,7 @@ func (r *Recorder) filter(dir Direction) []Record {
 	var out []Record
 	for _, rec := range r.records {
 		if rec.Dir == dir {
-			out = append(out, rec)
+			out = append(out, copyRecord(rec))
 		}
 	}
 	return out
@@ -121,6 +135,7 @@ func (r *Recorder) close() {
 //
 // Already-recorded received packets are considered first (from index 0).
 // Predicates should be pure; bare sleep loops without a predicate are not used.
+// The returned Received.Raw is a defensive copy.
 func (r *Recorder) WaitFor(ctx context.Context, pred func(Received) bool) (Received, error) {
 	if pred == nil {
 		return Received{}, errf("fsdclient: WaitFor nil predicate")
@@ -144,7 +159,12 @@ func (r *Recorder) WaitFor(ctx context.Context, pred func(Received) bool) (Recei
 			if rec.Dir != DirReceived {
 				continue
 			}
-			got := Received{At: rec.At, Raw: rec.Raw, Type: rec.Type}
+			// Predicate sees a copy so mutation cannot corrupt history mid-scan.
+			got := Received{
+				At:   rec.At,
+				Raw:  append([]byte(nil), rec.Raw...),
+				Type: rec.Type,
+			}
 			if pred(got) {
 				return got, nil
 			}

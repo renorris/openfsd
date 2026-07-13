@@ -16,6 +16,9 @@ import (
 //
 // Zero-value timeouts mean: DialTimeout defaults to 10s; ReadTimeout and
 // WriteTimeout are not applied (no per-op deadline) unless set.
+//
+// When both ReadTimeout and ctx.Deadline are set, Next uses the earlier of
+// the two absolute deadlines (ReadTimeout is a safety cap under long contexts).
 type Config struct {
 	Addr         string
 	DialTimeout  time.Duration
@@ -25,6 +28,9 @@ type Config struct {
 }
 
 // Received is one inbound packet delivered by Next or WaitFor.
+//
+// Raw is a defensive copy of the wire bytes; mutating it does not affect the
+// Recorder history.
 type Received struct {
 	At   time.Time
 	Raw  []byte
@@ -36,6 +42,8 @@ type Received struct {
 // Concurrency model:
 //   - Each Client is independent; N clients may run concurrently.
 //   - Send and typed send helpers are safe for concurrent use (write mutex).
+//   - LoginPilot/LoginATC hold writeMu for the whole $ID+#AP/#AA sequence and
+//     enforce single login via CAS on loggedIn.
 //   - Next is serialized with a read mutex; do not call Close concurrently
 //     with an in-flight Next without expecting an error.
 //   - Recorder is safe for concurrent inspection.
@@ -52,7 +60,7 @@ type Client struct {
 
 	serverIdent protocol.ServerIdent
 
-	// session state (guarded by writeMu for login mutation)
+	// session state: loggedIn CAS; callsign/isATC written under writeMu at login
 	loggedIn atomic.Bool
 	isATC    atomic.Bool
 	callsign atomic.Value // string
@@ -68,6 +76,12 @@ func (c *Client) ServerIdent() protocol.ServerIdent {
 func (c *Client) Callsign() string {
 	v, _ := c.callsign.Load().(string)
 	return v
+}
+
+// IsATC reports whether the session logged in as ATC (#AA). False for pilot
+// or before login.
+func (c *Client) IsATC() bool {
+	return c.isATC.Load()
 }
 
 // Recorder returns the packet recorder for this client.
@@ -88,7 +102,17 @@ func (c *Client) Send(packet []byte) error {
 
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
+	return c.sendLocked(wire)
+}
 
+// sendLocked writes an already-CRLF-terminated packet. Caller must hold writeMu.
+func (c *Client) sendLocked(wire []byte) error {
+	if c.closed.Load() {
+		return ErrClosed
+	}
+	if c.conn == nil {
+		return ErrNotDialed
+	}
 	if err := c.setWriteDeadline(); err != nil {
 		return err
 	}
@@ -103,6 +127,10 @@ func (c *Client) Send(packet []byte) error {
 
 // Next reads the next complete line (\r\n-terminated) from the server.
 // Only one Next may run at a time per Client.
+//
+// The read deadline is the earlier of Config.ReadTimeout (if set) and
+// ctx.Deadline() (if set). Context cancellation also forces a past deadline
+// via AfterFunc.
 func (c *Client) Next(ctx context.Context) (Received, error) {
 	if c.closed.Load() {
 		return Received{}, ErrClosed
@@ -127,12 +155,8 @@ func (c *Client) Next(ctx context.Context) (Received, error) {
 	})
 	defer stop()
 
-	if err := c.setReadDeadline(); err != nil {
+	if err := c.applyReadDeadline(ctx); err != nil {
 		return Received{}, err
-	}
-	// Prefer ctx deadline when earlier than configured ReadTimeout.
-	if dl, ok := ctx.Deadline(); ok {
-		_ = c.conn.SetReadDeadline(dl)
 	}
 
 	line, err := c.br.ReadBytes('\n')
@@ -151,7 +175,27 @@ func (c *Client) Next(ctx context.Context) (Received, error) {
 	raw := bytes.TrimRight(line, "\r\n")
 	wire := append(append([]byte{}, raw...), '\r', '\n')
 	rec := c.rec.record(DirReceived, wire)
-	return Received{At: rec.At, Raw: rec.Raw, Type: rec.Type}, nil
+	// Defensive copy so callers cannot mutate recorder history via Raw.
+	return Received{
+		At:   rec.At,
+		Raw:  append([]byte(nil), rec.Raw...),
+		Type: rec.Type,
+	}, nil
+}
+
+// applyReadDeadline sets the connection read deadline to the earlier of
+// Config.ReadTimeout (from now) and ctx.Deadline(), when either is set.
+func (c *Client) applyReadDeadline(ctx context.Context) error {
+	var deadline time.Time
+	if c.cfg.ReadTimeout > 0 {
+		deadline = time.Now().Add(c.cfg.ReadTimeout)
+	}
+	if dl, ok := ctx.Deadline(); ok {
+		if deadline.IsZero() || dl.Before(deadline) {
+			deadline = dl
+		}
+	}
+	return c.conn.SetReadDeadline(deadline) // zero Time clears deadline
 }
 
 // WaitFor reads packets via Next until pred returns true or ctx ends.
@@ -171,15 +215,13 @@ func (c *Client) WaitFor(ctx context.Context, pred func(Received) bool) (Receive
 	}
 }
 
-// Close closes the underlying connection. Optional ctx is reserved for
-// future graceful teardown; it is currently only checked for already-canceled.
+// Close closes the underlying connection immediately.
+//
+// The context is accepted for API symmetry with Dial/Next but is not used to
+// cancel or delay the close: teardown always proceeds (even if ctx is already
+// canceled). Future versions may use ctx for graceful $DP/#DA drain.
 func (c *Client) Close(ctx context.Context) error {
-	if ctx != nil {
-		if err := ctx.Err(); err != nil {
-			// Still attempt close.
-			_ = err
-		}
-	}
+	_ = ctx // reserved; close is not cancelable
 	if !c.closed.CompareAndSwap(false, true) {
 		return ErrClosed
 	}
@@ -191,13 +233,6 @@ func (c *Client) Close(ctx context.Context) error {
 		}
 	}
 	return nil
-}
-
-func (c *Client) setReadDeadline() error {
-	if c.cfg.ReadTimeout <= 0 {
-		return c.conn.SetReadDeadline(time.Time{})
-	}
-	return c.conn.SetReadDeadline(time.Now().Add(c.cfg.ReadTimeout))
 }
 
 func (c *Client) clearReadDeadline() error {
@@ -275,27 +310,13 @@ func (c *Client) readServerIdent(ctx context.Context) error {
 	raw := bytes.TrimRight(line, "\r\n")
 	wire := append(append([]byte{}, raw...), '\r', '\n')
 
-	// Require $DI and SERVER:CLIENT layout.
-	if !bytes.HasPrefix(raw, []byte("$DISERVER:CLIENT:")) &&
-		!(protocol.TypeOf(raw) == protocol.PacketTypeServerIdent &&
-			bytes.HasPrefix(raw, []byte("$DI")) &&
-			bytes.Contains(raw, []byte("SERVER:CLIENT"))) {
-		// Still try parse, but also enforce SERVER:CLIENT fields.
+	// Require $DISERVER:CLIENT:… layout (openfsd and VATSIM-shaped $DI).
+	// Field(0)="$DISERVER", Field(1)="CLIENT" when the prefix is present.
+	if !bytes.HasPrefix(raw, []byte("$DISERVER:CLIENT:")) {
 		_ = c.rec.record(DirReceived, wire)
 		return ErrBadServerIdent
 	}
-
-	// Field layout: $DISERVER : CLIENT : version : key
-	// TypeOf/ParseServerIdent validate type + field count.
 	if protocol.TypeOf(raw) != protocol.PacketTypeServerIdent {
-		_ = c.rec.record(DirReceived, wire)
-		return ErrBadServerIdent
-	}
-	// Explicit SERVER / CLIENT field check (fields 0 and 1 after prefix strip).
-	// Field 0 is "$DISERVER", field 1 is "CLIENT".
-	from := protocol.Field(raw, 0)
-	to := protocol.Field(raw, 1)
-	if !bytes.Equal(from, []byte("$DISERVER")) || !bytes.Equal(to, []byte("CLIENT")) {
 		_ = c.rec.record(DirReceived, wire)
 		return ErrBadServerIdent
 	}

@@ -56,12 +56,19 @@ func (c *Client) SendAuthResponse(from, to, response string) error {
 	return c.Send(FormatAuthResponse(from, to, response))
 }
 
-// KnownAuthKeys are well-known VATSIM client software keys used only for
-// tests and local challenge helpers. Duplicated here so pkg/fsdclient does
-// not import fsd or internal/auth.
+// KnownAuthKeys are well-known VATSIM client software keys used for tests and
+// local challenge helpers. Duplicated byte-for-byte from fsd/vatsimauth.go so
+// pkg/fsdclient does not import fsd or internal/auth (package boundary).
+// Keep in sync when server keys change; dual-maintenance is intentional.
 var KnownAuthKeys = map[uint16]string{
-	35044: "fe28334fb753cf0e3d19942197b9ce3e", // vPilot
+	8464:  "945507c4c50222c34687e742729252e6", // vSTARS
+	10452: "0ad74157c7f449c216bfed04f3af9fb9", // vERAM
 	24515: "3424cbcebcca6fe95f973b350ff85cef", // vatSys
+	27095: "3518a62c421937ffa46ac3316957da43", // Euroscope
+	33456: "52d9343020e9c7d0c6b04b0cca20ad3b", // swift
+	35044: "fe28334fb753cf0e3d19942197b9ce3e", // vPilot
+	48312: "bc2eb1ef4d96709c683084055dd5e83f", // TWRTrainer
+	55538: "ImuL1WbbhVuD8d3MuKpWn2rrLZRa9iVP", // xPilot
 	56862: "3518a62c421937ffa46ac3316957da43", // VRC
 }
 
