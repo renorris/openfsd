@@ -8,45 +8,24 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/renorris/openfsd/internal/session"
 )
 
-// mockClient simulates a Client for capturing sent packets.
-type mockClient struct {
-	*Client
-	sentPackets []string
+// newMockSession creates a session with a buffered outbound channel for tests.
+func newMockSession(callsign string) *session.Session {
+	return session.New(context.Background(), nil, nil, session.LoginData{Callsign: callsign})
 }
 
-// newMockClient creates a mockClient with a valid sendChan and ctx.
-func newMockClient(callsign string) *mockClient {
-	ctx, cancel := context.WithCancel(context.Background())
-	client := &Client{
-		ctx:       ctx,
-		cancelCtx: cancel,
-		sendChan:  make(chan string, 32), // Buffered to prevent blocking
-		loginData: loginData{callsign: callsign},
-	}
-	return &mockClient{
-		Client:      client,
-		sentPackets: []string{},
-	}
-}
-
-// send overrides Client's send method to capture packets.
-func (c *mockClient) send(packet string) error {
-	c.sentPackets = append(c.sentPackets, packet)
-	return nil
-}
-
-// collectPackets drains the sendChan and returns all sent packets.
-func (c *mockClient) collectPackets() []string {
-	packets := append([]string{}, c.sentPackets...)
+// collectPackets drains the outbound send channel and returns all sent packets.
+func collectPackets(s *session.Session) []string {
+	var packets []string
 	for {
-		select {
-		case packet := <-c.sendChan:
-			packets = append(packets, packet)
-		default:
+		pkt, ok := s.DequeueOutbound()
+		if !ok {
 			return packets
 		}
+		packets = append(packets, pkt)
 	}
 }
 
@@ -126,14 +105,14 @@ func TestBuildMetarResponsePacket(t *testing.T) {
 
 // TestSendMetarServiceError verifies that sendMetarServiceError sends the correct error packet to the client.
 func TestSendMetarServiceError(t *testing.T) {
-	mockClient := newMockClient("TEST")
+	mock := newMockSession("TEST")
 	req := &metarRequest{
-		client:   mockClient.Client,
+		client:   mock,
 		icaoCode: "KJFK",
 	}
 	sendMetarServiceError(req)
 
-	packets := mockClient.collectPackets()
+	packets := collectPackets(mock)
 	expectedPacket := "$ERserver:unknown:9::Error fetching METAR for KJFK\r\n"
 	if len(packets) != 1 {
 		t.Errorf("expected 1 packet sent, got %d", len(packets))
@@ -155,15 +134,15 @@ func TestHandleMetarRequest_Success(t *testing.T) {
 		httpClient: &http.Client{Transport: mockTransport},
 	}
 
-	mockClient := newMockClient("TEST")
+	mock := newMockSession("TEST")
 	req := &metarRequest{
-		client:   mockClient.Client,
+		client:   mock,
 		icaoCode: "KJFK",
 	}
 
 	service.handleMetarRequest(req)
 
-	packets := mockClient.collectPackets()
+	packets := collectPackets(mock)
 	if len(packets) != 1 {
 		t.Errorf("expected 1 packet sent, got %d", len(packets))
 	}
@@ -185,15 +164,15 @@ func TestHandleMetarRequest_HTTPError(t *testing.T) {
 		httpClient: &http.Client{Transport: mockTransport},
 	}
 
-	mockClient := newMockClient("TEST")
+	mock := newMockSession("TEST")
 	req := &metarRequest{
-		client:   mockClient.Client,
+		client:   mock,
 		icaoCode: "INVALID",
 	}
 
 	service.handleMetarRequest(req)
 
-	packets := mockClient.collectPackets()
+	packets := collectPackets(mock)
 	expectedPacket := "$ERserver:unknown:9::Error fetching METAR for INVALID\r\n"
 	if len(packets) != 1 {
 		t.Errorf("expected 1 packet sent, got %d", len(packets))
@@ -210,15 +189,15 @@ func TestHandleMetarRequest_NetworkError(t *testing.T) {
 		httpClient: &http.Client{Transport: mockTransport},
 	}
 
-	mockClient := newMockClient("TEST")
+	mock := newMockSession("TEST")
 	req := &metarRequest{
-		client:   mockClient.Client,
+		client:   mock,
 		icaoCode: "KJFK",
 	}
 
 	service.handleMetarRequest(req)
 
-	packets := mockClient.collectPackets()
+	packets := collectPackets(mock)
 	expectedPacket := "$ERserver:unknown:9::Error fetching METAR for KJFK\r\n"
 	if len(packets) != 1 {
 		t.Errorf("expected 1 packet sent, got %d", len(packets))
@@ -240,15 +219,15 @@ func TestHandleMetarRequest_InvalidResponse(t *testing.T) {
 		httpClient: &http.Client{Transport: mockTransport},
 	}
 
-	mockClient := newMockClient("TEST")
+	mock := newMockSession("TEST")
 	req := &metarRequest{
-		client:   mockClient.Client,
+		client:   mock,
 		icaoCode: "KJFK",
 	}
 
 	service.handleMetarRequest(req)
 
-	packets := mockClient.collectPackets()
+	packets := collectPackets(mock)
 	expectedPacket := "$ERserver:unknown:9::Error fetching METAR for KJFK\r\n"
 	if len(packets) != 1 {
 		t.Errorf("expected 1 packet sent, got %d", len(packets))
@@ -270,15 +249,15 @@ func TestHandleMetarRequest_MoreThanTwoLines(t *testing.T) {
 		httpClient: &http.Client{Transport: mockTransport},
 	}
 
-	mockClient := newMockClient("TEST")
+	mock := newMockSession("TEST")
 	req := &metarRequest{
-		client:   mockClient.Client,
+		client:   mock,
 		icaoCode: "KJFK",
 	}
 
 	service.handleMetarRequest(req)
 
-	packets := mockClient.collectPackets()
+	packets := collectPackets(mock)
 	expectedPacket := "$ERserver:unknown:9::Error fetching METAR for KJFK\r\n"
 	if len(packets) != 1 {
 		t.Errorf("expected 1 packet sent, got %d", len(packets))

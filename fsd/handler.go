@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/renorris/openfsd/internal/session"
 )
 
 func (s *Server) getHandler(packetType PacketType) handlerFunc {
@@ -44,17 +46,17 @@ func (s *Server) getHandler(packetType PacketType) handlerFunc {
 	}
 }
 
-func (s *Server) emptyHandler(client *Client, packet []byte) {
+func (s *Server) emptyHandler(client *session.Session, packet []byte) {
 	slog.Error("empty handler called")
 	return
 }
 
-func (s *Server) handleTextMessage(client *Client, packet []byte) {
+func (s *Server) handleTextMessage(client *session.Session, packet []byte) {
 	recipient := getField(packet, 1)
 
 	// ATC chat
 	if string(recipient) == "@49999" {
-		if !client.isAtc {
+		if !client.IsAtc {
 			return
 		}
 		broadcastRangedAtcOnly(s.postOffice, client, packet)
@@ -75,7 +77,7 @@ func (s *Server) handleTextMessage(client *Client, packet []byte) {
 
 	// Server-wide broadcast message
 	if string(recipient) == "*" {
-		if client.networkRating < NetworkRatingSupervisor {
+		if client.NetworkRating < NetworkRatingSupervisor {
 			return
 		}
 		broadcastAll(s.postOffice, client, packet)
@@ -96,31 +98,31 @@ func (s *Server) handleTextMessage(client *Client, packet []byte) {
 	sendDirectOrErr(s.postOffice, client, recipient, packet)
 }
 
-func (s *Server) handleATCPosition(client *Client, packet []byte) {
+func (s *Server) handleATCPosition(client *session.Session, packet []byte) {
 	// Verify and set facility type
 	facilityType, err := strconv.ParseInt(string(getField(packet, 2)), 10, 32)
 	if err != nil {
-		client.sendError(SyntaxError, "Invalid facility type")
+		client.SendError(SyntaxError, "Invalid facility type")
 		return
 	}
 
-	if !isAllowedFacilityType(client.networkRating, int(facilityType)) {
-		client.sendError(InvalidPositionForRatingError, "Invalid position for rating")
-		client.cancelCtx()
+	if !isAllowedFacilityType(client.NetworkRating, int(facilityType)) {
+		client.SendError(InvalidPositionForRatingError, "Invalid position for rating")
+		client.Cancel()
 		return
 	}
 
-	client.facilityType = int(facilityType)
+	client.FacilityType = int(facilityType)
 
 	// Extract location and visibility range
 	lat, lon, ok := parseLatLon(packet, 5, 6)
 	if !ok {
-		client.sendError(SyntaxError, "Invalid latitude/longitude")
+		client.SendError(SyntaxError, "Invalid latitude/longitude")
 		return
 	}
 	visRange, ok := parseVisRange(packet, 3)
 	if !ok {
-		client.sendError(SyntaxError, "Invalid visibility range")
+		client.SendError(SyntaxError, "Invalid visibility range")
 		return
 	}
 
@@ -130,14 +132,14 @@ func (s *Server) handleATCPosition(client *Client, packet []byte) {
 	// Broadcast position update
 	broadcastRanged(s.postOffice, client, packet)
 
-	client.lastUpdated.Store(time.Now())
+	client.LastUpdated.Store(time.Now())
 }
 
 // handlePilotPosition handles logic for 0.2hz `@` pilot position updates
-func (s *Server) handlePilotPosition(client *Client, packet []byte) {
+func (s *Server) handlePilotPosition(client *session.Session, packet []byte) {
 	lat, lon, ok := parseLatLon(packet, 4, 5)
 	if !ok {
-		client.sendError(SyntaxError, "Invalid latitude/longitude")
+		client.SendError(SyntaxError, "Invalid latitude/longitude")
 		return
 	}
 
@@ -150,30 +152,30 @@ func (s *Server) handlePilotPosition(client *Client, packet []byte) {
 	broadcastRanged(s.postOffice, client, packet)
 
 	// Update state
-	client.transponder.Store(string(getField(packet, 2)))
+	client.Transponder.Store(string(getField(packet, 2)))
 
 	groundspeed, _ := strconv.Atoi(string(getField(packet, 7)))
-	client.groundspeed.Store(int32(groundspeed))
+	client.Groundspeed.Store(int32(groundspeed))
 
 	altitude, _ := strconv.Atoi(string(getField(packet, 6)))
-	client.altitude.Store(int32(altitude))
+	client.Altitude.Store(int32(altitude))
 
 	pbhUint, _ := strconv.ParseUint(string(getField(packet, 8)), 10, 32)
 	_, _, heading := pitchBankHeading(uint32(pbhUint))
-	client.heading.Store(int32(heading))
+	client.Heading.Store(int32(heading))
 
-	client.lastUpdated.Store(time.Now())
+	client.LastUpdated.Store(time.Now())
 
 	// Check if we need to update the sendfast state
-	if client.protoRevision == 101 {
-		if client.sendFastEnabled {
-			if (client.closestVelocityClientDistance / 1852.0) > 5.0 { // 5.0 nautical miles
-				client.sendFastEnabled = false
+	if client.ProtoRevision == 101 {
+		if client.SendFastEnabled {
+			if (client.ClosestVelocityClientDistance / 1852.0) > 5.0 { // 5.0 nautical miles
+				client.SendFastEnabled = false
 				sendDisableSendFastPacket(client)
 			}
 		} else {
-			if (client.closestVelocityClientDistance / 1852.0) < 5.0 { // 5.0 nautical miles
-				client.sendFastEnabled = true
+			if (client.ClosestVelocityClientDistance / 1852.0) < 5.0 { // 5.0 nautical miles
+				client.SendFastEnabled = true
 				sendEnableSendFastPacket(client)
 			}
 		}
@@ -181,37 +183,37 @@ func (s *Server) handlePilotPosition(client *Client, packet []byte) {
 }
 
 // handleFastPilotPosition handles logic for fast `^`, stopped `#ST`, and slow `#SL` pilot position updates
-func (s *Server) handleFastPilotPosition(client *Client, packet []byte) {
+func (s *Server) handleFastPilotPosition(client *session.Session, packet []byte) {
 	// Broadcast position update
 	broadcastRangedVelocity(s.postOffice, client, packet)
 }
 
 // handleDelete handles logic for Delete ATC `#DA` and Delete Pilot `#DP` packets
-func (s *Server) handleDelete(client *Client, packet []byte) {
+func (s *Server) handleDelete(client *session.Session, packet []byte) {
 	// Broadcast delete packet
 	broadcastAll(s.postOffice, client, packet)
 
 	// Cancel context. Writer worker will close the connection
-	client.cancelCtx()
+	client.Cancel()
 }
 
 // handleSquawkbox handles logic for Squawkbox `#SB` packets
-func (s *Server) handleSquawkbox(client *Client, packet []byte) {
+func (s *Server) handleSquawkbox(client *session.Session, packet []byte) {
 	// Forward packet to recipient
 	recipient := getField(packet, 1)
 	sendDirectOrErr(s.postOffice, client, recipient, packet)
 }
 
 // handleProcontroller handles logic for Pro Controller `#PC` packets
-func (s *Server) handleProcontroller(client *Client, packet []byte) {
+func (s *Server) handleProcontroller(client *session.Session, packet []byte) {
 	// ATC-only packet
-	if !client.isAtc {
+	if !client.IsAtc {
 		return
 	}
 
 	recipient := getField(packet, 1)
 	if len(recipient) < 2 {
-		client.sendError(SyntaxError, "Invalid recipient")
+		client.SendError(SyntaxError, "Invalid recipient")
 		return
 	}
 	pcType := getField(packet, 3)
@@ -244,8 +246,8 @@ func (s *Server) handleProcontroller(client *Client, packet []byte) {
 		"ST": // Set flight strip
 
 		// Only active ATC above OBS
-		if client.facilityType <= 0 {
-			client.sendError(InvalidControlError, "Invalid control")
+		if client.FacilityType <= 0 {
+			client.SendError(InvalidControlError, "Invalid control")
 			return
 		}
 		if recipient[0] == '@' {
@@ -256,7 +258,7 @@ func (s *Server) handleProcontroller(client *Client, packet []byte) {
 	}
 }
 
-func (s *Server) handleClientQuery(client *Client, packet []byte) {
+func (s *Server) handleClientQuery(client *session.Session, packet []byte) {
 	recipient := getField(packet, 1)
 	queryType := getField(packet, 2)
 
@@ -286,8 +288,8 @@ func (s *Server) handleClientQuery(client *Client, packet []byte) {
 		"NEWINFO": // Broadcast new ATIS info
 
 		// ATC only
-		if !client.isAtc {
-			client.sendError(InvalidControlError, "Invalid control")
+		if !client.IsAtc {
+			client.SendError(InvalidControlError, "Invalid control")
 			return
 		}
 		forwardClientQuery(s.postOffice, client, packet)
@@ -307,8 +309,8 @@ func (s *Server) handleClientQuery(client *Client, packet []byte) {
 		"IPC": // Force squawk code change
 
 		// ATC above OBS facility only
-		if !client.isAtc || client.facilityType <= 0 {
-			client.sendError(InvalidControlError, "Invalid control")
+		if !client.IsAtc || client.FacilityType <= 0 {
+			client.SendError(InvalidControlError, "Invalid control")
 			return
 		}
 		forwardClientQuery(s.postOffice, client, packet)
@@ -326,81 +328,81 @@ func (s *Server) handleClientQuery(client *Client, packet []byte) {
 		}
 
 		// Require >= SUP for interrogations
-		if client.networkRating < NetworkRatingSupervisor {
-			client.sendError(InvalidControlError, "Invalid control")
+		if client.NetworkRating < NetworkRatingSupervisor {
+			client.SendError(InvalidControlError, "Invalid control")
 			return
 		}
 		forwardClientQuery(s.postOffice, client, packet)
 	}
 }
 
-func (s *Server) handleClientQueryATCRequest(client *Client, packet []byte) {
+func (s *Server) handleClientQueryATCRequest(client *session.Session, packet []byte) {
 	if countFields(packet) != 4 {
-		client.sendError(SyntaxError, "Invalid ATC request")
+		client.SendError(SyntaxError, "Invalid ATC request")
 		return
 	}
 
 	targetCallsign := getField(packet, 3)
 	targetClient, err := s.postOffice.find(string(targetCallsign))
 	if err != nil {
-		client.sendError(NoSuchCallsignError, "No such callsign")
+		client.SendError(NoSuchCallsignError, "No such callsign")
 		return
 	}
 
 	var p string
-	if targetClient.facilityType > 0 {
-		p = fmt.Sprintf("$CRSERVER:%s:ATC:Y:%s\r\n", client.callsign, targetCallsign)
+	if targetClient.FacilityType > 0 {
+		p = fmt.Sprintf("$CRSERVER:%s:ATC:Y:%s\r\n", client.Callsign, targetCallsign)
 	} else {
-		p = fmt.Sprintf("$CRSERVER:%s:ATC:N:%s\r\n", client.callsign, targetCallsign)
+		p = fmt.Sprintf("$CRSERVER:%s:ATC:N:%s\r\n", client.Callsign, targetCallsign)
 	}
-	client.send(p)
+	client.Send(p)
 }
 
-func (s *Server) handleClientQueryIPRequest(client *Client, packet []byte) {
-	ip := strings.SplitN(client.conn.RemoteAddr().String(), ":", 2)[0]
-	p := fmt.Sprintf("$CRSERVER:%s:IP:%s\r\n", client.callsign, ip)
-	client.send(p)
+func (s *Server) handleClientQueryIPRequest(client *session.Session, packet []byte) {
+	ip := strings.SplitN(client.Conn.RemoteAddr().String(), ":", 2)[0]
+	p := fmt.Sprintf("$CRSERVER:%s:IP:%s\r\n", client.Callsign, ip)
+	client.Send(p)
 }
 
-func (s *Server) handleClientQueryFlightplanRequest(client *Client, packet []byte) {
-	if !client.isAtc {
+func (s *Server) handleClientQueryFlightplanRequest(client *session.Session, packet []byte) {
+	if !client.IsAtc {
 		return
 	}
 
 	if countFields(packet) != 4 {
-		client.sendError(SyntaxError, "Invalid flightplan request syntax")
+		client.SendError(SyntaxError, "Invalid flightplan request syntax")
 		return
 	}
 
 	targetCallsign := string(getField(packet, 3))
 	targetClient, err := s.postOffice.find(targetCallsign)
 	if err != nil {
-		client.sendError(NoSuchCallsignError, "No such callsign: "+targetCallsign)
+		client.SendError(NoSuchCallsignError, "No such callsign: "+targetCallsign)
 		return
 	}
 
-	fplInfo := targetClient.flightPlan.Load()
+	fplInfo := targetClient.FlightPlan.Load()
 	if fplInfo == "" {
 		return
 	}
 
-	beaconCode := targetClient.assignedBeaconCode.Load()
+	beaconCode := targetClient.AssignedBeaconCode.Load()
 	if beaconCode == "" {
 		beaconCode = "0"
 	}
 
 	// Send flightplan packet
 	fplPacket := buildFileFlightplanPacket(targetCallsign, "*A", fplInfo)
-	client.send(fplPacket)
+	client.Send(fplPacket)
 
 	// Send assigned beacon code
-	bcPacket := buildBeaconCodePacket("server", client.callsign, targetCallsign, beaconCode)
-	client.send(bcPacket)
+	bcPacket := buildBeaconCodePacket("server", client.Callsign, targetCallsign, beaconCode)
+	client.Send(bcPacket)
 
 	// TODO: research any other data that should be sent here
 }
 
-func (s *Server) handleMetarRequest(client *Client, packet []byte) {
+func (s *Server) handleMetarRequest(client *session.Session, packet []byte) {
 	recipient := getField(packet, 1)
 	staticField := getField(packet, 2)
 	icaoCode := getField(packet, 3)
@@ -409,11 +411,11 @@ func (s *Server) handleMetarRequest(client *Client, packet []byte) {
 		return
 	}
 
-	s.metarService.fetchAndSendMetar(client.ctx, client, string(icaoCode))
+	s.metarService.fetchAndSendMetar(client.Ctx, client, string(icaoCode))
 }
 
-func (s *Server) handleKillRequest(client *Client, packet []byte) {
-	if client.networkRating < NetworkRatingSupervisor {
+func (s *Server) handleKillRequest(client *session.Session, packet []byte) {
+	if client.NetworkRating < NetworkRatingSupervisor {
 		return
 	}
 
@@ -421,37 +423,37 @@ func (s *Server) handleKillRequest(client *Client, packet []byte) {
 	recipient := getField(packet, 1)
 	victim, err := s.postOffice.find(string(recipient))
 	if err != nil {
-		client.sendError(NoSuchCallsignError, "No such callsign")
+		client.SendError(NoSuchCallsignError, "No such callsign")
 		return
 	}
 
 	// Closing the context of the victim client will eventually cause it to disconnect
-	victim.cancelCtx()
+	victim.Cancel()
 }
 
-func (s *Server) handleAuthChallenge(client *Client, packet []byte) {
-	if client.clientChallenge == "" {
-		client.sendError(UnauthorizedSoftwareError, "Cannot reply to auth challenge since no initial challenge was recieved")
+func (s *Server) handleAuthChallenge(client *session.Session, packet []byte) {
+	if client.ClientChallenge == "" {
+		client.SendError(UnauthorizedSoftwareError, "Cannot reply to auth challenge since no initial challenge was recieved")
 		return
 	}
 
 	challenge := getField(packet, 2)
-	resp := client.authState.GetResponseForChallenge(challenge)
-	client.authState.UpdateState(&resp)
+	resp := client.Auth.GetResponseForChallenge(challenge)
+	client.Auth.UpdateState(&resp)
 
 	respPacket := strings.Builder{}
 	respPacket.WriteString("$ZRSERVER:")
-	respPacket.WriteString(client.callsign)
+	respPacket.WriteString(client.Callsign)
 	respPacket.WriteByte(':')
 	respPacket.Write(resp[:])
 	respPacket.WriteString("\r\n")
 
-	client.send(respPacket.String())
+	client.Send(respPacket.String())
 }
 
-func (s *Server) handleHandoff(client *Client, packet []byte) {
+func (s *Server) handleHandoff(client *session.Session, packet []byte) {
 	// Active >OBS ATC only
-	if !client.isAtc || client.facilityType <= 1 {
+	if !client.IsAtc || client.FacilityType <= 1 {
 		return
 	}
 
@@ -459,16 +461,16 @@ func (s *Server) handleHandoff(client *Client, packet []byte) {
 	sendDirectOrErr(s.postOffice, client, recipient, packet)
 }
 
-func (s *Server) handleFileFlightplan(client *Client, packet []byte) {
+func (s *Server) handleFileFlightplan(client *session.Session, packet []byte) {
 	fplInfo := extractFlightplanInfoSection(packet)
-	client.flightPlan.Store(fplInfo)
+	client.FlightPlan.Store(fplInfo)
 
-	broadcastPacket := buildFileFlightplanPacket(client.callsign, "*A", fplInfo)
+	broadcastPacket := buildFileFlightplanPacket(client.Callsign, "*A", fplInfo)
 	broadcastAllATC(s.postOffice, client, []byte(broadcastPacket))
 }
 
-func (s *Server) handleAmendFlightplan(client *Client, packet []byte) {
-	if !client.isAtc || client.facilityType <= 0 {
+func (s *Server) handleAmendFlightplan(client *session.Session, packet []byte) {
+	if !client.IsAtc || client.FacilityType <= 0 {
 		return
 	}
 
@@ -477,11 +479,11 @@ func (s *Server) handleAmendFlightplan(client *Client, packet []byte) {
 	targetCallsign := string(getField(packet, 2))
 	targetClient, err := s.postOffice.find(targetCallsign)
 	if err != nil {
-		client.sendError(NoSuchCallsignError, "No such callsign: "+targetCallsign)
+		client.SendError(NoSuchCallsignError, "No such callsign: "+targetCallsign)
 		return
 	}
-	targetClient.flightPlan.Store(fplInfo)
+	targetClient.FlightPlan.Store(fplInfo)
 
-	broadcastPacket := buildAmendFlightplanPacket(client.callsign, "*A", targetCallsign, fplInfo)
+	broadcastPacket := buildAmendFlightplanPacket(client.Callsign, "*A", targetCallsign, fplInfo)
 	broadcastAllATC(s.postOffice, client, []byte(broadcastPacket))
 }

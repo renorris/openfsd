@@ -3,10 +3,12 @@ package fsd
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
+
+	"github.com/renorris/openfsd/internal/session"
 )
 
 type metarService struct {
@@ -16,7 +18,7 @@ type metarService struct {
 }
 
 type metarRequest struct {
-	client   *Client
+	client   *session.Session
 	icaoCode string
 }
 
@@ -67,7 +69,7 @@ func (s *metarService) handleMetarRequest(req *metarRequest) {
 	resBody := buf.Bytes()
 
 	if bytes.Count(resBody, []byte("\n")) != 2 {
-		fmt.Println("NOAA METAR response was invalid")
+		slog.Debug("NOAA METAR response was invalid")
 		sendMetarServiceError(req)
 		return
 	}
@@ -78,8 +80,8 @@ func (s *metarService) handleMetarRequest(req *metarRequest) {
 	// Second line is METAR and ends with \n
 	resBody = resBody[:bytes.IndexByte(resBody, '\n')+1]
 
-	packet := buildMetarResponsePacket(req.client.callsign, resBody)
-	req.client.send(packet)
+	packet := buildMetarResponsePacket(req.client.Callsign, resBody)
+	req.client.Send(packet)
 }
 
 func buildMetarResponsePacket(callsign string, metar []byte) string {
@@ -101,7 +103,7 @@ func buildMetarRequestURL(icaoCode string) string {
 }
 
 func sendMetarServiceError(req *metarRequest) {
-	req.client.sendError(NoWeatherProfileError, metarServiceErrString(req.icaoCode))
+	req.client.SendError(NoWeatherProfileError, metarServiceErrString(req.icaoCode))
 }
 
 func metarServiceErrString(icaoCode string) string {
@@ -114,7 +116,7 @@ func metarServiceErrString(icaoCode string) string {
 
 // fetchAndSendMetar fetches a METAR observation for a given ICAO code and sends it to the client once received.
 // This function returns immediately once the request has been queued.
-func (s *metarService) fetchAndSendMetar(ctx context.Context, client *Client, icaoCode string) {
+func (s *metarService) fetchAndSendMetar(ctx context.Context, client *session.Session, icaoCode string) {
 	select {
 	case <-ctx.Done():
 	case s.metarRequests <- metarRequest{client: client, icaoCode: icaoCode}:

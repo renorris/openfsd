@@ -12,7 +12,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/renorris/openfsd/db"
-	"github.com/renorris/openfsd/internal/auth"
+"github.com/renorris/openfsd/internal/auth"
+	"github.com/renorris/openfsd/internal/session"
 )
 
 // runServiceHTTP starts the admin service HTTP server used for
@@ -101,7 +102,7 @@ func (s *Server) handleGetOnlineUsers(c *gin.Context) {
 	mapLen := len(s.postOffice.clientMap)
 	s.postOffice.clientMapLock.RUnlock()
 
-	clientMap := make(map[string]*Client, mapLen+16)
+	clientMap := make(map[string]*session.Session, mapLen+16)
 
 	s.postOffice.clientMapLock.RLock()
 	maps.Copy(clientMap, s.postOffice.clientMap)
@@ -113,34 +114,34 @@ func (s *Server) handleGetOnlineUsers(c *gin.Context) {
 	}
 
 	for _, client := range clientMap {
-		latLon := client.latLon()
+		latLon := client.LatLon()
 		genData := OnlineUserGeneralData{
-			Callsign:         client.callsign,
-			CID:              client.cid,
-			Name:             client.realName,
-			NetworkRating:    int(client.networkRating),
-			MaxNetworkRating: int(client.maxNetworkRating),
+			Callsign:         client.Callsign,
+			CID:              client.CID,
+			Name:             client.RealName,
+			NetworkRating:    int(client.NetworkRating),
+			MaxNetworkRating: int(client.MaxNetworkRating),
 			Latitude:         latLon[0],
 			Longitude:        latLon[1],
-			LogonTime:        client.loginTime,
-			LastUpdated:      client.lastUpdated.Load(),
+			LogonTime:        client.LoginTime,
+			LastUpdated:      client.LastUpdated.Load(),
 		}
 
-		if client.isAtc {
+		if client.IsAtc {
 			atc := OnlineUserATC{
 				OnlineUserGeneralData: genData,
-				Frequency:             client.frequency.Load(),
-				Facility:              client.facilityType,
-				VisRange:              int(client.visRange.Load() * 0.000539957), // Convert meters to nautical miles
+				Frequency:             client.Frequency.Load(),
+				Facility:              client.FacilityType,
+				VisRange:              int(client.VisRange.Load() * 0.000539957), // Convert meters to nautical miles
 			}
 			resData.ATC = append(resData.ATC, atc)
 		} else {
 			pilot := OnlineUserPilot{
 				OnlineUserGeneralData: genData,
-				Altitude:              int(client.altitude.Load()),
-				Groundspeed:           int(client.groundspeed.Load()),
-				Heading:               int(client.heading.Load()),
-				Transponder:           client.transponder.Load(),
+				Altitude:              int(client.Altitude.Load()),
+				Groundspeed:           int(client.Groundspeed.Load()),
+				Heading:               int(client.Heading.Load()),
+				Transponder:           client.Transponder.Load(),
 			}
 			resData.Pilots = append(resData.Pilots, pilot)
 		}
@@ -172,7 +173,7 @@ func (s *Server) handleKickUser(c *gin.Context) {
 	}
 
 	// Cancelling the context will cause the client's event loop to close
-	client.cancelCtx()
+	client.Cancel()
 
 	c.AbortWithStatus(http.StatusNoContent)
 }

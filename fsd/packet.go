@@ -1,6 +1,7 @@
 package fsd
 
 import (
+	"github.com/renorris/openfsd/internal/session"
 	"github.com/renorris/openfsd/pkg/protocol"
 )
 
@@ -55,7 +56,7 @@ func minFields(packetType PacketType) int {
 	return protocol.MinFields(packetType)
 }
 
-type handlerFunc func(client *Client, packet []byte)
+type handlerFunc func(client *session.Session, packet []byte)
 
 func getSourceCallsign(packet []byte, packetType PacketType) []byte {
 	return protocol.SourceCallsign(packet, packetType)
@@ -66,26 +67,26 @@ func verifySourceCallsign(packet []byte, packetType PacketType, callsign string)
 }
 
 // verifyPacket runs a set of sanity checks against a packet sent by a client and returns the detected packet type
-func verifyPacket(packet []byte, client *Client) (packetType PacketType, ok bool) {
+func verifyPacket(packet []byte, client *session.Session) (packetType PacketType, ok bool) {
 	numFields := countFields(packet)
 	if len(packet) < 8 || numFields < 3 {
-		client.sendError(SyntaxError, "Packet too short")
+		client.SendError(SyntaxError, "Packet too short")
 		return
 	}
 
 	packetType = getPacketType(packet)
 	if packetType == PacketTypeUnknown {
-		client.sendError(SyntaxError, "Unknown packet type")
+		client.SendError(SyntaxError, "Unknown packet type")
 		return
 	}
 
-	if !verifySourceCallsign(packet, packetType, client.callsign) {
-		client.sendError(SourceInvalidError, "Source invalid")
+	if !verifySourceCallsign(packet, packetType, client.Callsign) {
+		client.SendError(SourceInvalidError, "Source invalid")
 		return
 	}
 
 	if numFields < minFields(packetType) {
-		client.sendError(SyntaxError, "Minimum field count requirement not satisfied")
+		client.SendError(SyntaxError, "Minimum field count requirement not satisfied")
 		return
 	}
 

@@ -11,13 +11,14 @@ import (
 	"testing"
 
 	"github.com/renorris/openfsd/internal/geo"
+	"github.com/renorris/openfsd/internal/session"
 )
 
-func newTestClient(callsign string, lat, lon, visRange float64) *Client {
-	c := &Client{loginData: loginData{callsign: callsign}}
-	c.setLatLon(lat, lon)
-	c.visRange.Store(visRange)
-	return c
+func newTestClient(callsign string, lat, lon, visRange float64) *session.Session {
+	s := session.New(context.Background(), nil, nil, session.LoginData{Callsign: callsign})
+	s.SetLatLon(lat, lon)
+	s.VisRange.Store(visRange)
+	return s
 }
 
 // TestRegister tests the registration of clients with unique and duplicate callsigns.
@@ -53,8 +54,8 @@ func TestRelease(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var found []*Client
-	p.search(client2, func(recipient *Client) bool {
+	var found []*session.Session
+	p.search(client2, func(recipient *session.Session) bool {
 		found = append(found, recipient)
 		return true
 	})
@@ -68,7 +69,7 @@ func TestRelease(t *testing.T) {
 	}
 
 	found = nil
-	p.search(client2, func(recipient *Client) bool {
+	p.search(client2, func(recipient *session.Session) bool {
 		found = append(found, recipient)
 		return true
 	})
@@ -89,8 +90,8 @@ func TestUpdatePosition(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var found []*Client
-	p.search(client1, func(recipient *Client) bool {
+	var found []*session.Session
+	p.search(client1, func(recipient *session.Session) bool {
 		found = append(found, recipient)
 		return true
 	})
@@ -101,7 +102,7 @@ func TestUpdatePosition(t *testing.T) {
 	p.updatePosition(client2, [2]float64{100.0, 100.0}, 100000)
 
 	found = nil
-	p.search(client1, func(recipient *Client) bool {
+	p.search(client1, func(recipient *session.Session) bool {
 		found = append(found, recipient)
 		return true
 	})
@@ -126,17 +127,17 @@ func TestUpdatePosition_NoopKeepsIndexed(t *testing.T) {
 
 	// Same center and range → identical bbox → early return (no tree rewrite).
 	p.updatePosition(client1, [2]float64{10, 20}, 50000)
-	latLon := client1.latLon()
+	latLon := client1.LatLon()
 	if latLon[0] != 10 || latLon[1] != 20 {
 		t.Fatalf("latLon after noop update = %v", latLon)
 	}
-	if client1.visRange.Load() != 50000 {
-		t.Fatalf("visRange after noop update = %v", client1.visRange.Load())
+	if client1.VisRange.Load() != 50000 {
+		t.Fatalf("visRange after noop update = %v", client1.VisRange.Load())
 	}
 
 	// Peer must still find client1, proving the tree entry remains valid.
-	var found []*Client
-	p.search(peer, func(recipient *Client) bool {
+	var found []*session.Session
+	p.search(peer, func(recipient *session.Session) bool {
 		found = append(found, recipient)
 		return true
 	})
@@ -161,26 +162,26 @@ func TestSearch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var found []*Client
-	p.search(client1, func(recipient *Client) bool {
+	var found []*session.Session
+	p.search(client1, func(recipient *session.Session) bool {
 		found = append(found, recipient)
 		return true
 	})
-	if len(found) != 1 || found[0].callsign != "client2" {
+	if len(found) != 1 || found[0].Callsign != "client2" {
 		t.Errorf("expected to find client2, got %v", found)
 	}
 
 	found = nil
-	p.search(client2, func(recipient *Client) bool {
+	p.search(client2, func(recipient *session.Session) bool {
 		found = append(found, recipient)
 		return true
 	})
-	if len(found) != 1 || found[0].callsign != "client1" {
+	if len(found) != 1 || found[0].Callsign != "client1" {
 		t.Errorf("expected to find client1, got %v", found)
 	}
 
 	found = nil
-	p.search(client3, func(recipient *Client) bool {
+	p.search(client3, func(recipient *session.Session) bool {
 		found = append(found, recipient)
 		return true
 	})
@@ -194,13 +195,13 @@ func TestSearch(t *testing.T) {
 	}
 
 	found = nil
-	p.search(client1, func(recipient *Client) bool {
+	p.search(client1, func(recipient *session.Session) bool {
 		found = append(found, recipient)
 		return true
 	})
 	foundCallsigns := make([]string, len(found))
 	for i, c := range found {
-		foundCallsigns[i] = c.callsign
+		foundCallsigns[i] = c.Callsign
 	}
 	sort.Strings(foundCallsigns)
 	expected := []string{"client2", "client4"}
@@ -217,33 +218,33 @@ func TestSearch(t *testing.T) {
 }
 
 // TestSearch_ClosestVelocityDistance ensures proto-101 pilot pairs update
-// closestVelocityClientDistance via geo.Distance.
+// ClosestVelocityClientDistance via geo.Distance.
 func TestSearch_ClosestVelocityDistance(t *testing.T) {
 	p := newPostOffice()
 	client1 := newTestClient("v1", 0, 0, 500000)
-	client1.protoRevision = 101
-	client1.isAtc = false
+	client1.ProtoRevision = 101
+	client1.IsAtc = false
 	if err := p.register(client1); err != nil {
 		t.Fatal(err)
 	}
 	client2 := newTestClient("v2", 0.1, 0, 500000)
-	client2.protoRevision = 101
-	client2.isAtc = false
+	client2.ProtoRevision = 101
+	client2.IsAtc = false
 	if err := p.register(client2); err != nil {
 		t.Fatal(err)
 	}
 	// Non-101 neighbor should not affect closest velocity distance.
 	client3 := newTestClient("old", 0.05, 0, 500000)
-	client3.protoRevision = 100
+	client3.ProtoRevision = 100
 	if err := p.register(client3); err != nil {
 		t.Fatal(err)
 	}
 
-	p.search(client1, func(recipient *Client) bool { return true })
+	p.search(client1, func(recipient *session.Session) bool { return true })
 
 	want := geo.Distance(0, 0, 0.1, 0)
-	if !approxEqual(client1.closestVelocityClientDistance, want) {
-		t.Fatalf("closestVelocityClientDistance = %v, want %v", client1.closestVelocityClientDistance, want)
+	if !approxEqual(client1.ClosestVelocityClientDistance, want) {
+		t.Fatalf("ClosestVelocityClientDistance = %v, want %v", client1.ClosestVelocityClientDistance, want)
 	}
 }
 
@@ -272,15 +273,15 @@ func TestAll(t *testing.T) {
 	self := newTestClient("self", 0, 0, 1000)
 	a := newTestClient("a", 0, 0, 1000)
 	b := newTestClient("b", 0, 0, 1000)
-	for _, c := range []*Client{self, a, b} {
+	for _, c := range []*session.Session{self, a, b} {
 		if err := p.register(c); err != nil {
 			t.Fatal(err)
 		}
 	}
 
 	var seen []string
-	p.all(self, func(recipient *Client) bool {
-		seen = append(seen, recipient.callsign)
+	p.all(self, func(recipient *session.Session) bool {
+		seen = append(seen, recipient.Callsign)
 		return true
 	})
 	sort.Strings(seen)
@@ -290,7 +291,7 @@ func TestAll(t *testing.T) {
 
 	// Early stop: callback returns false.
 	count := 0
-	p.all(self, func(recipient *Client) bool {
+	p.all(self, func(recipient *session.Session) bool {
 		count++
 		return false
 	})
@@ -305,9 +306,9 @@ func TestSend(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	client := newTestClient("RECV", 0, 0, 1000)
-	client.ctx = ctx
-	client.sendChan = make(chan string, 1)
+	client := session.New(ctx, nil, nil, session.LoginData{Callsign: "RECV"})
+	client.SetLatLon(0, 0)
+	client.VisRange.Store(1000)
 	if err := p.register(client); err != nil {
 		t.Fatal(err)
 	}
@@ -315,13 +316,12 @@ func TestSend(t *testing.T) {
 	if err := p.send("RECV", "hello\r\n"); err != nil {
 		t.Fatalf("send existing: %v", err)
 	}
-	select {
-	case pkt := <-client.sendChan:
-		if pkt != "hello\r\n" {
-			t.Fatalf("packet = %q, want hello\\r\\n", pkt)
-		}
-	default:
+	pkt, ok := client.DequeueOutbound()
+	if !ok {
 		t.Fatal("expected packet on sendChan")
+	}
+	if pkt != "hello\r\n" {
+		t.Fatalf("packet = %q, want hello\\r\\n", pkt)
 	}
 
 	if err := p.send("NOPE", "x"); err != ErrCallsignDoesNotExist {
@@ -339,7 +339,7 @@ func approxEqual(a, b float64) bool {
 func TestPostOfficeConcurrent(t *testing.T) {
 	p := newPostOffice()
 	const n = 64
-	clients := make([]*Client, n)
+	clients := make([]*session.Session, n)
 	for i := 0; i < n; i++ {
 		clients[i] = newTestClient(fmt.Sprintf("C%d", i), float64(i%10), float64(i%20), 200000)
 	}
@@ -348,10 +348,10 @@ func TestPostOfficeConcurrent(t *testing.T) {
 	// Register all.
 	for i := 0; i < n; i++ {
 		wg.Add(1)
-		go func(c *Client) {
+		go func(c *session.Session) {
 			defer wg.Done()
 			if err := p.register(c); err != nil {
-				t.Errorf("register %s: %v", c.callsign, err)
+				t.Errorf("register %s: %v", c.Callsign, err)
 			}
 		}(clients[i])
 	}
@@ -360,12 +360,12 @@ func TestPostOfficeConcurrent(t *testing.T) {
 	// Concurrent search + updatePosition.
 	for i := 0; i < n; i++ {
 		wg.Add(1)
-		go func(c *Client) {
+		go func(c *session.Session) {
 			defer wg.Done()
-			p.search(c, func(recipient *Client) bool { return true })
-			ll := c.latLon()
+			p.search(c, func(recipient *session.Session) bool { return true })
+			ll := c.LatLon()
 			p.updatePosition(c, [2]float64{ll[0] + 0.01, ll[1] - 0.01}, 150000)
-			p.search(c, func(recipient *Client) bool { return true })
+			p.search(c, func(recipient *session.Session) bool { return true })
 		}(clients[i])
 	}
 	wg.Wait()
@@ -373,7 +373,7 @@ func TestPostOfficeConcurrent(t *testing.T) {
 	// Concurrent release.
 	for i := 0; i < n; i++ {
 		wg.Add(1)
-		go func(c *Client) {
+		go func(c *session.Session) {
 			defer wg.Done()
 			p.release(c)
 		}(clients[i])
@@ -388,7 +388,7 @@ func TestPostOfficeConcurrent(t *testing.T) {
 // BenchmarkRegister measures client registration cost.
 func BenchmarkRegister(b *testing.B) {
 	r := rand.New(rand.NewSource(42))
-	clients := make([]*Client, b.N)
+	clients := make([]*session.Session, b.N)
 	for i := 0; i < b.N; i++ {
 		clients[i] = newTestClient(
 			fmt.Sprintf("C%d", i),
@@ -413,7 +413,7 @@ func benchmarkSearchWithN(b *testing.B, n int) {
 	p := newPostOffice()
 	r := rand.New(rand.NewSource(42))
 
-	clients := make([]*Client, n)
+	clients := make([]*session.Session, n)
 	for i := 0; i < n; i++ {
 		clients[i] = newTestClient(
 			fmt.Sprintf("Client%d", i),
@@ -426,7 +426,7 @@ func benchmarkSearchWithN(b *testing.B, n int) {
 		}
 	}
 
-	callback := func(recipient *Client) bool {
+	callback := func(recipient *session.Session) bool {
 		return true
 	}
 

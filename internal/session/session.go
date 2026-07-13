@@ -1,0 +1,188 @@
+// Package session owns a connected FSD participant after login.
+//
+// This package must not import postoffice, the fsd server package, or any
+// higher-level orchestration — fsd depends on session, not the reverse.
+package session
+
+import (
+	"bufio"
+	"context"
+	"net"
+	"time"
+
+	"github.com/renorris/openfsd/pkg/protocol"
+	"go.uber.org/atomic"
+)
+
+// Sender is anything that can enqueue outbound FSD text.
+type Sender interface {
+	Send(packet string) error
+}
+
+// Auth is the optional VATSIM client-auth challenge state for a session.
+// Implemented by fsd's vatsimAuthState (auth remains in fsd until PR4).
+type Auth interface {
+	Initialize(clientID uint16, initialChallenge []byte) error
+	IsInitialized() bool
+	GetResponseForChallenge(challenge []byte) [32]byte
+	UpdateState(d *[32]byte)
+}
+
+// LoginData holds the data extracted from the client's login packets.
+type LoginData struct {
+	ClientChallenge  string                 // Optional client challenge for authentication
+	Callsign         string                 // Callsign of the client
+	CID              int                    // Cert ID
+	RealName         string                 // Real name
+	NetworkRating    protocol.NetworkRating // Network rating of the client
+	MaxNetworkRating protocol.NetworkRating // Maximum allowed network rating (from DB/JWT)
+	ProtoRevision    int                    // Protocol revision
+	LoginTime        time.Time              // Time of login
+	ClientID         uint16                 // Client ID (from ident packet)
+	IsAtc            bool                   // True if the client is ATC, false if a pilot
+}
+
+// LatLon is a geographic coordinate pair stored in Session.Coords.
+type LatLon struct {
+	Lat, Lon float64
+}
+
+// Session is a connected FSD participant after successful login.
+//
+// # Field ownership
+//
+// Read-loop only (eventLoop / packet handlers on this connection's goroutine;
+// do not read or write from other goroutines without additional sync):
+//   - FacilityType, SendFastEnabled, ClosestVelocityClientDistance
+//   - Auth (Initialize / challenge handling)
+//   - Scanner (owned exclusively by the read loop)
+//   - Conn for RemoteAddr-style metadata reads from the read loop
+//
+// Atomic / concurrent-safe (may be read by postoffice, HTTP service, or other
+// session goroutines; writers are typically the owning read loop or postoffice
+// position updates):
+//   - Coords (via LatLon/SetLatLon), VisRange
+//   - FlightPlan, AssignedBeaconCode
+//   - Frequency, Altitude, Groundspeed, Transponder, Heading, LastUpdated
+//
+// Immutable after login (set during login; safe to read concurrently afterward):
+//   - LoginData fields (Callsign, CID, RealName, NetworkRating, ProtoRevision, …)
+//   - MaxNetworkRating is fixed once authentication completes
+//
+// Context / outbound path:
+//   - Ctx, Cancel — lifecycle; Cancel is safe from any goroutine
+//   - sendChan — private; producers must call Send; only SenderWorker writes to Conn
+//
+// # Outbound I/O rule
+//
+// After login, all packet writes to the client MUST go through Send → sendChan →
+// SenderWorker. Direct Conn.Write outside SenderWorker is forbidden post-login
+// (login-phase errors may still use protocol.WriteError on the raw connection
+// before SenderWorker is started).
+type Session struct {
+	Conn     net.Conn
+	Scanner  *bufio.Scanner
+	Ctx      context.Context
+	Cancel   context.CancelFunc
+	sendChan chan string
+
+	// Coords stores LatLon; use LatLon/SetLatLon.
+	Coords                        atomic.Value
+	VisRange                      atomic.Float64
+	ClosestVelocityClientDistance float64 // Closest Velocity-compatible client distance in meters
+
+	FlightPlan         atomic.String
+	AssignedBeaconCode atomic.String
+
+	Frequency   atomic.String // ATC frequency
+	Altitude    atomic.Int32  // Pilot altitude
+	Groundspeed atomic.Int32  // Pilot ground speed
+	Transponder atomic.String // Active pilot transponder
+	Heading     atomic.Int32  // Pilot heading
+	LastUpdated atomic.Time   // Last position/state update time
+
+	FacilityType int // ATC facility type (ATC only)
+	LoginData
+
+	Auth            Auth // Optional; set by fsd when client auth is used
+	SendFastEnabled bool
+}
+
+// New constructs a Session with a cancellable child context and outbound buffer.
+// conn may be nil in unit tests that only exercise Send/state.
+func New(ctx context.Context, conn net.Conn, scanner *bufio.Scanner, data LoginData) *Session {
+	sessionCtx, cancel := context.WithCancel(ctx)
+	s := &Session{
+		Conn:      conn,
+		Scanner:   scanner,
+		Ctx:       sessionCtx,
+		Cancel:    cancel,
+		sendChan:  make(chan string, 32),
+		LoginData: data,
+	}
+	s.SetLatLon(0, 0)
+	return s
+}
+
+// SenderWorker drains sendChan and writes packets to Conn until the context ends
+// or a write fails. It is the only post-login code path allowed to Conn.Write.
+// On exit it closes Conn and cancels the session context.
+func (s *Session) SenderWorker() {
+	if s.Conn != nil {
+		defer s.Conn.Close()
+	}
+	defer s.Cancel()
+
+	for {
+		select {
+		case packet := <-s.sendChan:
+			if s.Conn == nil {
+				continue
+			}
+			if _, err := s.Conn.Write([]byte(packet)); err != nil {
+				return
+			}
+		case <-s.Ctx.Done():
+			return
+		}
+	}
+}
+
+// SendError enqueues an FSD $ER packet via the outbound send channel.
+// Thread-safe; must only be used after SenderWorker is running (post-login).
+func (s *Session) SendError(code int, message string) error {
+	return s.Send(protocol.FormatError(protocol.ErrorCode(code), message))
+}
+
+// Send queues a packet on the session's outbound channel.
+// Blocks until the packet is queued or the session context is done.
+func (s *Session) Send(packet string) error {
+	select {
+	case s.sendChan <- packet:
+		return nil
+	case <-s.Ctx.Done():
+		return s.Ctx.Err()
+	}
+}
+
+// LatLon returns the current [lat, lon] coordinates.
+func (s *Session) LatLon() [2]float64 {
+	ll := s.Coords.Load().(LatLon)
+	return [2]float64{ll.Lat, ll.Lon}
+}
+
+// SetLatLon stores the current coordinates atomically.
+func (s *Session) SetLatLon(lat, lon float64) {
+	s.Coords.Store(LatLon{Lat: lat, Lon: lon})
+}
+
+// DequeueOutbound non-blockingly takes one queued outbound packet.
+// Intended for unit tests that assert on enqueued wire text without a Conn.
+func (s *Session) DequeueOutbound() (packet string, ok bool) {
+	select {
+	case packet = <-s.sendChan:
+		ok = true
+	default:
+	}
+	return
+}

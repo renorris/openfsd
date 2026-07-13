@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/renorris/openfsd/internal/session"
 	"github.com/renorris/openfsd/pkg/protocol"
 )
 
@@ -194,11 +195,11 @@ func parseVisRange(packet []byte, index int) (visRange float64, ok bool) {
 }
 
 // forwardClientQuery freely routes a client query packet depending on the recipient.
-func forwardClientQuery(po *postOffice, client *Client, packet []byte) {
+func forwardClientQuery(po *postOffice, client *session.Session, packet []byte) {
 	recipient := getField(packet, 1)
 
 	if len(recipient) < 2 {
-		client.sendError(NoSuchCallsignError, "Invalid recipient")
+		client.SendError(NoSuchCallsignError, "Invalid recipient")
 		return
 	}
 
@@ -217,68 +218,68 @@ func forwardClientQuery(po *postOffice, client *Client, packet []byte) {
 }
 
 // broadcastRanged broadcasts a packet to all clients in range
-func broadcastRanged(po *postOffice, client *Client, packet []byte) {
+func broadcastRanged(po *postOffice, client *session.Session, packet []byte) {
 	packetStr := string(packet)
-	po.search(client, func(recipient *Client) bool {
-		recipient.send(packetStr)
+	po.search(client, func(recipient *session.Session) bool {
+		recipient.Send(packetStr)
 		return true
 	})
 }
 
 // broadcastRangedVelocity broadcasts a packet to all clients in range
 // supporting the Vatsim2022 (101) protocol revision.
-func broadcastRangedVelocity(po *postOffice, client *Client, packet []byte) {
+func broadcastRangedVelocity(po *postOffice, client *session.Session, packet []byte) {
 	packetStr := string(packet)
-	po.search(client, func(recipient *Client) bool {
-		if recipient.protoRevision != 101 {
+	po.search(client, func(recipient *session.Session) bool {
+		if recipient.ProtoRevision != 101 {
 			return true
 		}
-		recipient.send(packetStr)
+		recipient.Send(packetStr)
 		return true
 	})
 }
 
 // broadcastRangedAtcOnly broadcasts a packet to all ATC clients in range
-func broadcastRangedAtcOnly(po *postOffice, client *Client, packet []byte) {
+func broadcastRangedAtcOnly(po *postOffice, client *session.Session, packet []byte) {
 	packetStr := string(packet)
-	po.search(client, func(recipient *Client) bool {
-		if !recipient.isAtc {
+	po.search(client, func(recipient *session.Session) bool {
+		if !recipient.IsAtc {
 			return true
 		}
-		recipient.send(packetStr)
+		recipient.Send(packetStr)
 		return true
 	})
 }
 
 // broadcastAll broadcasts a packet to the entire server
-func broadcastAll(po *postOffice, client *Client, packet []byte) {
+func broadcastAll(po *postOffice, client *session.Session, packet []byte) {
 	packetStr := string(packet)
-	po.all(client, func(recipient *Client) bool {
-		recipient.send(packetStr)
+	po.all(client, func(recipient *session.Session) bool {
+		recipient.Send(packetStr)
 		return true
 	})
 }
 
 // broadcastAllATC broadcasts a packet to all ATC on entire server
-func broadcastAllATC(po *postOffice, client *Client, packet []byte) {
+func broadcastAllATC(po *postOffice, client *session.Session, packet []byte) {
 	packetStr := string(packet)
-	po.all(client, func(recipient *Client) bool {
-		if !recipient.isAtc {
+	po.all(client, func(recipient *session.Session) bool {
+		if !recipient.IsAtc {
 			return true
 		}
-		recipient.send(packetStr)
+		recipient.Send(packetStr)
 		return true
 	})
 }
 
 // broadcastAll broadcasts a packet to all supervisors on the server
-func broadcastAllSupervisors(po *postOffice, client *Client, packet []byte) {
+func broadcastAllSupervisors(po *postOffice, client *session.Session, packet []byte) {
 	packetStr := string(packet)
-	po.all(client, func(recipient *Client) bool {
-		if recipient.networkRating < NetworkRatingSupervisor {
+	po.all(client, func(recipient *session.Session) bool {
+		if recipient.NetworkRating < NetworkRatingSupervisor {
 			return true
 		}
-		recipient.send(packetStr)
+		recipient.Send(packetStr)
 		return true
 	})
 }
@@ -286,9 +287,9 @@ func broadcastAllSupervisors(po *postOffice, client *Client, packet []byte) {
 // sendDirectOrErr attempts to send a packet directly to a recipient.
 // If the post office responds with an ErrCallsignDoesNotExist, the client
 // is notified with a NoSuchCallsignError.
-func sendDirectOrErr(po *postOffice, client *Client, recipient []byte, packet []byte) {
+func sendDirectOrErr(po *postOffice, client *session.Session, recipient []byte, packet []byte) {
 	if err := po.send(string(recipient), string(packet)); err != nil {
-		client.sendError(NoSuchCallsignError, "No such callsign")
+		client.SendError(NoSuchCallsignError, "No such callsign")
 		return
 	}
 }
@@ -380,21 +381,21 @@ func strPtr(str string) *string {
 }
 
 // sendEnableSendFastPacket sends an 'enable' $SF Send Fast packet to the client
-func sendEnableSendFastPacket(client *Client) {
+func sendEnableSendFastPacket(client *session.Session) {
 	sendSendFastPacket(client, true)
 }
 
 // sendDisableSendFastPacket sends a 'disable' $SF Send Fast packet to the client
-func sendDisableSendFastPacket(client *Client) {
+func sendDisableSendFastPacket(client *session.Session) {
 	sendSendFastPacket(client, false)
 }
 
 // sendSendFastPacket sends a $SF Send Fast packet to the client
-func sendSendFastPacket(client *Client, enabled bool) {
+func sendSendFastPacket(client *session.Session, enabled bool) {
 	builder := strings.Builder{}
 	builder.Grow(32)
 	builder.WriteString("$SFSERVER:")
-	builder.WriteString(client.callsign)
+	builder.WriteString(client.Callsign)
 	builder.WriteByte(':')
 	if enabled {
 		builder.WriteByte('1')
@@ -403,5 +404,5 @@ func sendSendFastPacket(client *Client, enabled bool) {
 	}
 	builder.WriteString("\r\n")
 
-	client.send(builder.String())
+	client.Send(builder.String())
 }
