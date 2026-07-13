@@ -15,10 +15,20 @@ import (
 
 // runServiceHTTP starts the admin service HTTP server used for
 // internal communication between the API HTTP server and this FSD server.
+// It shuts down when ctx is cancelled.
 func (s *Server) runServiceHTTP(ctx context.Context) {
-	_ = ctx
 	e := s.setupRoutes()
-	if err := e.Run(s.cfg.ServiceHTTPListenAddr); err != nil {
+	httpSrv := &http.Server{
+		Addr:    s.cfg.ServiceHTTPListenAddr,
+		Handler: e,
+	}
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		_ = httpSrv.Shutdown(shutdownCtx)
+	}()
+	if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		s.logger.Error(err.Error())
 	}
 }
