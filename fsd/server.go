@@ -13,13 +13,14 @@ import (
 	"sync"
 
 	"github.com/renorris/openfsd/db"
+	"github.com/renorris/openfsd/internal/metar"
 	"github.com/renorris/openfsd/internal/postoffice"
 )
 
 type Server struct {
 	cfg          *ServerConfig
 	postOffice   *postoffice.PostOffice
-	metarService *metarService
+	metarService *metar.Service
 	dbRepo       *db.Repositories
 }
 
@@ -30,7 +31,7 @@ func NewServer(cfg *ServerConfig, dbRepo *db.Repositories, numMetarWorkers int) 
 	server = &Server{
 		cfg:          cfg,
 		postOffice:   postoffice.New(),
-		metarService: newMetarService(numMetarWorkers),
+		metarService: metar.New(numMetarWorkers, nil),
 		dbRepo:       dbRepo,
 	}
 	return
@@ -132,7 +133,7 @@ func generateDefaultAdminUser(dbRepo *db.Repositories) (user *db.User, err error
 
 func (s *Server) Run(ctx context.Context) (err error) {
 	// Start metar service
-	go s.metarService.run(ctx)
+	s.metarService.Run(ctx)
 
 	// Start HTTP service
 	go s.runServiceHTTP(ctx)
