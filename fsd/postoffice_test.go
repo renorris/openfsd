@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"reflect"
 	"sort"
+	"sync"
 	"testing"
 
 	"github.com/renorris/openfsd/internal/geo"
@@ -109,15 +110,21 @@ func TestUpdatePosition(t *testing.T) {
 	}
 }
 
-// TestUpdatePosition_NoopWhenUnchanged covers the early-return path when the
-// derived bounding box does not change.
-func TestUpdatePosition_NoopWhenUnchanged(t *testing.T) {
+// TestUpdatePosition_NoopKeepsIndexed covers the early-return path when the
+// derived bounding box does not change, and asserts the client remains
+// searchable (still present in the tree after the noop update).
+func TestUpdatePosition_NoopKeepsIndexed(t *testing.T) {
 	p := newPostOffice()
 	client1 := newTestClient("client1", 10, 20, 50000)
 	if err := p.register(client1); err != nil {
 		t.Fatal(err)
 	}
-	// Same center and range → identical bbox → tree not rewritten.
+	peer := newTestClient("peer", 10, 20, 50000)
+	if err := p.register(peer); err != nil {
+		t.Fatal(err)
+	}
+
+	// Same center and range → identical bbox → early return (no tree rewrite).
 	p.updatePosition(client1, [2]float64{10, 20}, 50000)
 	latLon := client1.latLon()
 	if latLon[0] != 10 || latLon[1] != 20 {
@@ -125,6 +132,16 @@ func TestUpdatePosition_NoopWhenUnchanged(t *testing.T) {
 	}
 	if client1.visRange.Load() != 50000 {
 		t.Fatalf("visRange after noop update = %v", client1.visRange.Load())
+	}
+
+	// Peer must still find client1, proving the tree entry remains valid.
+	var found []*Client
+	p.search(peer, func(recipient *Client) bool {
+		found = append(found, recipient)
+		return true
+	})
+	if len(found) != 1 || found[0] != client1 {
+		t.Fatalf("after noop update, peer search found %v, want [client1]", found)
 	}
 }
 
@@ -315,6 +332,57 @@ func TestSend(t *testing.T) {
 func approxEqual(a, b float64) bool {
 	const epsilon = 1e-6
 	return math.Abs(a-b) < epsilon
+}
+
+// TestPostOfficeConcurrent exercises register/search/updatePosition/release
+// across goroutines under the race detector.
+func TestPostOfficeConcurrent(t *testing.T) {
+	p := newPostOffice()
+	const n = 64
+	clients := make([]*Client, n)
+	for i := 0; i < n; i++ {
+		clients[i] = newTestClient(fmt.Sprintf("C%d", i), float64(i%10), float64(i%20), 200000)
+	}
+
+	var wg sync.WaitGroup
+	// Register all.
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(c *Client) {
+			defer wg.Done()
+			if err := p.register(c); err != nil {
+				t.Errorf("register %s: %v", c.callsign, err)
+			}
+		}(clients[i])
+	}
+	wg.Wait()
+
+	// Concurrent search + updatePosition.
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(c *Client) {
+			defer wg.Done()
+			p.search(c, func(recipient *Client) bool { return true })
+			ll := c.latLon()
+			p.updatePosition(c, [2]float64{ll[0] + 0.01, ll[1] - 0.01}, 150000)
+			p.search(c, func(recipient *Client) bool { return true })
+		}(clients[i])
+	}
+	wg.Wait()
+
+	// Concurrent release.
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(c *Client) {
+			defer wg.Done()
+			p.release(c)
+		}(clients[i])
+	}
+	wg.Wait()
+
+	if len(p.clientMap) != 0 {
+		t.Fatalf("clientMap not empty after release-all: %d entries", len(p.clientMap))
+	}
 }
 
 // BenchmarkRegister measures client registration cost.

@@ -43,11 +43,13 @@ func TestDistance_KnownPairs(t *testing.T) {
 			epsilon: 1.0,
 		},
 		{
-			name: "antipodal-ish short hop SF to nearby",
-			lat1: 37.6213, lon1: -122.3790, // KSFO
-			lat2: 37.6189, lon2: -122.3750,
-			wantM:   420, // roughly a few hundred meters
-			epsilon: 100,
+			// Independent reference: R * c with c = 2*atan2(sqrt(a), sqrt(1-a)),
+			// a = sin²(Δφ/2) + cos φ1 cos φ2 sin²(Δλ/2) for (0,0)→(10,20).
+			name: "precomputed haversine (0,0) to (10,20)",
+			lat1: 0, lon1: 0,
+			lat2: 10, lon2: 20,
+			wantM:   2476171.4106209576,
+			epsilon: 1e-6,
 		},
 	}
 

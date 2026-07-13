@@ -32,10 +32,15 @@ func Distance(lat1, lon1, lat2, lon2 float64) float64 {
 }
 
 // BoundingBox returns an axis-aligned lat/lon bounding box (degrees) around
-// center for the given radius in meters. center is [lat, lon].
+// center for the given radius in meters. center is [lat, lon] in degrees;
+// radiusM is meters.
 //
 // The box uses a simple equirectangular approximation (same math historically
-// used by the FSD postoffice geospatial index).
+// used by the FSD postoffice geospatial index). Longitude half-width is
+// radiusM / (metersPerDegreeLat * cos(lat)). Near the poles (|lat| → 90°),
+// cos(lat) → 0 so deltaLon grows without bound (and is Inf at exactly ±90°).
+// Callers that index polar positions should treat the result as a coarse
+// filter only; this API intentionally does not clamp latitude or cap deltaLon.
 func BoundingBox(center [2]float64, radiusM float64) (min, max [2]float64) {
 	latRad := center[0] * degToRad
 	const metersPerDegreeLat = (math.Pi * EarthRadius) / 180

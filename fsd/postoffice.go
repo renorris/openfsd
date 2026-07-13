@@ -88,7 +88,8 @@ func (p *postOffice) updatePosition(client *Client, newCenter [2]float64, newVis
 
 // search calls `callback` for every other Client within geographical range of the provided Client.
 //
-// It automatically resets and populates the Client.nearbyClients and Client.closestVelocityClientDistance values
+// It resets Client.closestVelocityClientDistance to +Inf, then updates it to the
+// minimum geo.Distance among non-self proto-101 pilot pairs discovered during the search.
 func (p *postOffice) search(client *Client, callback func(recipient *Client) bool) {
 	clientMin, clientMax := geo.BoundingBox(client.latLon(), client.visRange.Load())
 
