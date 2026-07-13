@@ -13,7 +13,6 @@ import (
 
 	"github.com/renorris/openfsd/db"
 	"github.com/renorris/openfsd/internal/auth"
-	"github.com/renorris/openfsd/internal/postoffice"
 	"github.com/renorris/openfsd/internal/session"
 	"github.com/renorris/openfsd/pkg/protocol"
 )
@@ -69,7 +68,7 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 
 	// Attempt to register to registry
 	if err = s.registry.Register(client); err != nil {
-		if errors.Is(err, postoffice.ErrCallsignInUse) {
+		if errors.Is(err, ErrCallsignInUse) {
 			sendError(conn, CallsignInUseError, "Callsign already in use")
 		}
 		return

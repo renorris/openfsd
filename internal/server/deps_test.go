@@ -3,10 +3,12 @@ package server
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/renorris/openfsd/db"
+	"github.com/renorris/openfsd/internal/postoffice"
 	"github.com/renorris/openfsd/internal/session"
 )
 
@@ -37,10 +39,22 @@ func (stubRegistry) Snapshot() []*session.Session                   { return nil
 type stubMetar struct{}
 
 func (stubMetar) Request(ctx context.Context, s session.Sender, icao string) {}
+func (stubMetar) Run(ctx context.Context)                                    {}
 
 type fixedClock struct{ t time.Time }
 
 func (c fixedClock) Now() time.Time { return c.t }
+
+func fullDeps() Deps {
+	return Deps{
+		Config:   &Config{FsdListenAddrs: []string{":0"}},
+		Users:    stubUserStore{},
+		ConfigKV: stubConfigStore{},
+		Registry: stubRegistry{},
+		Metar:    stubMetar{},
+		Clock:    fixedClock{t: time.Unix(1_700_000_000, 0)},
+	}
+}
 
 func TestNewRequiresDeps(t *testing.T) {
 	_, err := New(Deps{})
@@ -48,15 +62,7 @@ func TestNewRequiresDeps(t *testing.T) {
 		t.Fatal("expected error for empty Deps")
 	}
 
-	cfg := &Config{FsdListenAddrs: []string{":0"}}
-	srv, err := New(Deps{
-		Config:   cfg,
-		Users:    stubUserStore{},
-		ConfigKV: stubConfigStore{},
-		Registry: stubRegistry{},
-		Metar:    stubMetar{},
-		Clock:    fixedClock{t: time.Unix(1_700_000_000, 0)},
-	})
+	srv, err := New(fullDeps())
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -74,14 +80,37 @@ func TestNewRequiresDeps(t *testing.T) {
 	}
 }
 
+func TestNewMissingRequiredFields(t *testing.T) {
+	cases := []struct {
+		name    string
+		mutate  func(*Deps)
+		wantSub string
+	}{
+		{"nil Config", func(d *Deps) { d.Config = nil }, "Config"},
+		{"nil Users", func(d *Deps) { d.Users = nil }, "Users"},
+		{"nil ConfigKV", func(d *Deps) { d.ConfigKV = nil }, "ConfigKV"},
+		{"nil Registry", func(d *Deps) { d.Registry = nil }, "Registry"},
+		{"nil Metar", func(d *Deps) { d.Metar = nil }, "Metar"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := fullDeps()
+			tc.mutate(&d)
+			_, err := New(d)
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if !strings.Contains(err.Error(), tc.wantSub) {
+				t.Fatalf("error %q should mention %q", err.Error(), tc.wantSub)
+			}
+		})
+	}
+}
+
 func TestNewNilClockUsesReal(t *testing.T) {
-	srv, err := New(Deps{
-		Config:   &Config{},
-		Users:    stubUserStore{},
-		ConfigKV: stubConfigStore{},
-		Registry: stubRegistry{},
-		Metar:    stubMetar{},
-	})
+	d := fullDeps()
+	d.Clock = nil
+	srv, err := New(d)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,5 +121,18 @@ func TestNewNilClockUsesReal(t *testing.T) {
 	}
 	if delta > time.Second {
 		t.Fatalf("real clock skew too large: %v", delta)
+	}
+}
+
+func TestRegistrySentinelsMatchPostoffice(t *testing.T) {
+	// server re-exports must be identical for errors.Is across package boundaries.
+	if !errors.Is(ErrCallsignInUse, postoffice.ErrCallsignInUse) {
+		t.Fatal("ErrCallsignInUse mismatch")
+	}
+	if !errors.Is(ErrCallsignDoesNotExist, postoffice.ErrCallsignDoesNotExist) {
+		t.Fatal("ErrCallsignDoesNotExist mismatch")
+	}
+	if !errors.Is(postoffice.ErrCallsignInUse, ErrCallsignInUse) {
+		t.Fatal("reverse ErrCallsignInUse mismatch")
 	}
 }

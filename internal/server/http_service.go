@@ -11,7 +11,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/renorris/openfsd/db"
 	"github.com/renorris/openfsd/internal/auth"
-	"github.com/renorris/openfsd/internal/postoffice"
 )
 
 // runServiceHTTP starts the admin service HTTP server used for
@@ -155,11 +154,12 @@ func (s *Server) handleKickUser(c *gin.Context) {
 	var reqBody RequestBody
 	if err := c.ShouldBindJSON(&reqBody); err != nil {
 		c.AbortWithStatus(http.StatusBadRequest)
+		return
 	}
 
 	client, err := s.registry.Find(reqBody.Callsign)
 	if err != nil {
-		if !errors.Is(err, postoffice.ErrCallsignDoesNotExist) {
+		if !errors.Is(err, ErrCallsignDoesNotExist) {
 			c.AbortWithStatus(http.StatusInternalServerError)
 			return
 		}

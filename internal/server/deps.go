@@ -7,7 +7,16 @@ import (
 	"time"
 
 	"github.com/renorris/openfsd/db"
+	"github.com/renorris/openfsd/internal/postoffice"
 	"github.com/renorris/openfsd/internal/session"
+)
+
+// Registry sentinel errors — re-exported from postoffice so handlers/conn/HTTP
+// can use errors.Is without importing the concrete registry package.
+// Registry implementations should return these (or errors that wrap them).
+var (
+	ErrCallsignInUse        = postoffice.ErrCallsignInUse
+	ErrCallsignDoesNotExist = postoffice.ErrCallsignDoesNotExist
 )
 
 // UserStore is the consumer-side user repository surface used by login.
@@ -24,6 +33,7 @@ type ConfigStore interface {
 }
 
 // Registry abstracts the callsign/geo registry (postoffice.PostOffice).
+// Register/Find/Send should use ErrCallsignInUse / ErrCallsignDoesNotExist.
 type Registry interface {
 	Register(s *session.Session) error
 	Release(s *session.Session)
@@ -36,8 +46,11 @@ type Registry interface {
 }
 
 // MetarQueue is the METAR fetch queue (metar.Service).
+// Run starts workers; Request enqueues a fetch. Both are required so injectors
+// cannot silently omit worker startup.
 type MetarQueue interface {
 	Request(ctx context.Context, s session.Sender, icao string)
+	Run(ctx context.Context)
 }
 
 // Clock provides the current time (nil Deps.Clock => real wall clock).

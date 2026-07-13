@@ -174,10 +174,8 @@ func generateDefaultAdminUser(dbRepo *db.Repositories) (user *db.User, err error
 // Run starts METAR workers, the admin HTTP service, and FSD listeners.
 // It blocks until ctx is cancelled (or a listener fails to start).
 func (s *Server) Run(ctx context.Context) (err error) {
-	// Start metar workers when the concrete service supports Run.
-	if r, ok := s.metar.(interface{ Run(context.Context) }); ok {
-		go r.Run(ctx)
-	}
+	// Start metar worker pool (MetarQueue.Run is required on the interface).
+	go s.metar.Run(ctx)
 
 	// Start HTTP service
 	go s.runServiceHTTP(ctx)
@@ -245,8 +243,14 @@ func (s *Server) listenLoop(ctx context.Context, addr string, errCh chan<- error
 	}
 }
 
-// Compile-time interface satisfaction checks.
+// Compile-time interface satisfaction checks against production implementors.
 var (
-	_ Registry   = (*postoffice.PostOffice)(nil)
-	_ MetarQueue = (*metar.Service)(nil)
+	_ Registry    = (*postoffice.PostOffice)(nil)
+	_ MetarQueue  = (*metar.Service)(nil)
+	_ UserStore   = (*db.SQLiteUserRepository)(nil)
+	_ UserStore   = (*db.PostgresUserRepository)(nil)
+	_ UserStore   = db.UserRepository(nil)
+	_ ConfigStore = (*db.SQLiteConfigRepository)(nil)
+	_ ConfigStore = (*db.PostgresConfigRepository)(nil)
+	_ ConfigStore = db.ConfigRepository(nil)
 )
