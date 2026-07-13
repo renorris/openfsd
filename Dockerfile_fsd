@@ -12,7 +12,7 @@ COPY . .
 
 # Cache builds
 ENV GOCACHE=/root/.cache/go-build
-RUN --mount=type=cache,target="/root/.cache/go-build" CGO_ENABLED=0 go build -o /go/bin/fsd
+RUN --mount=type=cache,target="/root/.cache/go-build" CGO_ENABLED=0 go build -o /go/bin/fsd ./cmd/openfsd
 
 FROM alpine:latest
 
