@@ -1,19 +1,31 @@
 {{ define "title" }}Dashboard{{ end }}
 
 {{ define "body" }}
-<div class="container-fluid d-flex flex-column justify-content-center align-items-center">
-    <div><span id="dashboard-connection-count"></span> users connected</div>
-    <div id="map" class="mb-3 rounded" style="width: 600px; height: 400px;"></div>
-    <div class="d-flex justify-content-around w-100 mt-auto" style="max-width: 600px">
+<main class="container-fluid d-flex flex-column justify-content-center align-items-center mt-3"
+      id="dashboard-root"
+      data-cid="{{ .User.CID }}"
+      data-network-rating="{{ .User.NetworkRating }}"
+      data-display-name="{{ .User.DisplayName }}">
+    <div><span id="dashboard-connection-count">—</span> users connected</div>
+    <div id="map" class="mb-3 rounded" style="width: 600px; max-width: 100%; height: 400px;" role="img" aria-label="Map of connected pilots"></div>
+    <div class="d-flex justify-content-around w-100 mt-auto flex-wrap gap-3" style="max-width: 600px">
         <div>
-            <div id="dashboard-real-name">Loading...</div>
-            <div id="dashboard-cid">Loading...</div>
-            <div>Network Rating: <span id="dashboard-network-rating">Loading...</span></div>
+            <div id="dashboard-real-name">
+                {{ if .User.FirstName }}Welcome, {{ .User.FirstName }}!{{ else }}Welcome!{{ end }}
+            </div>
+            <div id="dashboard-cid">CID: {{ .User.CID }}</div>
+            <div>Network Rating: <span id="dashboard-network-rating">{{ .User.NetworkRatingLabel }}</span></div>
         </div>
         <div id="dashboard-user-editor">
+            {{ if .User.CanEditUsers }}
+            <div class="mb-2"><a href="/usereditor" class="btn btn-primary">Edit Users</a></div>
+            {{ end }}
+            {{ if .User.CanEditConfig }}
+            <div class="mb-2"><a href="/configeditor" class="btn btn-primary">Configure Server</a></div>
+            {{ end }}
         </div>
     </div>
-</div>
+</main>
 
 <script src="/static/js/leaflet.js"></script>
 <script src="/static/js/openfsd/leaflet.rotatedmarker.js"></script>

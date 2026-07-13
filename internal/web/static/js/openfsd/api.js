@@ -1,102 +1,86 @@
+// First-party API helper: cookie session + CSRF (no localStorage JWT, no jQuery).
+
+function getCSRFToken() {
+    const meta = document.querySelector('meta[name="csrf-token"]');
+    if (meta && meta.content) {
+        return meta.content;
+    }
+    // Double-submit cookie fallback
+    const match = document.cookie.match(/(?:^|;\s*)openfsd_csrf=([^;]+)/);
+    return match ? decodeURIComponent(match[1]) : "";
+}
+
 async function doAPIRequestWithAuth(method, url, data) {
-    return doAPIRequest(method, url, true, data)
+    return doAPIRequest(method, url, true, data);
 }
 
 async function doAPIRequestNoAuth(method, url, data) {
-    return doAPIRequest(method, url, false, data)
+    return doAPIRequest(method, url, false, data);
 }
 
+/**
+ * Perform an API request. When withAuth is true, sends same-origin cookies
+ * (session) and CSRF on mutations. Bearer from localStorage is no longer used
+ * for first-party UI (KD-18 dual-accept still allows Bearer for external tools).
+ */
 async function doAPIRequest(method, url, withAuth, data) {
-    return new Promise(async (resolve, reject) => {
-        let accessToken = "";
-        if (withAuth) {
-            accessToken = await getAccessToken();
+    const headers = {
+        "Accept": "application/json",
+    };
+    const upper = (method || "GET").toUpperCase();
+    const hasBody = data !== undefined && data !== null && upper !== "GET" && upper !== "HEAD";
+    if (hasBody) {
+        headers["Content-Type"] = "application/json";
+    }
+    if (withAuth && upper !== "GET" && upper !== "HEAD") {
+        const csrf = getCSRFToken();
+        if (csrf) {
+            headers["X-CSRF-Token"] = csrf;
         }
-
-        $.ajax({
-            url: url,
-            method: method,
-            headers: withAuth ? {"Authorization": `Bearer ${accessToken}`} : {},
-            contentType: "application/json",
-            data: JSON.stringify(data),
-            dataType: "json",
-        }).done((res) => {
-            resolve(res)
-        }).fail((xhr) => {
-            reject(xhr)
-        });
-    });
-}
-
-// getAccessToken returns the current valid access token.
-// An exception is thrown if no token is found, an error occurs refreshing the access token,
-// or if the refresh token is expired.
-async function getAccessToken() {
-    const storedAccessToken = localStorage.getItem("access_token");
-
-    if (!storedAccessToken) {
-        window.location.href = "/login"
-        throw new Error("No access token found")
     }
 
-    const jwtPayload = decodeJwt(storedAccessToken);
-    const exp = jwtPayload.exp;
-    const now = Math.floor(Date.now() / 1000);
-    if (exp < (now + 15)) { // Assuming corrected logic
-        const newAccessToken = await refreshAccessToken();
-        localStorage.setItem("access_token", newAccessToken);
-        return newAccessToken;
-    }
-    return storedAccessToken;
-}
-
-async function refreshAccessToken() {
-    const storedRefreshToken = localStorage.getItem("refresh_token");
-    const jwtPayload = decodeJwt(storedRefreshToken);
-    const exp = jwtPayload.exp;
-    const now = Math.floor(Date.now() / 1000);
-    if (exp < (now + 15)) {
-        window.location.href = "/login";
-        throw new Error("refresh token expired");
+    const opts = {
+        method: upper,
+        headers: headers,
+        credentials: "same-origin",
+    };
+    if (hasBody) {
+        opts.body = JSON.stringify(data);
     }
 
-    return new Promise((resolve, reject) => {
-        $.ajax({
-            url: "/api/v1/auth/refresh",
-            method: "POST",
-            contentType: "application/json",
-            data: JSON.stringify({ 'refresh_token': storedRefreshToken }),
-            dataType: "json",
-        }).done((res) =>  {
-            resolve(res.data.access_token)
-        }).fail((xhr) => {
-            window.location.href = "/login";
-            reject(new Error("failed to refresh access token"))
-        })
-    });
-}
-
-function getAccessTokenClaims() {
-    return decodeJwt(localStorage.getItem("access_token"))
-}
-
-function decodeJwt(token) {
-    if (!token) {
-        window.location.href = "/login";
-        throw new Error("no token found")
+    const res = await fetch(url, opts);
+    let body = null;
+    const ct = res.headers.get("content-type") || "";
+    if (ct.includes("application/json")) {
+        try {
+            body = await res.json();
+        } catch (_) {
+            body = null;
+        }
     }
 
-    var base64Url = token.split('.')[1];
-    var base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-    var jsonPayload = decodeURIComponent(window.atob(base64).split('').map(function(c) {
-        return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
-    }).join(''));
-
-    return JSON.parse(jsonPayload);
+    if (!res.ok) {
+        const err = new Error((body && body.err) || res.statusText || "request failed");
+        err.status = res.status;
+        err.responseJSON = body;
+        throw err;
+    }
+    return body;
 }
 
 function logout() {
-    localStorage.removeItem("access_token")
-    localStorage.removeItem("refresh_token")
-    window.location.href = "/login"
+    // Prefer the no-JS form POST in the layout nav; this is a fallback.
+    const form = document.createElement("form");
+    form.method = "post";
+    form.action = "/logout";
+    const csrf = getCSRFToken();
+    if (csrf) {
+        const input = document.createElement("input");
+        input.type = "hidden";
+        input.name = "csrf_token";
+        input.value = csrf;
+        form.appendChild(input);
+    }
+    document.body.appendChild(form);
+    form.submit();
 }

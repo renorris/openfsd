@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/gin-gonic/gin"
+	"github.com/renorris/openfsd/pkg/protocol"
 )
 
 //go:embed static/*
@@ -24,7 +25,7 @@ func (s *Server) setupRoutes() (*gin.Engine, error) {
 		c.Redirect(http.StatusFound, "/api/v1/fsd-jwt")
 	})
 
-	// API groups
+	// API groups — dual-accept Bearer | session cookie; CSRF when cookie-authenticated.
 	apiV1Group := e.Group("/api/v1")
 	apiV1Group.POST("/fsd-jwt", s.getFsdJwt)
 	s.setupAuthRoutes(apiV1Group)
@@ -54,7 +55,7 @@ func (s *Server) setupAuthRoutes(parent *gin.RouterGroup) {
 
 func (s *Server) setupUserRoutes(parent *gin.RouterGroup) {
 	usersGroup := parent.Group("/user")
-	usersGroup.Use(s.jwtBearerMiddleware)
+	usersGroup.Use(s.jwtBearerMiddleware, s.csrfIfCookieSession)
 	usersGroup.POST("/load", s.getUserByCID)
 	usersGroup.PATCH("/update", s.updateUser)
 	usersGroup.POST("/create", s.createUser)
@@ -62,7 +63,7 @@ func (s *Server) setupUserRoutes(parent *gin.RouterGroup) {
 
 func (s *Server) setupConfigRoutes(parent *gin.RouterGroup) {
 	configGroup := parent.Group("/config")
-	configGroup.Use(s.jwtBearerMiddleware)
+	configGroup.Use(s.jwtBearerMiddleware, s.csrfIfCookieSession)
 	configGroup.GET("/load", s.handleGetConfig)
 	configGroup.POST("/update", s.handleUpdateConfig)
 	configGroup.POST("/resetsecretkey", s.handleResetSecretKey)
@@ -71,7 +72,7 @@ func (s *Server) setupConfigRoutes(parent *gin.RouterGroup) {
 
 func (s *Server) setupFsdConnRoutes(parent *gin.RouterGroup) {
 	fsdConnGroup := parent.Group("/fsdconn")
-	fsdConnGroup.Use(s.jwtBearerMiddleware)
+	fsdConnGroup.Use(s.jwtBearerMiddleware, s.csrfIfCookieSession)
 	fsdConnGroup.POST("/kickuser", s.handleKickActiveConnection)
 }
 
@@ -93,7 +94,18 @@ func (s *Server) setupFrontendRoutes(parent *gin.RouterGroup) {
 	frontendGroup := parent.Group("")
 	frontendGroup.GET("", s.handleFrontendLanding)
 	frontendGroup.GET("/login", s.handleFrontendLogin)
-	frontendGroup.GET("/dashboard", s.handleFrontendDashboard)
-	frontendGroup.GET("/usereditor", s.handleFrontendUserEditor)
-	frontendGroup.GET("/configeditor", s.handleFrontendConfigEditor)
+	frontendGroup.POST("/login", s.handleFrontendLoginPost)
+	frontendGroup.POST("/logout", s.handleFrontendLogoutPost)
+
+	authed := frontendGroup.Group("")
+	authed.Use(s.requireSessionHTML)
+	authed.GET("/dashboard", s.handleFrontendDashboard)
+
+	sup := authed.Group("")
+	sup.Use(s.requireMinRatingHTML(protocol.NetworkRatingSupervisor))
+	sup.GET("/usereditor", s.handleFrontendUserEditor)
+
+	admin := authed.Group("")
+	admin.Use(s.requireMinRatingHTML(protocol.NetworkRatingAdministator))
+	admin.GET("/configeditor", s.handleFrontendConfigEditor)
 }

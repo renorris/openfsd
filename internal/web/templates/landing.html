@@ -1,7 +1,11 @@
 {{ define "title" }}Welcome{{ end }}
 
 {{ define "body" }}
-<div class="container-fluid d-flex justify-content-center position-absolute top-50 start-50 translate-middle">
+<main class="container-fluid d-flex justify-content-center position-absolute top-50 start-50 translate-middle">
+    {{ if .User }}
+    <a class="btn btn-lg btn-outline-dark fw-medium" href="/dashboard">Go to dashboard</a>
+    {{ else }}
     <a class="btn btn-lg btn-outline-dark fw-medium" href="/login">Login</a>
-</div>
+    {{ end }}
+</main>
 {{ end }}

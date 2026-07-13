@@ -191,46 +191,85 @@ func (s *Server) getFsdJwt(c *gin.Context) {
 	})
 }
 
-// jwtBearerMiddleware verifies the existence of, validates, and parses JWT bearer tokens.
-//
-// No specific validation of verified claims are done in this function.
+// jwtBearerMiddleware verifies a Bearer access token OR a signed session cookie
+// (KD-18 dual-accept). Cookie-authenticated mutations are CSRF-checked by
+// csrfIfCookieSession on the API group.
 func (s *Server) jwtBearerMiddleware(c *gin.Context) {
-	authHeader := c.GetHeader("Authorization")
-	authHeader, found := strings.CutPrefix(authHeader, "Bearer ")
-	if !found {
-		res := newAPIV1Failure("bad bearer token")
-		writeAPIV1Response(c, http.StatusBadRequest, &res)
-		c.Abort()
+	if s.tryBearerAuth(c) {
+		c.Next()
 		return
+	}
+	if s.trySessionAuth(c) {
+		c.Next()
+		return
+	}
+
+	res := newAPIV1Failure("unauthorized")
+	writeAPIV1Response(c, http.StatusUnauthorized, &res)
+	c.Abort()
+}
+
+// tryBearerAuth parses Authorization: Bearer access tokens into the gin context.
+// Returns true when a valid access token was accepted.
+func (s *Server) tryBearerAuth(c *gin.Context) bool {
+	authHeader := c.GetHeader("Authorization")
+	raw, found := strings.CutPrefix(authHeader, "Bearer ")
+	if !found || raw == "" {
+		return false
 	}
 
 	jwtSecret, err := s.dbRepo.ConfigRepo.Get(db.ConfigJwtSecretKey)
 	if err != nil {
-		writeAPIV1Response(c, http.StatusInternalServerError, &genericAPIV1InternalServerError)
-		c.Abort()
-		return
+		return false
 	}
 
-	accessToken, err := auth.ParseJwtToken(authHeader, []byte(jwtSecret))
+	accessToken, err := auth.ParseJwtToken(raw, []byte(jwtSecret))
 	if err != nil {
-		res := newAPIV1Failure("invalid bearer token")
-		writeAPIV1Response(c, http.StatusUnauthorized, &res)
-		c.Abort()
-		return
+		return false
 	}
 
 	claims := accessToken.CustomClaims()
-
 	if claims.TokenType != "access" {
-		res := newAPIV1Failure("invalid token type")
-		writeAPIV1Response(c, http.StatusUnauthorized, &res)
-		c.Abort()
-		return
+		return false
 	}
 
 	setJwtContext(c, claims)
+	return true
+}
 
+// trySessionAuth parses the signed session cookie into the gin context.
+func (s *Server) trySessionAuth(c *gin.Context) bool {
+	claims, err := s.parseSessionCookie(c)
+	if err != nil {
+		return false
+	}
+	setJwtContext(c, claims)
+	return true
+}
+
+// requireSessionHTML gates privileged HTML pages: unauthenticated → 303 /login.
+func (s *Server) requireSessionHTML(c *gin.Context) {
+	claims, err := s.parseSessionCookie(c)
+	if err != nil {
+		c.Redirect(http.StatusSeeOther, "/login")
+		c.Abort()
+		return
+	}
+	setJwtContext(c, claims)
 	c.Next()
+}
+
+// requireMinRatingHTML redirects to /dashboard when the session rating is too low.
+func (s *Server) requireMinRatingHTML(min protocol.NetworkRating) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		claims := getJwtContext(c)
+		if claims.NetworkRating < min {
+			c.Redirect(http.StatusSeeOther, "/dashboard")
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
 }
 
 const jwtContextKey = "jwtbearer"

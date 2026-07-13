@@ -1,25 +1,38 @@
 {{ define "title" }}Login{{ end }}
 
 {{ define "body" }}
-<div class="container-fluid d-flex justify-content-center position-absolute top-50 start-50 translate-middle">
-    <div class="p-4 rounded border border-dark-subtle border-1">
-        <form id="login-form">
+<main class="container-fluid d-flex justify-content-center position-absolute top-50 start-50 translate-middle">
+    <div class="p-4 rounded border border-dark-subtle border-1" style="min-width: 20rem; max-width: 24rem; width: 100%;">
+        <h1 class="h4 mb-3">Log in</h1>
+        {{ if .Error }}
+        <div class="alert alert-danger" role="alert">{{ .Error }}</div>
+        {{ end }}
+        <form id="login-form" method="post" action="/login" novalidate>
+            <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
             <div class="mb-3">
                 <label for="login-input-cid" class="form-label">CID</label>
-                <input type="number" class="form-control" id="login-input-cid" required>
+                <input type="number" class="form-control{{ if .CIDError }} is-invalid{{ end }}"
+                       id="login-input-cid" name="cid" required min="1"
+                       value="{{ .CID }}" autocomplete="username">
+                {{ if .CIDError }}
+                <div class="invalid-feedback">{{ .CIDError }}</div>
+                {{ end }}
             </div>
             <div class="mb-3">
                 <label for="login-input-password" class="form-label">Password</label>
-                <input type="password" class="form-control" id="login-input-password" required>
+                <input type="password" class="form-control{{ if .PassError }} is-invalid{{ end }}"
+                       id="login-input-password" name="password" required autocomplete="current-password">
+                {{ if .PassError }}
+                <div class="invalid-feedback">{{ .PassError }}</div>
+                {{ end }}
             </div>
             <div class="mb-3 form-check">
-                <input type="checkbox" class="form-check-input" id="login-form-remember-me">
+                <input type="checkbox" class="form-check-input" id="login-form-remember-me"
+                       name="remember_me" value="on"{{ if .RememberMe }} checked{{ end }}>
                 <label class="form-check-label" for="login-form-remember-me">Remember me</label>
             </div>
             <button type="submit" class="btn btn-outline-dark">Log in</button>
         </form>
     </div>
-</div>
-
-<script src="/static/js/openfsd/login.js"></script>
+</main>
 {{ end }}
