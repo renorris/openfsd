@@ -1,0 +1,20 @@
+package server
+
+import "github.com/renorris/openfsd/internal/session"
+
+func (s *Server) handleKillRequest(client *session.Session, packet []byte) {
+	if client.NetworkRating < NetworkRatingSupervisor {
+		return
+	}
+
+	// Attempt to find the victim client
+	recipient := getField(packet, 1)
+	victim, err := s.registry.Find(string(recipient))
+	if err != nil {
+		client.SendError(NoSuchCallsignError, "No such callsign")
+		return
+	}
+
+	// Closing the context of the victim client will eventually cause it to disconnect
+	victim.Cancel()
+}
