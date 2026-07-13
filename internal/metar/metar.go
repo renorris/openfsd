@@ -3,6 +3,7 @@
 // HTTP is injectable (HTTPDoer) so tests never hit the real network.
 // ICAO codes are validated (exactly 4 letters) before URL construction
 // to mitigate path-injection / SSRF via the stations path segment.
+// The default client also disables redirects and sets a request Timeout.
 package metar
 
 import (
@@ -12,11 +13,15 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/renorris/openfsd/internal/session"
 	"github.com/renorris/openfsd/pkg/protocol"
 )
+
+// defaultHTTPTimeout bounds a single NOAA fetch when using the default client.
+const defaultHTTPTimeout = 10 * time.Second
 
 // HTTPDoer performs an HTTP request. *http.Client implements this interface.
 type HTTPDoer interface {
@@ -24,6 +29,13 @@ type HTTPDoer interface {
 }
 
 // Service is a METAR fetch worker pool that delivers results via session.Sender.
+//
+// Request matches the design MetarQueue surface:
+//
+//	Request(ctx context.Context, sender session.Sender, icao string)
+//
+// Callsign for $AR addressing is taken from *session.Session (production) or
+// any sender implementing Callsign() string (tests/fakes).
 type Service struct {
 	numWorkers int
 	http       HTTPDoer
@@ -33,19 +45,19 @@ type Service struct {
 type request struct {
 	ctx      context.Context
 	sender   session.Sender
-	callsign string
 	icaoCode string
 }
 
 // New constructs a Service with the given worker count and HTTP client.
-// If httpDoer is nil, a default *http.Client is used.
+// If httpDoer is nil, a default *http.Client is used with Timeout and
+// redirects disabled (ErrUseLastResponse) as an SSRF hardening measure.
 // numWorkers is clamped to at least 1.
 func New(numWorkers int, httpDoer HTTPDoer) *Service {
 	if numWorkers < 1 {
 		numWorkers = 1
 	}
 	if httpDoer == nil {
-		httpDoer = &http.Client{}
+		httpDoer = defaultHTTPClient()
 	}
 	return &Service{
 		numWorkers: numWorkers,
@@ -54,41 +66,61 @@ func New(numWorkers int, httpDoer HTTPDoer) *Service {
 	}
 }
 
+// defaultHTTPClient returns a bounded client that does not follow redirects.
+func defaultHTTPClient() *http.Client {
+	return &http.Client{
+		Timeout: defaultHTTPTimeout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+}
+
 // Run starts the worker pool. It returns immediately; workers exit when ctx is done.
+// In-flight HTTP requests are also cancelled when ctx ends (merged with the
+// per-request session context).
 func (s *Service) Run(ctx context.Context) {
 	for range s.numWorkers {
 		go s.worker(ctx)
 	}
 }
 
-func (s *Service) worker(ctx context.Context) {
+func (s *Service) worker(runCtx context.Context) {
 	for {
 		select {
-		case <-ctx.Done():
+		case <-runCtx.Done():
 			return
 		case req := <-s.requests:
-			s.handle(req)
+			s.handle(runCtx, req)
 		}
 	}
 }
 
-// Request queues a METAR fetch for icaoCode and delivers the response (or error)
+// Request queues a METAR fetch for icao and delivers the response (or error)
 // via sender. It returns immediately once the request is queued or ctx is done.
-// callsign is the FSD callsign used in the $AR response packet.
-func (s *Service) Request(ctx context.Context, sender session.Sender, callsign, icaoCode string) {
+//
+// This signature matches design MetarQueue:
+//
+//	Request(ctx context.Context, s session.Sender, icao string)
+//
+// The $AR callsign is resolved from sender (see callsignFrom).
+func (s *Service) Request(ctx context.Context, sender session.Sender, icao string) {
 	select {
 	case <-ctx.Done():
 	case s.requests <- request{
 		ctx:      ctx,
 		sender:   sender,
-		callsign: callsign,
-		icaoCode: icaoCode,
+		icaoCode: icao,
 	}:
 	}
 }
 
-func (s *Service) handle(req request) {
-	if req.ctx.Err() != nil {
+func (s *Service) handle(runCtx context.Context, req request) {
+	// Fetch context ends when either the service shuts down or the session ends.
+	ctx, cancel := mergeContexts(runCtx, req.ctx)
+	defer cancel()
+
+	if ctx.Err() != nil {
 		return
 	}
 
@@ -99,7 +131,7 @@ func (s *Service) handle(req request) {
 	}
 
 	url := buildRequestURL(icao)
-	httpReq, err := http.NewRequestWithContext(req.ctx, http.MethodGet, url, nil)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		sendError(req.sender, icao)
 		return
@@ -130,7 +162,42 @@ func (s *Service) handle(req request) {
 		return
 	}
 
-	_ = req.sender.Send(buildResponsePacket(req.callsign, metarLine))
+	if req.sender == nil {
+		return
+	}
+	_ = req.sender.Send(buildResponsePacket(callsignFrom(req.sender), metarLine))
+}
+
+// mergeContexts returns a context cancelled when either a or b is cancelled.
+func mergeContexts(a, b context.Context) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(a)
+	if b.Err() != nil {
+		cancel()
+		return ctx, cancel
+	}
+	stop := context.AfterFunc(b, cancel)
+	return ctx, func() {
+		stop()
+		cancel()
+	}
+}
+
+// callsignFrom resolves the FSD callsign for $AR addressing.
+// Production path: *session.Session. Tests may implement Callsign() string.
+func callsignFrom(sender session.Sender) string {
+	if sender == nil {
+		return ""
+	}
+	if s, ok := sender.(*session.Session); ok {
+		return s.Callsign
+	}
+	type callsigner interface {
+		Callsign() string
+	}
+	if c, ok := sender.(callsigner); ok {
+		return c.Callsign()
+	}
+	return ""
 }
 
 // normalizeICAO accepts exactly 4 ASCII letters (case-insensitive) and returns

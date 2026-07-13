@@ -15,10 +15,12 @@ import (
 )
 
 // recordingSender captures packets sent via session.Sender.
+// Callsign() supports the 3-arg Request API without *session.Session.
 type recordingSender struct {
-	mu      sync.Mutex
-	packets []string
-	err     error
+	mu       sync.Mutex
+	packets  []string
+	err      error
+	callsign string
 }
 
 func (r *recordingSender) Send(packet string) error {
@@ -27,6 +29,8 @@ func (r *recordingSender) Send(packet string) error {
 	r.packets = append(r.packets, packet)
 	return r.err
 }
+
+func (r *recordingSender) Callsign() string { return r.callsign }
 
 func (r *recordingSender) all() []string {
 	r.mu.Lock()
@@ -153,11 +157,10 @@ func TestHandle_Success(t *testing.T) {
 		return okResponse(body), nil
 	}}
 	svc := New(1, doer)
-	sender := &recordingSender{}
-	svc.handle(request{
+	sender := &recordingSender{callsign: "TEST"}
+	svc.handle(context.Background(), request{
 		ctx:      context.Background(),
 		sender:   sender,
-		callsign: "TEST",
 		icaoCode: "kjfk",
 	})
 
@@ -181,14 +184,13 @@ func TestHandle_InvalidICAO_NoHTTP(t *testing.T) {
 		return nil, errors.New("should not be called")
 	}}
 	svc := New(1, doer)
-	sender := &recordingSender{}
+	sender := &recordingSender{callsign: "TEST"}
 
 	for _, icao := range []string{"", "INVALID", "../x", "KJ1K", "http://evil"} {
 		sender.packets = nil
-		svc.handle(request{
+		svc.handle(context.Background(), request{
 			ctx:      context.Background(),
 			sender:   sender,
-			callsign: "TEST",
 			icaoCode: icao,
 		})
 		if called {
@@ -213,11 +215,10 @@ func TestHandle_HTTPStatusError(t *testing.T) {
 		}, nil
 	}}
 	svc := New(1, doer)
-	sender := &recordingSender{}
-	svc.handle(request{
+	sender := &recordingSender{callsign: "TEST"}
+	svc.handle(context.Background(), request{
 		ctx:      context.Background(),
 		sender:   sender,
-		callsign: "TEST",
 		icaoCode: "KJFK",
 	})
 	want := "$ERserver:unknown:9::Error fetching METAR for KJFK\r\n"
@@ -232,11 +233,10 @@ func TestHandle_NetworkError(t *testing.T) {
 		return nil, errors.New("network error")
 	}}
 	svc := New(1, doer)
-	sender := &recordingSender{}
-	svc.handle(request{
+	sender := &recordingSender{callsign: "TEST"}
+	svc.handle(context.Background(), request{
 		ctx:      context.Background(),
 		sender:   sender,
-		callsign: "TEST",
 		icaoCode: "KJFK",
 	})
 	want := "$ERserver:unknown:9::Error fetching METAR for KJFK\r\n"
@@ -251,11 +251,10 @@ func TestHandle_InvalidResponseBody(t *testing.T) {
 		return okResponse("Invalid response\n"), nil
 	}}
 	svc := New(1, doer)
-	sender := &recordingSender{}
-	svc.handle(request{
+	sender := &recordingSender{callsign: "TEST"}
+	svc.handle(context.Background(), request{
 		ctx:      context.Background(),
 		sender:   sender,
-		callsign: "TEST",
 		icaoCode: "KJFK",
 	})
 	want := "$ERserver:unknown:9::Error fetching METAR for KJFK\r\n"
@@ -270,11 +269,10 @@ func TestHandle_MoreThanTwoLines(t *testing.T) {
 		return okResponse("Line1\nLine2\nLine3\n"), nil
 	}}
 	svc := New(1, doer)
-	sender := &recordingSender{}
-	svc.handle(request{
+	sender := &recordingSender{callsign: "TEST"}
+	svc.handle(context.Background(), request{
 		ctx:      context.Background(),
 		sender:   sender,
-		callsign: "TEST",
 		icaoCode: "KJFK",
 	})
 	want := "$ERserver:unknown:9::Error fetching METAR for KJFK\r\n"
@@ -292,11 +290,10 @@ func TestHandle_BodyReadError(t *testing.T) {
 		}, nil
 	}}
 	svc := New(1, doer)
-	sender := &recordingSender{}
-	svc.handle(request{
+	sender := &recordingSender{callsign: "TEST"}
+	svc.handle(context.Background(), request{
 		ctx:      context.Background(),
 		sender:   sender,
-		callsign: "TEST",
 		icaoCode: "KJFK",
 	})
 	want := "$ERserver:unknown:9::Error fetching METAR for KJFK\r\n"
@@ -310,23 +307,61 @@ type errReader struct{}
 
 func (errReader) Read([]byte) (int, error) { return 0, errors.New("read fail") }
 
-func TestHandle_CancelledContext(t *testing.T) {
+func TestHandle_CancelledSessionContext(t *testing.T) {
 	doer := &fakeDoer{fn: func(req *http.Request) (*http.Response, error) {
 		t.Error("HTTP should not run for cancelled context")
 		return nil, errors.New("nope")
 	}}
 	svc := New(1, doer)
-	sender := &recordingSender{}
+	sender := &recordingSender{callsign: "TEST"}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	svc.handle(request{
+	svc.handle(context.Background(), request{
 		ctx:      ctx,
 		sender:   sender,
-		callsign: "TEST",
 		icaoCode: "KJFK",
 	})
 	if len(sender.all()) != 0 {
 		t.Errorf("expected no packets on cancelled ctx, got %v", sender.all())
+	}
+}
+
+func TestHandle_RunContextCancelsInFlightDo(t *testing.T) {
+	started := make(chan struct{})
+	doer := &fakeDoer{fn: func(req *http.Request) (*http.Response, error) {
+		close(started)
+		<-req.Context().Done()
+		return nil, req.Context().Err()
+	}}
+	svc := New(1, doer)
+	runCtx, runCancel := context.WithCancel(context.Background())
+	svc.Run(runCtx)
+
+	sender := &recordingSender{callsign: "TEST"}
+	svc.Request(context.Background(), sender, "KJFK")
+
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Do never started")
+	}
+	runCancel()
+
+	deadline := time.After(2 * time.Second)
+	for {
+		pkts := sender.all()
+		if len(pkts) == 1 {
+			want := "$ERserver:unknown:9::Error fetching METAR for KJFK\r\n"
+			if pkts[0] != want {
+				t.Errorf("packet = %q, want %q", pkts[0], want)
+			}
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatal("timeout waiting for cancelled fetch error")
+		case <-time.After(5 * time.Millisecond):
+		}
 	}
 }
 
@@ -335,11 +370,24 @@ func TestHandle_NilSenderOnError(t *testing.T) {
 	svc := New(1, &fakeDoer{fn: func(req *http.Request) (*http.Response, error) {
 		return nil, errors.New("unused")
 	}})
-	svc.handle(request{
+	svc.handle(context.Background(), request{
 		ctx:      context.Background(),
 		sender:   nil,
-		callsign: "TEST",
 		icaoCode: "BAD",
+	})
+}
+
+func TestHandle_NilSenderOnSuccess(t *testing.T) {
+	body := "2023/04/30 19:51\nKJFK 301951Z 18010KT 10SM FEW250 29/19 A2992\n"
+	doer := &fakeDoer{fn: func(req *http.Request) (*http.Response, error) {
+		return okResponse(body), nil
+	}}
+	svc := New(1, doer)
+	// Must not panic on nil sender after successful parse.
+	svc.handle(context.Background(), request{
+		ctx:      context.Background(),
+		sender:   nil,
+		icaoCode: "KJFK",
 	})
 }
 
@@ -348,8 +396,19 @@ func TestNew_Defaults(t *testing.T) {
 	if svc.numWorkers != 1 {
 		t.Errorf("numWorkers = %d, want 1", svc.numWorkers)
 	}
-	if svc.http == nil {
-		t.Fatal("expected default http client")
+	client, ok := svc.http.(*http.Client)
+	if !ok {
+		t.Fatalf("expected *http.Client, got %T", svc.http)
+	}
+	if client.Timeout != defaultHTTPTimeout {
+		t.Errorf("Timeout = %v, want %v", client.Timeout, defaultHTTPTimeout)
+	}
+	if client.CheckRedirect == nil {
+		t.Fatal("expected CheckRedirect set")
+	}
+	// Redirect policy must refuse to follow (ErrUseLastResponse).
+	if err := client.CheckRedirect(&http.Request{}, nil); !errors.Is(err, http.ErrUseLastResponse) {
+		t.Errorf("CheckRedirect = %v, want ErrUseLastResponse", err)
 	}
 	if cap(svc.requests) != 128 {
 		t.Errorf("queue cap = %d, want 128", cap(svc.requests))
@@ -369,9 +428,9 @@ func TestRequest_AndWorker_Integration(t *testing.T) {
 	defer cancel()
 	svc.Run(ctx)
 
-	// Real session.Session also implements session.Sender.
+	// Real session.Session: 3-arg Request resolves callsign from Session.
 	sess := session.New(context.Background(), nil, nil, session.LoginData{Callsign: "PILOT1"})
-	svc.Request(context.Background(), sess, sess.Callsign, "egll")
+	svc.Request(context.Background(), sess, "egll")
 
 	deadline := time.After(2 * time.Second)
 	var pkt string
@@ -400,10 +459,10 @@ func TestRequest_CancelledBeforeQueue(t *testing.T) {
 	// Don't start workers; cancelled ctx should not block forever on full path.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	sender := &recordingSender{}
+	sender := &recordingSender{callsign: "TEST"}
 	done := make(chan struct{})
 	go func() {
-		svc.Request(ctx, sender, "TEST", "KJFK")
+		svc.Request(ctx, sender, "KJFK")
 		close(done)
 	}()
 	select {
@@ -433,3 +492,28 @@ func TestSendError_WireFormat(t *testing.T) {
 		t.Errorf("got %v, want %q", pkts, want)
 	}
 }
+
+func TestCallsignFrom(t *testing.T) {
+	if got := callsignFrom(nil); got != "" {
+		t.Errorf("nil = %q", got)
+	}
+	sess := session.New(context.Background(), nil, nil, session.LoginData{Callsign: "N123"})
+	if got := callsignFrom(sess); got != "N123" {
+		t.Errorf("session = %q, want N123", got)
+	}
+	rs := &recordingSender{callsign: "FAKE"}
+	if got := callsignFrom(rs); got != "FAKE" {
+		t.Errorf("recording = %q, want FAKE", got)
+	}
+	// Plain sender without Callsign() → empty.
+	type plain struct{}
+	// Can't implement session.Sender without Send — use minimal:
+	ps := plainSender{}
+	if got := callsignFrom(ps); got != "" {
+		t.Errorf("plain = %q, want empty", got)
+	}
+}
+
+type plainSender struct{}
+
+func (plainSender) Send(string) error { return nil }

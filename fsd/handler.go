@@ -414,7 +414,7 @@ func (s *Server) handleMetarRequest(client *session.Session, packet []byte) {
 		return
 	}
 
-	s.metarService.Request(client.Ctx, client, client.Callsign, string(icaoCode))
+	s.metarService.Request(client.Ctx, client, string(icaoCode))
 }
 
 func (s *Server) handleKillRequest(client *session.Session, packet []byte) {
