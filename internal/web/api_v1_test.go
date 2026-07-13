@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/renorris/openfsd/internal/db"
@@ -31,7 +33,9 @@ func setupTestAPI(t *testing.T) *testAPIEnv {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 
-	sqlDB, err := sql.Open("sqlite", "file:"+t.Name()+"?mode=memory&cache=shared")
+	// Sanitize t.Name() so subtests (names with "/") stay valid SQLite memory DSNs.
+	dsnName := strings.ReplaceAll(t.Name(), "/", "_")
+	sqlDB, err := sql.Open("sqlite", "file:"+dsnName+"?mode=memory&cache=shared")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = sqlDB.Close() })
 	sqlDB.SetMaxOpenConns(1)
@@ -61,11 +65,9 @@ func setupTestAPI(t *testing.T) *testAPIEnv {
 	}
 	require.NoError(t, repos.UserRepo.CreateUser(observer))
 
+	// Repos are injected into NewServer; DSN fields on cfg are unused in these tests.
 	cfg := &ServerConfig{
 		ListenAddr:            ":0",
-		DatabaseDriver:        "sqlite",
-		DatabaseSourceName:    ":memory:",
-		DatabaseMaxConns:      1,
 		FsdHttpServiceAddress: "http://127.0.0.1:1", // unused for most API tests
 	}
 	srv, err := NewServer(cfg, repos)
@@ -158,7 +160,7 @@ func TestAuthLoginSuccessAndFailure(t *testing.T) {
 	require.NotNil(t, res.Err)
 	assert.Contains(t, *res.Err, "CID")
 
-	// missing body
+	// empty object / missing required fields
 	w = env.doJSON(t, http.MethodPost, "/api/v1/auth/login", map[string]any{}, "")
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
@@ -191,7 +193,7 @@ func TestAuthRefresh(t *testing.T) {
 
 func TestBearerMiddleware(t *testing.T) {
 	env := setupTestAPI(t)
-	access, _ := env.login(t, env.admin.CID, env.adminPass)
+	access, refresh := env.login(t, env.admin.CID, env.adminPass)
 
 	// missing Authorization
 	w := env.doJSON(t, http.MethodPost, "/api/v1/user/load", map[string]any{"cid": env.admin.CID}, "")
@@ -204,9 +206,69 @@ func TestBearerMiddleware(t *testing.T) {
 	w = env.doJSON(t, http.MethodPost, "/api/v1/user/load", map[string]any{"cid": env.admin.CID}, "not-a-jwt")
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 
+	// refresh token is not an access token
+	w = env.doJSON(t, http.MethodPost, "/api/v1/user/load", map[string]any{"cid": env.admin.CID}, refresh)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	res = decodeAPIV1(t, w)
+	require.NotNil(t, res.Err)
+	assert.Contains(t, *res.Err, "token type")
+
 	// valid access token
 	w = env.doJSON(t, http.MethodPost, "/api/v1/user/load", map[string]any{"cid": env.admin.CID}, access)
 	assert.Equal(t, http.StatusOK, w.Code, w.Body.String())
+}
+
+func TestFsdJwt(t *testing.T) {
+	env := setupTestAPI(t)
+
+	// good credentials
+	w := env.doJSON(t, http.MethodPost, "/api/v1/fsd-jwt", map[string]any{
+		"cid":      fmt.Sprintf("%d", env.admin.CID),
+		"password": env.adminPass,
+	}, "")
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var okBody struct {
+		Success bool   `json:"success"`
+		Token   string `json:"token"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &okBody))
+	assert.True(t, okBody.Success)
+	assert.NotEmpty(t, okBody.Token)
+
+	// bad password
+	w = env.doJSON(t, http.MethodPost, "/api/v1/fsd-jwt", map[string]any{
+		"cid":      fmt.Sprintf("%d", env.admin.CID),
+		"password": "wrong-password",
+	}, "")
+	assert.Equal(t, http.StatusUnauthorized, w.Code, w.Body.String())
+	var errBody struct {
+		Success  bool   `json:"success"`
+		ErrorMsg string `json:"error_msg"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &errBody))
+	assert.False(t, errBody.Success)
+	assert.Contains(t, errBody.ErrorMsg, "CID")
+
+	// suspended rating
+	suspendedPass := "suspended1"
+	suspended := &db.User{
+		Password:      suspendedPass,
+		FirstName:     strPtr("Suspended"),
+		NetworkRating: int(protocol.NetworkRatingSuspended),
+	}
+	require.NoError(t, env.server.dbRepo.UserRepo.CreateUser(suspended))
+
+	w = env.doJSON(t, http.MethodPost, "/api/v1/fsd-jwt", map[string]any{
+		"cid":      fmt.Sprintf("%d", suspended.CID),
+		"password": suspendedPass,
+	}, "")
+	assert.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &errBody))
+	assert.Contains(t, errBody.ErrorMsg, "suspended")
+
+	// bind failure → 400
+	w = env.doJSON(t, http.MethodPost, "/api/v1/fsd-jwt", map[string]any{}, "")
+	assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
 }
 
 func TestUserLoadPermissions(t *testing.T) {
@@ -323,6 +385,68 @@ func TestConfigLoadAndUpdate(t *testing.T) {
 		},
 	}, obsAccess)
 	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
+func TestConfigResetSecretKey(t *testing.T) {
+	env := setupTestAPI(t)
+	adminAccess, _ := env.login(t, env.admin.CID, env.adminPass)
+	obsAccess, _ := env.login(t, env.observer.CID, env.observerPass)
+
+	// observer forbidden
+	w := env.doJSON(t, http.MethodPost, "/api/v1/config/resetsecretkey", nil, obsAccess)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+
+	// admin rotates secret
+	w = env.doJSON(t, http.MethodPost, "/api/v1/config/resetsecretkey", nil, adminAccess)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	// old access token no longer validates
+	w = env.doJSON(t, http.MethodPost, "/api/v1/user/load", map[string]any{"cid": env.admin.CID}, adminAccess)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+
+	// re-login works with new secret
+	newAccess, _ := env.login(t, env.admin.CID, env.adminPass)
+	w = env.doJSON(t, http.MethodPost, "/api/v1/user/load", map[string]any{"cid": env.admin.CID}, newAccess)
+	assert.Equal(t, http.StatusOK, w.Code, w.Body.String())
+}
+
+func TestConfigCreateToken(t *testing.T) {
+	env := setupTestAPI(t)
+	adminAccess, _ := env.login(t, env.admin.CID, env.adminPass)
+	obsAccess, _ := env.login(t, env.observer.CID, env.observerPass)
+
+	// observer forbidden
+	w := env.doJSON(t, http.MethodPost, "/api/v1/config/createtoken", map[string]any{
+		"expiry_date_time": time.Now().UTC().Add(time.Hour).Format(time.RFC3339),
+	}, obsAccess)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+
+	// past expiry → 400
+	w = env.doJSON(t, http.MethodPost, "/api/v1/config/createtoken", map[string]any{
+		"expiry_date_time": time.Now().UTC().Add(-time.Hour).Format(time.RFC3339),
+	}, adminAccess)
+	assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+	res := decodeAPIV1(t, w)
+	require.NotNil(t, res.Err)
+	assert.Contains(t, *res.Err, "past")
+
+	// future expiry → token usable as Bearer access
+	w = env.doJSON(t, http.MethodPost, "/api/v1/config/createtoken", map[string]any{
+		"expiry_date_time": time.Now().UTC().Add(2 * time.Hour).Format(time.RFC3339),
+	}, adminAccess)
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	res = decodeAPIV1(t, w)
+	require.Nil(t, res.Err)
+	data, err := json.Marshal(res.Data)
+	require.NoError(t, err)
+	var tokenBody struct {
+		Token string `json:"token"`
+	}
+	require.NoError(t, json.Unmarshal(data, &tokenBody))
+	require.NotEmpty(t, tokenBody.Token)
+
+	w = env.doJSON(t, http.MethodGet, "/api/v1/config/load", nil, tokenBody.Token)
+	assert.Equal(t, http.StatusOK, w.Code, w.Body.String())
 }
 
 func TestDataStatusJSONUnauthenticated(t *testing.T) {

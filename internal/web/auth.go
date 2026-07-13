@@ -122,48 +122,42 @@ func (s *Server) getFsdJwt(c *gin.Context) {
 		Password string `json:"password" form:"password" binding:"required"`
 	}
 
-	var reqBody RequestBody
-	if err := c.ShouldBind(&reqBody); err != nil {
-		return
-	}
-
 	type ResponseBody struct {
 		Success  bool   `json:"success"`
 		Token    string `json:"token,omitempty"`
 		ErrorMsg string `json:"error_msg,omitempty"`
 	}
 
+	var reqBody RequestBody
+	if err := c.ShouldBind(&reqBody); err != nil {
+		c.JSON(http.StatusBadRequest, &ResponseBody{ErrorMsg: "Invalid request"})
+		return
+	}
+
 	cid, err := strconv.Atoi(reqBody.CID)
 	if err != nil || cid < 1 {
-		resBody := ResponseBody{
-			ErrorMsg: "Invalid CID",
-		}
-		c.JSON(http.StatusBadRequest, &resBody)
+		c.JSON(http.StatusBadRequest, &ResponseBody{ErrorMsg: "Invalid CID"})
 		return
 	}
 
 	user, err := s.dbRepo.UserRepo.GetUserByCID(cid)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			resBody := ResponseBody{
-				ErrorMsg: "Invalid CID and/or password",
-			}
-			c.JSON(http.StatusUnauthorized, &resBody)
+			c.JSON(http.StatusUnauthorized, &ResponseBody{ErrorMsg: "Invalid CID and/or password"})
 			return
 		}
 
-		resBody := ResponseBody{
-			ErrorMsg: "Internal server error",
-		}
-		c.JSON(http.StatusInternalServerError, &resBody)
+		c.JSON(http.StatusInternalServerError, &ResponseBody{ErrorMsg: "Internal server error"})
+		return
+	}
+
+	if !s.dbRepo.UserRepo.VerifyPasswordHash(reqBody.Password, user.Password) {
+		c.JSON(http.StatusUnauthorized, &ResponseBody{ErrorMsg: "Invalid CID and/or password"})
 		return
 	}
 
 	if user.NetworkRating <= int(protocol.NetworkRatingSuspended) {
-		resBody := ResponseBody{
-			ErrorMsg: "Certificate suspended or inactive",
-		}
-		c.JSON(http.StatusForbidden, &resBody)
+		c.JSON(http.StatusForbidden, &ResponseBody{ErrorMsg: "Certificate suspended or inactive"})
 		return
 	}
 
@@ -175,10 +169,7 @@ func (s *Server) getFsdJwt(c *gin.Context) {
 		NetworkRating: protocol.NetworkRating(user.NetworkRating),
 	}, 5*time.Minute)
 	if err != nil {
-		resBody := ResponseBody{
-			ErrorMsg: "Internal server error",
-		}
-		c.JSON(http.StatusInternalServerError, &resBody)
+		c.JSON(http.StatusInternalServerError, &ResponseBody{ErrorMsg: "Internal server error"})
 		return
 	}
 
@@ -190,19 +181,14 @@ func (s *Server) getFsdJwt(c *gin.Context) {
 
 	fsdJwtTokenStr, err := fsdJwtToken.SignedString([]byte(jwtSecret))
 	if err != nil {
-		resBody := ResponseBody{
-			ErrorMsg: "Internal server error",
-		}
-		c.JSON(http.StatusInternalServerError, &resBody)
+		c.JSON(http.StatusInternalServerError, &ResponseBody{ErrorMsg: "Internal server error"})
 		return
 	}
 
-	resBody := ResponseBody{
+	c.JSON(http.StatusOK, &ResponseBody{
 		Success: true,
 		Token:   fsdJwtTokenStr,
-	}
-
-	c.JSON(http.StatusOK, &resBody)
+	})
 }
 
 // jwtBearerMiddleware verifies the existence of, validates, and parses JWT bearer tokens.

@@ -12,7 +12,9 @@ import (
 func main() {
 	setSlogLevel()
 
-	ctx, _ := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+
 	srv, err := server.NewDefault(ctx)
 	if err != nil {
 		slog.Error(err.Error())

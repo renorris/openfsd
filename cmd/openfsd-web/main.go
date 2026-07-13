@@ -10,7 +10,9 @@ import (
 )
 
 func main() {
-	ctx, _ := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+
 	if err := web.Main(ctx); err != nil {
 		slog.Error(err.Error())
 		os.Exit(1)
