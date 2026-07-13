@@ -4,5 +4,8 @@
 *.db
 **tmp**
 build-and-push.sh
-cover.out
-coverage.out
+
+# Local binaries
+/openfsd-web
+/fsdweb
+/fsd

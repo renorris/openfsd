@@ -1,4 +1,4 @@
-package main
+package web
 
 import (
 	"bytes"
@@ -25,23 +25,22 @@ import (
 
 //go:embed data_templates/status.txt
 var statusTxtRawTemplate string
-var statusTxtTemplate *template.Template
 
 //go:embed data_templates/servers.txt
 var serversTxtRawTemplate string
-var serversTxtTemplate *template.Template
 
-func init() {
-	var err error
-	statusTxtTemplate = template.New("statustxt")
-	if statusTxtTemplate, err = statusTxtTemplate.Parse(statusTxtRawTemplate); err != nil {
-		panic("Unable to parse status.txt template: " + err.Error())
+// parseDataTemplates parses the embedded status/servers text templates.
+// Called from NewServer so construction fails with an error instead of init panic.
+func parseDataTemplates() (statusTxt, serversTxt *template.Template, err error) {
+	statusTxt, err = template.New("statustxt").Parse(statusTxtRawTemplate)
+	if err != nil {
+		return nil, nil, err
 	}
-
-	serversTxtTemplate = template.New("serverstxt")
-	if serversTxtTemplate, err = serversTxtTemplate.Parse(serversTxtRawTemplate); err != nil {
-		panic("Unable to parse servers.txt template: " + err.Error())
+	serversTxt, err = template.New("serverstxt").Parse(serversTxtRawTemplate)
+	if err != nil {
+		return nil, nil, err
 	}
+	return statusTxt, serversTxt, nil
 }
 
 func (s *Server) handleGetStatusTxt(c *gin.Context) {
@@ -51,7 +50,7 @@ func (s *Server) handleGetStatusTxt(c *gin.Context) {
 	}
 
 	// Generate a new status.txt
-	statusTxt, err := generateStatusTxt(baseURL)
+	statusTxt, err := s.generateStatusTxt(baseURL)
 	if err != nil {
 		c.Writer.WriteHeader(http.StatusInternalServerError)
 		c.Writer.WriteString("Error generating status.txt")
@@ -63,7 +62,7 @@ func (s *Server) handleGetStatusTxt(c *gin.Context) {
 	c.Writer.WriteString(statusTxt)
 }
 
-func generateStatusTxt(baseURL string) (txt string, err error) {
+func (s *Server) generateStatusTxt(baseURL string) (txt string, err error) {
 	type TemplateData struct {
 		ApiServerBaseURL string
 	}
@@ -72,7 +71,7 @@ func generateStatusTxt(baseURL string) (txt string, err error) {
 
 	buf := bytes.Buffer{}
 	buf.Grow(1024)
-	if err = statusTxtTemplate.Execute(&buf, &tmplData); err != nil {
+	if err = s.statusTxtTemplate.Execute(&buf, &tmplData); err != nil {
 		return
 	}
 
@@ -217,7 +216,7 @@ func (s *Server) generateServersTxt() (txt string, err error) {
 
 	buf := bytes.Buffer{}
 	buf.Grow(1024)
-	if err = serversTxtTemplate.Execute(&buf, &tmplData); err != nil {
+	if err = s.serversTxtTemplate.Execute(&buf, &tmplData); err != nil {
 		return
 	}
 

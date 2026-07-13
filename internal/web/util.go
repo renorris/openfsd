@@ -1,4 +1,4 @@
-package main
+package web
 
 // safeStr returns an empty string if the pointer is nil, or the underlying string value if not nil.
 func safeStr(str *string) string {

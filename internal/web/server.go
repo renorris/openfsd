@@ -1,17 +1,21 @@
-package main
+package web
 
 import (
 	"context"
 	"database/sql"
 	"fmt"
-	"github.com/renorris/openfsd/internal/db"
 	"log/slog"
 	"net"
+	"text/template"
+
+	"github.com/renorris/openfsd/internal/db"
 )
 
 type Server struct {
-	cfg    *ServerConfig
-	dbRepo *db.Repositories
+	cfg                *ServerConfig
+	dbRepo             *db.Repositories
+	statusTxtTemplate  *template.Template
+	serversTxtTemplate *template.Template
 }
 
 func NewDefaultServer(ctx context.Context) (server *Server, err error) {
@@ -44,9 +48,16 @@ func NewDefaultServer(ctx context.Context) (server *Server, err error) {
 }
 
 func NewServer(cfg *ServerConfig, dbRepo *db.Repositories) (server *Server, err error) {
+	statusTxt, serversTxt, err := parseDataTemplates()
+	if err != nil {
+		return nil, fmt.Errorf("parse data templates: %w", err)
+	}
+
 	server = &Server{
-		cfg:    cfg,
-		dbRepo: dbRepo,
+		cfg:                cfg,
+		dbRepo:             dbRepo,
+		statusTxtTemplate:  statusTxt,
+		serversTxtTemplate: serversTxt,
 	}
 
 	return

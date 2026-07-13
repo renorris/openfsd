@@ -13,8 +13,7 @@ COPY . .
 # Cache builds
 ENV GOCACHE=/root/.cache/go-build
 RUN --mount=type=cache,target="/root/.cache/go-build" \
-    cd web && \
-    CGO_ENABLED=0 go build -o /go/bin/fsdweb
+    CGO_ENABLED=0 go build -o /go/bin/fsdweb ./cmd/openfsd-web
 
 FROM alpine:latest
 

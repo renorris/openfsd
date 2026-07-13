@@ -30,6 +30,7 @@ func TestImportGraph(t *testing.T) {
 		postofficePkg,
 		"github.com/renorris/openfsd/fsd",
 		"github.com/renorris/openfsd/web",
+		"github.com/renorris/openfsd/internal/web",
 		"github.com/renorris/openfsd/internal/server",
 	})
 
@@ -37,6 +38,7 @@ func TestImportGraph(t *testing.T) {
 	assertNoDeps(t, postofficePkg, []string{
 		"github.com/renorris/openfsd/fsd",
 		"github.com/renorris/openfsd/web",
+		"github.com/renorris/openfsd/internal/web",
 		"github.com/renorris/openfsd/internal/server",
 	})
 }

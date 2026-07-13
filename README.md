@@ -50,7 +50,7 @@ The preferred way to run openfsd is using **Docker** and **Docker Compose**. See
 
 ## API
 
-The web server exposes APIs under `/api/v1` for authentication, user management, and configuration. Although a basic web interface is provided, users are encouraged to call this API from their own external applications. See the [API](https://github.com/renorris/openfsd/tree/main/web) documentation.
+The web server exposes APIs under `/api/v1` for authentication, user management, and configuration. Although a basic web interface is provided, users are encouraged to call this API from their own external applications. See the [API](https://github.com/renorris/openfsd/tree/main/internal/web) documentation.
 
 ## Docs
 
