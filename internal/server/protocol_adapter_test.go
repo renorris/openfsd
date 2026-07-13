@@ -1,4 +1,4 @@
-package fsd
+package server
 
 import (
 	"testing"
@@ -6,7 +6,7 @@ import (
 	"github.com/renorris/openfsd/pkg/protocol"
 )
 
-// Differential tests: fsd thin adapters must match protocol package behavior
+// Differential tests: server thin adapters must match protocol package behavior
 // for shared helpers, while getPacketType maps login types to Unknown.
 
 func TestAdapterCountFieldsAndGetField(t *testing.T) {
@@ -20,15 +20,15 @@ func TestAdapterCountFieldsAndGetField(t *testing.T) {
 		if countFields(p) != protocol.CountFields(p) {
 			t.Errorf("countFields mismatch for %q", p)
 		}
-		// fsd only ever uses non-negative field indices; adapters match protocol for those.
+		// server only ever uses non-negative field indices; adapters match protocol for those.
 		for i := 0; i < 5; i++ {
 			if string(getField(p, i)) != string(protocol.Field(p, i)) {
 				t.Errorf("getField(%q,%d) mismatch", p, i)
 			}
 		}
 	}
-	// Negative indices: protocol.Field returns nil (safety); fsd getField is the same
-	// wrapper. Historical pre-extract getField returned field 0. No fsd call site
+	// Negative indices: protocol.Field returns nil (safety); getField is the same
+	// wrapper. Historical pre-extract getField returned field 0. No call site
 	// passes a negative index.
 	if getField([]byte("a:b"), -1) != nil {
 		t.Error("getField(-1) should be nil via protocol.Field")
@@ -36,7 +36,7 @@ func TestAdapterCountFieldsAndGetField(t *testing.T) {
 }
 
 func TestAdapterGetPacketTypeMapsLoginToUnknown(t *testing.T) {
-	// protocol.TypeOf knows these; fsd getPacketType must return Unknown.
+	// protocol.TypeOf knows these; getPacketType must return Unknown.
 	loginPackets := []string{
 		"$DISERVER:CLIENT:openfsd:6f70656e667364\r\n",
 		"$IDN172SP:SERVER:88e4:vPilot:3:8:1:2:key\r\n",

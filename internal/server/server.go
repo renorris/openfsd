@@ -1,4 +1,4 @@
-package fsd
+package server
 
 import (
 	"context"
@@ -15,33 +15,69 @@ import (
 	"github.com/renorris/openfsd/db"
 	"github.com/renorris/openfsd/internal/metar"
 	"github.com/renorris/openfsd/internal/postoffice"
+	"github.com/renorris/openfsd/pkg/protocol"
 )
 
+// Server is the FSD server orchestration layer.
 type Server struct {
-	cfg          *ServerConfig
-	postOffice   *postoffice.PostOffice
-	metarService *metar.Service
-	dbRepo       *db.Repositories
+	cfg      *Config
+	users    UserStore
+	configKV ConfigStore
+	registry Registry
+	metar    MetarQueue
+	clock    Clock
+	logger   *slog.Logger
+	listen   func(ctx context.Context, network, addr string) (net.Listener, error)
 }
 
-// NewServer creates a new Server instance.
-//
-// See NewDefaultServer to create a server using default settings obtained via environment variables.
-func NewServer(cfg *ServerConfig, dbRepo *db.Repositories, numMetarWorkers int) (server *Server, err error) {
-	server = &Server{
-		cfg:          cfg,
-		postOffice:   postoffice.New(),
-		metarService: metar.New(numMetarWorkers, nil),
-		dbRepo:       dbRepo,
+// New constructs a Server from injected Deps.
+func New(d Deps) (*Server, error) {
+	if d.Config == nil {
+		return nil, errors.New("server: Config is required")
 	}
-	return
+	if d.Users == nil {
+		return nil, errors.New("server: Users is required")
+	}
+	if d.ConfigKV == nil {
+		return nil, errors.New("server: ConfigKV is required")
+	}
+	if d.Registry == nil {
+		return nil, errors.New("server: Registry is required")
+	}
+	if d.Metar == nil {
+		return nil, errors.New("server: Metar is required")
+	}
+
+	clock := d.Clock
+	if clock == nil {
+		clock = realClock{}
+	}
+	logger := d.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	listen := d.Listen
+	if listen == nil {
+		listen = defaultListen
+	}
+
+	return &Server{
+		cfg:      d.Config,
+		users:    d.Users,
+		configKV: d.ConfigKV,
+		registry: d.Registry,
+		metar:    d.Metar,
+		clock:    clock,
+		logger:   logger,
+		listen:   listen,
+	}, nil
 }
 
-// NewDefaultServer creates a new Server instance using the default configuration obtained via environment variables
-func NewDefaultServer(ctx context.Context) (server *Server, err error) {
-	config, err := loadServerConfig(ctx)
+// NewDefault builds Deps from environment variables and default wiring, then calls New.
+func NewDefault(ctx context.Context) (*Server, error) {
+	config, err := loadConfig(ctx)
 	if err != nil {
-		return
+		return nil, err
 	}
 
 	slog.Info(fmt.Sprintf("using %s", config.DatabaseDriver))
@@ -49,12 +85,12 @@ func NewDefaultServer(ctx context.Context) (server *Server, err error) {
 	slog.Debug("connecting to SQL")
 	sqlDb, err := sql.Open(config.DatabaseDriver, config.DatabaseSourceName)
 	if err != nil {
-		return
+		return nil, err
 	}
 	slog.Debug("SQL opened")
 
 	if err = sqlDb.PingContext(ctx); err != nil {
-		return
+		return nil, err
 	}
 
 	sqlDb.SetMaxOpenConns(config.DatabaseMaxConns)
@@ -62,27 +98,26 @@ func NewDefaultServer(ctx context.Context) (server *Server, err error) {
 	if config.DatabaseAutoMigrate {
 		slog.Debug("automatically migrating database")
 		if err = db.Migrate(sqlDb); err != nil {
-			return
+			return nil, err
 		}
 		slog.Debug("migrate OK")
 	}
 
 	dbRepo, err := db.NewRepositories(sqlDb)
 	if err != nil {
-		return
+		return nil, err
 	}
 
 	// Generate a default admin user if CID 1 isn't taken
 	if _, err = dbRepo.UserRepo.GetUserByCID(1); err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
-			return
+			return nil, err
 		}
-		err = nil
 
 		slog.Debug("no user with CID = 1 found, creating default admin user")
-		var user *db.User
-		if user, err = generateDefaultAdminUser(dbRepo); err != nil {
-			return
+		user, genErr := generateDefaultAdminUser(dbRepo)
+		if genErr != nil {
+			return nil, genErr
 		}
 		slog.Info(fmt.Sprintf(
 			`
@@ -100,15 +135,20 @@ func NewDefaultServer(ctx context.Context) (server *Server, err error) {
 	// Ensure default configuration is written to persistent storage
 	slog.Debug("initializing default config")
 	if err = db.InitDefaultConfig(dbRepo.ConfigRepo); err != nil {
-		return
+		return nil, err
 	}
 	slog.Debug("config OK")
 
-	if server, err = NewServer(config, dbRepo, config.NumMetarWorkers); err != nil {
-		return
-	}
+	metarSvc := metar.New(config.NumMetarWorkers, nil)
+	po := postoffice.New()
 
-	return
+	return New(Deps{
+		Config:   config,
+		Users:    dbRepo.UserRepo,
+		ConfigKV: dbRepo.ConfigRepo,
+		Registry: po,
+		Metar:    metarSvc,
+	})
 }
 
 func generateDefaultAdminUser(dbRepo *db.Repositories) (user *db.User, err error) {
@@ -121,7 +161,7 @@ func generateDefaultAdminUser(dbRepo *db.Repositories) (user *db.User, err error
 	user = &db.User{
 		Password:      password,
 		FirstName:     strPtr("Default Administrator"),
-		NetworkRating: int(NetworkRatingAdministator),
+		NetworkRating: int(protocol.NetworkRatingAdministator),
 	}
 
 	if err = dbRepo.UserRepo.CreateUser(user); err != nil {
@@ -131,9 +171,13 @@ func generateDefaultAdminUser(dbRepo *db.Repositories) (user *db.User, err error
 	return
 }
 
+// Run starts METAR workers, the admin HTTP service, and FSD listeners.
+// It blocks until ctx is cancelled (or a listener fails to start).
 func (s *Server) Run(ctx context.Context) (err error) {
-	// Start metar service
-	s.metarService.Run(ctx)
+	// Start metar workers when the concrete service supports Run.
+	if r, ok := s.metar.(interface{ Run(context.Context) }); ok {
+		go r.Run(ctx)
+	}
 
 	// Start HTTP service
 	go s.runServiceHTTP(ctx)
@@ -142,11 +186,11 @@ func (s *Server) Run(ctx context.Context) (err error) {
 	var listenerWg sync.WaitGroup
 
 	for _, addr := range s.cfg.FsdListenAddrs {
-		slog.Info(fmt.Sprintf("Listening on %s\n", addr))
+		s.logger.Info(fmt.Sprintf("Listening on %s\n", addr))
 		listenerWg.Add(1)
 		go func(ctx context.Context, addr string) {
 			defer listenerWg.Done()
-			s.listen(ctx, addr, errCh)
+			s.listenLoop(ctx, addr, errCh)
 		}(ctx, addr)
 	}
 
@@ -171,9 +215,8 @@ func (s *Server) Run(ctx context.Context) (err error) {
 	return
 }
 
-func (s *Server) listen(ctx context.Context, addr string, errCh chan<- error) {
-	config := net.ListenConfig{}
-	listener, err := config.Listen(ctx, "tcp4", addr)
+func (s *Server) listenLoop(ctx context.Context, addr string, errCh chan<- error) {
+	listener, err := s.listen(ctx, "tcp4", addr)
 	if err != nil {
 		errCh <- fmt.Errorf("failed to listen on %s: %w", addr, err)
 		return
@@ -201,3 +244,9 @@ func (s *Server) listen(ctx context.Context, addr string, errCh chan<- error) {
 		go s.handleConn(ctx, conn)
 	}
 }
+
+// Compile-time interface satisfaction checks.
+var (
+	_ Registry   = (*postoffice.PostOffice)(nil)
+	_ MetarQueue = (*metar.Service)(nil)
+)

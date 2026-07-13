@@ -2,22 +2,24 @@ package main
 
 import (
 	"context"
-	"github.com/renorris/openfsd/fsd"
 	"log/slog"
 	"os"
 	"os/signal"
+
+	"github.com/renorris/openfsd/internal/server"
 )
 
 func main() {
 	setSlogLevel()
 
 	ctx, _ := signal.NotifyContext(context.Background(), os.Interrupt)
-	server, err := fsd.NewDefaultServer(ctx)
+	srv, err := server.NewDefault(ctx)
 	if err != nil {
-		panic(err)
+		slog.Error(err.Error())
+		os.Exit(1)
 	}
 
-	if err = server.Run(ctx); err != nil {
+	if err = srv.Run(ctx); err != nil {
 		slog.Error(err.Error())
 	}
 	slog.Info("FSD server closed")

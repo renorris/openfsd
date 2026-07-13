@@ -1,4 +1,4 @@
-package fsd
+package server
 
 import (
 	"math"

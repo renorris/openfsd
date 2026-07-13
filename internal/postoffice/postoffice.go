@@ -20,8 +20,8 @@
 // RLock and invoke user callbacks only after releasing the lock so handlers may
 // safely Send from callbacks.
 //
-// This package must not import fsd, web, or server packages (session depends
-// upward only).
+// This package must not import internal/server, web, or other orchestration
+// packages (session depends upward only).
 package postoffice
 
 import (

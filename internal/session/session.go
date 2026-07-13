@@ -1,7 +1,7 @@
 // Package session owns a connected FSD participant after login.
 //
-// This package must not import postoffice, the fsd server package, or any
-// higher-level orchestration — fsd depends on session, not the reverse.
+// This package must not import postoffice, internal/server, or any
+// higher-level orchestration — server depends on session, not the reverse.
 package session
 
 import (
@@ -116,7 +116,7 @@ type Session struct {
 	FacilityType int
 	LoginData
 
-	Auth            Auth // Optional; set by fsd when client auth is used
+	Auth            Auth // Optional; set by server when client auth is used
 	SendFastEnabled bool
 }
 

@@ -10,8 +10,8 @@ import (
 	"errors"
 	"github.com/gin-gonic/gin"
 	"github.com/renorris/openfsd/db"
-	"github.com/renorris/openfsd/fsd"
 	"github.com/renorris/openfsd/internal/auth"
+	"github.com/renorris/openfsd/internal/server"
 	"github.com/renorris/openfsd/pkg/protocol"
 	"go.uber.org/atomic"
 	"io"
@@ -286,7 +286,7 @@ type DatafeedGeneral struct {
 }
 
 type DatafeedPilot struct {
-	fsd.OnlineUserPilot
+	server.OnlineUserPilot
 	Server         string              `json:"server"`
 	PilotRating    int                 `json:"pilot_rating"`          // INOP placeholder
 	MilitaryRating int                 `json:"military_rating"`       // INOP placeholder
@@ -313,7 +313,7 @@ type DatafeedFlightplan struct {
 }
 
 type DatafeedATC struct {
-	fsd.OnlineUserATC
+	server.OnlineUserATC
 	Server   string   `json:"server"`
 	TextATIS []string `json:"text_atis"` // INOP placeholder
 }
@@ -361,7 +361,7 @@ func (s *Server) generateDatafeed() (feed *DatafeedCache, err error) {
 	}
 
 	decoder := json.NewDecoder(res.Body)
-	onlineUsers := fsd.OnlineUsersResponseData{}
+	onlineUsers := server.OnlineUsersResponseData{}
 	if err = decoder.Decode(&onlineUsers); err != nil {
 		return
 	}

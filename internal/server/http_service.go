@@ -1,10 +1,9 @@
-package fsd
+package server
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -18,9 +17,10 @@ import (
 // runServiceHTTP starts the admin service HTTP server used for
 // internal communication between the API HTTP server and this FSD server.
 func (s *Server) runServiceHTTP(ctx context.Context) {
+	_ = ctx
 	e := s.setupRoutes()
 	if err := e.Run(s.cfg.ServiceHTTPListenAddr); err != nil {
-		slog.Error(err.Error())
+		s.logger.Error(err.Error())
 	}
 }
 
@@ -42,9 +42,9 @@ func (s *Server) authMiddleware(c *gin.Context) {
 		return
 	}
 
-	jwtSecret, err := s.dbRepo.ConfigRepo.Get(db.ConfigJwtSecretKey)
+	jwtSecret, err := s.configKV.Get(db.ConfigJwtSecretKey)
 	if err != nil {
-		slog.Error(err.Error())
+		s.logger.Error(err.Error())
 		c.AbortWithStatus(http.StatusInternalServerError)
 		return
 	}
@@ -64,6 +64,7 @@ func (s *Server) authMiddleware(c *gin.Context) {
 	c.Next()
 }
 
+// OnlineUserGeneralData is shared identity/position state for online users.
 type OnlineUserGeneralData struct {
 	Callsign         string    `json:"callsign"`
 	CID              int       `json:"cid"`
@@ -76,6 +77,7 @@ type OnlineUserGeneralData struct {
 	LastUpdated      time.Time `json:"last_updated"`
 }
 
+// OnlineUserPilot is a pilot entry in the online-users snapshot.
 type OnlineUserPilot struct {
 	OnlineUserGeneralData
 	Altitude    int    `json:"altitude"`
@@ -84,6 +86,7 @@ type OnlineUserPilot struct {
 	Transponder string `json:"transponder"`
 }
 
+// OnlineUserATC is an ATC entry in the online-users snapshot.
 type OnlineUserATC struct {
 	OnlineUserGeneralData
 	Frequency string `json:"frequency"`
@@ -91,13 +94,14 @@ type OnlineUserATC struct {
 	VisRange  int    `json:"visual_range"`
 }
 
+// OnlineUsersResponseData is the JSON body for GET /online_users.
 type OnlineUsersResponseData struct {
 	Pilots []OnlineUserPilot `json:"pilots"`
 	ATC    []OnlineUserATC   `json:"atc"`
 }
 
 func (s *Server) handleGetOnlineUsers(c *gin.Context) {
-	clients := s.postOffice.Snapshot()
+	clients := s.registry.Snapshot()
 
 	resData := OnlineUsersResponseData{
 		Pilots: make([]OnlineUserPilot, 0, 512),
@@ -153,7 +157,7 @@ func (s *Server) handleKickUser(c *gin.Context) {
 		c.AbortWithStatus(http.StatusBadRequest)
 	}
 
-	client, err := s.postOffice.Find(reqBody.Callsign)
+	client, err := s.registry.Find(reqBody.Callsign)
 	if err != nil {
 		if !errors.Is(err, postoffice.ErrCallsignDoesNotExist) {
 			c.AbortWithStatus(http.StatusInternalServerError)

@@ -1,4 +1,4 @@
-package fsd
+package server
 
 import (
 	"bytes"
@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/renorris/openfsd/internal/postoffice"
 	"github.com/renorris/openfsd/internal/session"
 	"github.com/renorris/openfsd/pkg/protocol"
 )
@@ -196,7 +195,7 @@ func parseVisRange(packet []byte, index int) (visRange float64, ok bool) {
 }
 
 // forwardClientQuery freely routes a client query packet depending on the recipient.
-func forwardClientQuery(po *postoffice.PostOffice, client *session.Session, packet []byte) {
+func forwardClientQuery(reg Registry, client *session.Session, packet []byte) {
 	recipient := getField(packet, 1)
 
 	if len(recipient) < 2 {
@@ -207,21 +206,21 @@ func forwardClientQuery(po *postoffice.PostOffice, client *session.Session, pack
 	switch string(recipient) {
 	case "@94835":
 		// Broadcast to in-range ATC
-		broadcastRangedAtcOnly(po, client, packet)
+		broadcastRangedAtcOnly(reg, client, packet)
 		return
 	case "@94836":
 		// Broadcast to all in-range clients
-		broadcastRanged(po, client, packet)
+		broadcastRanged(reg, client, packet)
 		return
 	}
 
-	sendDirectOrErr(po, client, recipient, packet)
+	sendDirectOrErr(reg, client, recipient, packet)
 }
 
 // broadcastRanged broadcasts a packet to all clients in range
-func broadcastRanged(po *postoffice.PostOffice, client *session.Session, packet []byte) {
+func broadcastRanged(reg Registry, client *session.Session, packet []byte) {
 	packetStr := string(packet)
-	po.Search(client, func(recipient *session.Session) bool {
+	reg.Search(client, func(recipient *session.Session) bool {
 		recipient.Send(packetStr)
 		return true
 	})
@@ -229,9 +228,9 @@ func broadcastRanged(po *postoffice.PostOffice, client *session.Session, packet 
 
 // broadcastRangedVelocity broadcasts a packet to all clients in range
 // supporting the Vatsim2022 (101) protocol revision.
-func broadcastRangedVelocity(po *postoffice.PostOffice, client *session.Session, packet []byte) {
+func broadcastRangedVelocity(reg Registry, client *session.Session, packet []byte) {
 	packetStr := string(packet)
-	po.Search(client, func(recipient *session.Session) bool {
+	reg.Search(client, func(recipient *session.Session) bool {
 		if recipient.ProtoRevision != 101 {
 			return true
 		}
@@ -241,9 +240,9 @@ func broadcastRangedVelocity(po *postoffice.PostOffice, client *session.Session,
 }
 
 // broadcastRangedAtcOnly broadcasts a packet to all ATC clients in range
-func broadcastRangedAtcOnly(po *postoffice.PostOffice, client *session.Session, packet []byte) {
+func broadcastRangedAtcOnly(reg Registry, client *session.Session, packet []byte) {
 	packetStr := string(packet)
-	po.Search(client, func(recipient *session.Session) bool {
+	reg.Search(client, func(recipient *session.Session) bool {
 		if !recipient.IsAtc {
 			return true
 		}
@@ -253,18 +252,18 @@ func broadcastRangedAtcOnly(po *postoffice.PostOffice, client *session.Session, 
 }
 
 // broadcastAll broadcasts a packet to the entire server
-func broadcastAll(po *postoffice.PostOffice, client *session.Session, packet []byte) {
+func broadcastAll(reg Registry, client *session.Session, packet []byte) {
 	packetStr := string(packet)
-	po.All(client, func(recipient *session.Session) bool {
+	reg.All(client, func(recipient *session.Session) bool {
 		recipient.Send(packetStr)
 		return true
 	})
 }
 
 // broadcastAllATC broadcasts a packet to all ATC on entire server
-func broadcastAllATC(po *postoffice.PostOffice, client *session.Session, packet []byte) {
+func broadcastAllATC(reg Registry, client *session.Session, packet []byte) {
 	packetStr := string(packet)
-	po.All(client, func(recipient *session.Session) bool {
+	reg.All(client, func(recipient *session.Session) bool {
 		if !recipient.IsAtc {
 			return true
 		}
@@ -273,10 +272,10 @@ func broadcastAllATC(po *postoffice.PostOffice, client *session.Session, packet 
 	})
 }
 
-// broadcastAll broadcasts a packet to all supervisors on the server
-func broadcastAllSupervisors(po *postoffice.PostOffice, client *session.Session, packet []byte) {
+// broadcastAllSupervisors broadcasts a packet to all supervisors on the server
+func broadcastAllSupervisors(reg Registry, client *session.Session, packet []byte) {
 	packetStr := string(packet)
-	po.All(client, func(recipient *session.Session) bool {
+	reg.All(client, func(recipient *session.Session) bool {
 		if recipient.NetworkRating < NetworkRatingSupervisor {
 			return true
 		}
@@ -286,10 +285,10 @@ func broadcastAllSupervisors(po *postoffice.PostOffice, client *session.Session,
 }
 
 // sendDirectOrErr attempts to send a packet directly to a recipient.
-// If the post office responds with an ErrCallsignDoesNotExist, the client
+// If the registry responds with ErrCallsignDoesNotExist, the client
 // is notified with a NoSuchCallsignError.
-func sendDirectOrErr(po *postoffice.PostOffice, client *session.Session, recipient []byte, packet []byte) {
-	if err := po.Send(string(recipient), string(packet)); err != nil {
+func sendDirectOrErr(reg Registry, client *session.Session, recipient []byte, packet []byte) {
+	if err := reg.Send(string(recipient), string(packet)); err != nil {
 		client.SendError(NoSuchCallsignError, "No such callsign")
 		return
 	}

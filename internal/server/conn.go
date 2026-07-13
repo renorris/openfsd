@@ -1,4 +1,4 @@
-package fsd
+package server
 
 import (
 	"bufio"
@@ -7,11 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"net"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/renorris/openfsd/db"
 	"github.com/renorris/openfsd/internal/auth"
@@ -35,14 +33,14 @@ func sendError(conn io.Writer, code int, message string) (err error) {
 func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 	defer func() {
 		if err := recover(); err != nil {
-			slog.Error("FSD connection goroutine panicked", "err", err)
+			s.logger.Error("FSD connection goroutine panicked", "err", err)
 		}
 	}()
 
 	defer conn.Close()
 
 	if err := sendServerIdent(conn); err != nil {
-		slog.Debug("error sending server ident", "err", err)
+		s.logger.Debug("error sending server ident", "err", err)
 		return
 	}
 
@@ -50,7 +48,7 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 	buf := make([]byte, 4096)
 	scanner.Buffer(buf, len(buf))
 
-	data, token, err := readLoginPackets(conn, scanner)
+	data, token, err := readLoginPackets(conn, scanner, s.clock)
 	if err != nil {
 		return
 	}
@@ -69,14 +67,14 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 		return
 	}
 
-	// Attempt to register to post office
-	if err = s.postOffice.Register(client); err != nil {
+	// Attempt to register to registry
+	if err = s.registry.Register(client); err != nil {
 		if errors.Is(err, postoffice.ErrCallsignInUse) {
 			sendError(conn, CallsignInUseError, "Callsign already in use")
 		}
 		return
 	}
-	defer s.postOffice.Release(client)
+	defer s.registry.Release(client)
 
 	// Start sender before any post-login outbound traffic (MOTD, etc.).
 	// After this point, all writes go through client.Send → SenderWorker.
@@ -143,7 +141,7 @@ var ErrInvalidIDPacket = errors.New("invalid ID packet")
 // the client identification packet and the add packet.
 // It parses these packets to extract the client's data and returns it in a LoginData struct.
 // If any errors occur during reading or parsing, it sends an error to the client and returns an error.
-func readLoginPackets(conn net.Conn, scanner *bufio.Scanner) (data session.LoginData, token string, err error) {
+func readLoginPackets(conn net.Conn, scanner *bufio.Scanner, clock Clock) (data session.LoginData, token string, err error) {
 	// Client ident
 	if !scanner.Scan() {
 		err = ErrInvalidIDPacket
@@ -266,7 +264,7 @@ func readLoginPackets(conn net.Conn, scanner *bufio.Scanner) (data session.Login
 		return
 	}
 
-	data.LoginTime = time.Now()
+	data.LoginTime = clock.Now()
 
 	return
 }
@@ -289,7 +287,7 @@ func (s *Server) attemptAuthentication(client *session.Session, token string) (e
 	// Check if the provided token is actually a JWT
 	if mostLikelyJwt([]byte(token)) {
 		var jwtSecret string
-		if jwtSecret, err = s.dbRepo.ConfigRepo.Get(db.ConfigJwtSecretKey); err != nil {
+		if jwtSecret, err = s.configKV.Get(db.ConfigJwtSecretKey); err != nil {
 			return
 		}
 
@@ -332,7 +330,7 @@ func (s *Server) attemptAuthentication(client *session.Session, token string) (e
 	password := token
 
 	// Attempt to fetch user
-	user, err := s.dbRepo.UserRepo.GetUserByCID(client.CID)
+	user, err := s.users.GetUserByCID(client.CID)
 	if err != nil {
 		err = ErrInvalidAddPacket
 		sendError(client.Conn, InvalidLogonError, invalidLogonMsg)
@@ -340,7 +338,7 @@ func (s *Server) attemptAuthentication(client *session.Session, token string) (e
 	}
 
 	// Verify password hash
-	if !s.dbRepo.UserRepo.VerifyPasswordHash(password, user.Password) {
+	if !s.users.VerifyPasswordHash(password, user.Password) {
 		err = ErrInvalidAddPacket
 		sendError(client.Conn, InvalidLogonError, invalidLogonMsg)
 		return
@@ -382,7 +380,7 @@ func (s *Server) broadcastAddPacket(client *session.Session) {
 			client.RealName)
 	}
 
-	broadcastAll(s.postOffice, client, []byte(packet))
+	broadcastAll(s.registry, client, []byte(packet))
 }
 
 func (s *Server) broadcastDisconnectPacket(client *session.Session) {
@@ -398,11 +396,11 @@ func (s *Server) broadcastDisconnectPacket(client *session.Session) {
 	packet.WriteString(strconv.Itoa(client.CID))
 	packet.WriteString("\r\n")
 
-	broadcastAll(s.postOffice, client, []byte(packet.String()))
+	broadcastAll(s.registry, client, []byte(packet.String()))
 }
 
 func (s *Server) sendMotd(client *session.Session) (err error) {
-	welcomeMsg := db.GetWelcomeMessage(s.dbRepo.ConfigRepo)
+	welcomeMsg, _ := s.configKV.Get(db.ConfigWelcomeMessage)
 	if welcomeMsg != "" {
 		lines := strings.Split(welcomeMsg, "\n")
 		for i := range lines {

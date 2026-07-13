@@ -1,11 +1,11 @@
-package fsd
+package server
 
 import (
 	"github.com/renorris/openfsd/internal/session"
 	"github.com/renorris/openfsd/pkg/protocol"
 )
 
-// PacketType re-exports protocol.PacketType so existing fsd code keeps compiling.
+// PacketType re-exports protocol.PacketType so server handlers keep compiling.
 type PacketType = protocol.PacketType
 
 const (
