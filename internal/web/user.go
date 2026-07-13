@@ -104,7 +104,14 @@ func (s *Server) updateUser(c *gin.Context) {
 	if reqBody.LastName != nil {
 		targetUser.LastName = reqBody.LastName
 	}
+	// Ceiling matches createUser and the no-JS form path: cannot assign a
+	// network_rating above the actor's own rating (privilege escalation).
 	if reqBody.NetworkRating != nil {
+		if *reqBody.NetworkRating > int(claims.NetworkRating) {
+			res := newAPIV1Failure("cannot set rating above your own")
+			writeAPIV1Response(c, http.StatusForbidden, &res)
+			return
+		}
 		targetUser.NetworkRating = *reqBody.NetworkRating
 	}
 

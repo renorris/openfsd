@@ -47,12 +47,6 @@ func (s *Server) handleFrontendConfigEditor(c *gin.Context) {
 	switch c.Query("flash") {
 	case "saved":
 		page.FlashSuccess = "Configuration saved"
-	case "secret_reset":
-		page.FlashSuccess = "JWT secret key reset. All sessions and API tokens are invalidated."
-	case "token_created":
-		// Token value is not put in the query string (too long / sensitive in logs).
-		// The create-token POST re-renders with CreatedToken instead of redirecting.
-		page.FlashSuccess = "API token created"
 	}
 	s.writeTemplate(c, "configeditor", page)
 }
@@ -79,6 +73,9 @@ func (s *Server) handleFrontendConfigUpdate(c *gin.Context) {
 		page.Fields[i].Value = c.PostForm("cfg_" + key)
 	}
 
+	// Best-effort multi-key save: ConfigRepo has no multi-Set transaction, so a
+	// mid-loop failure can leave earlier keys already written. Keys are allowlisted
+	// and low-risk; operators can re-submit the form to retry.
 	for i := range page.Fields {
 		f := page.Fields[i]
 		if !isEditableConfigKey(f.Key) {

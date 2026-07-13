@@ -14,16 +14,29 @@ import (
 
 func (s *Server) newUserEditorPage(c *gin.Context) userEditorPage {
 	claims := getJwtContext(c)
+	maxRating := int(claims.NetworkRating)
+	defaultRating := int(protocol.NetworkRatingObserver)
+	if defaultRating > maxRating {
+		defaultRating = maxRating
+	}
 	return userEditorPage{
 		basePage: basePage{
 			User:      pageUserFromClaims(claims),
 			CSRFToken: s.issueCSRFToken(c),
 		},
 		Create: userForm{
-			NetworkRating: int(protocol.NetworkRatingObserver),
+			NetworkRating: defaultRating,
 		},
-		RatingOptions: allRatingOptions(int(protocol.NetworkRatingObserver)),
+		// Only offer ratings the actor may assign (server still enforces ceiling).
+		RatingOptions: ratingOptionsUpTo(maxRating, defaultRating),
 	}
+}
+
+func actorMaxRating(page *userEditorPage) int {
+	if page.User == nil {
+		return int(protocol.NetworkRatingObserver)
+	}
+	return page.User.NetworkRating
 }
 
 // handleFrontendUserEditor renders the supervisor user editor.
@@ -68,7 +81,9 @@ func (s *Server) loadUserIntoEditForm(page *userEditorPage, cidStr string) {
 		LastName:      safeStr(user.LastName),
 		NetworkRating: user.NetworkRating,
 	}
-	page.RatingOptions = allRatingOptions(user.NetworkRating)
+	// Keep create/edit selects capped at actor max; selected value is the loaded rating
+	// (may appear only via value compare in template if above max — rare for higher targets).
+	page.RatingOptions = ratingOptionsUpTo(actorMaxRating(page), user.NetworkRating)
 }
 
 // handleFrontendUserCreate processes POST /usereditor/create (no-JS form path).
@@ -90,15 +105,17 @@ func (s *Server) handleFrontendUserCreate(c *gin.Context) {
 	page.Create.LastName = lastName
 	page.Create.Password = "" // never re-render password
 
+	maxRating := int(claims.NetworkRating)
 	rating, err := strconv.Atoi(ratingStr)
 	if err != nil {
 		page.Create.RatingError = "Select a network rating"
 		page.Create.NetworkRating = int(protocol.NetworkRatingObserver)
+		page.RatingOptions = ratingOptionsUpTo(maxRating, page.Create.NetworkRating)
 		s.writeTemplate(c, "usereditor", page)
 		return
 	}
 	page.Create.NetworkRating = rating
-	page.RatingOptions = allRatingOptions(rating)
+	page.RatingOptions = ratingOptionsUpTo(maxRating, rating)
 
 	if len(password) < 8 {
 		page.Create.PasswordError = "Password must be at least 8 characters"
@@ -115,7 +132,7 @@ func (s *Server) handleFrontendUserCreate(c *gin.Context) {
 		s.writeTemplate(c, "usereditor", page)
 		return
 	}
-	if claims.NetworkRating < protocol.NetworkRatingSupervisor || rating > int(claims.NetworkRating) {
+	if claims.NetworkRating < protocol.NetworkRatingSupervisor || rating > maxRating {
 		page.Create.Error = "You cannot create a user with that rating"
 		s.writeTemplate(c, "usereditor", page)
 		return
@@ -175,16 +192,17 @@ func (s *Server) handleFrontendUserUpdate(c *gin.Context) {
 		return
 	}
 
+	maxRating := int(claims.NetworkRating)
 	rating, err := strconv.Atoi(ratingStr)
 	if err != nil || rating < -1 || rating > 12 {
 		page.Edit.RatingError = "Invalid network rating"
 		page.Edit.NetworkRating = int(protocol.NetworkRatingObserver)
-		page.RatingOptions = allRatingOptions(page.Edit.NetworkRating)
+		page.RatingOptions = ratingOptionsUpTo(maxRating, page.Edit.NetworkRating)
 		s.writeTemplate(c, "usereditor", page)
 		return
 	}
 	page.Edit.NetworkRating = rating
-	page.RatingOptions = allRatingOptions(rating)
+	page.RatingOptions = ratingOptionsUpTo(maxRating, rating)
 
 	if password != "" {
 		if len(password) < 8 {

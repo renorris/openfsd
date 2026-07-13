@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/renorris/openfsd/internal/auth"
+	"github.com/renorris/openfsd/internal/db"
 	"github.com/renorris/openfsd/pkg/protocol"
 )
 
@@ -165,11 +166,18 @@ func networkRatingLabel(val int) string {
 	}
 }
 
-// allRatingOptions returns every network rating for select elements.
-func allRatingOptions(selected int) []ratingOption {
-	vals := []int{-1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}
-	out := make([]ratingOption, 0, len(vals))
-	for _, v := range vals {
+// ratingOptionsUpTo returns network rating select options from Inactive (−1)
+// through maxInclusive (clamped to Administrator). Actors only see ratings
+// they are allowed to assign (server still enforces the ceiling).
+func ratingOptionsUpTo(maxInclusive int, selected int) []ratingOption {
+	if maxInclusive > int(protocol.NetworkRatingAdministator) {
+		maxInclusive = int(protocol.NetworkRatingAdministator)
+	}
+	if maxInclusive < int(protocol.NetworkRatingInactive) {
+		maxInclusive = int(protocol.NetworkRatingInactive)
+	}
+	out := make([]ratingOption, 0, maxInclusive-int(protocol.NetworkRatingInactive)+1)
+	for v := int(protocol.NetworkRatingInactive); v <= maxInclusive; v++ {
 		out = append(out, ratingOption{
 			Value:    v,
 			Label:    networkRatingLabel(v),
@@ -180,6 +188,7 @@ func allRatingOptions(selected int) []ratingOption {
 }
 
 // editableConfigKeys is the allowlist of config keys shown/mutated via the form UI.
+// Keys use db.Config* constants so the form allowlist cannot drift from the repository.
 var editableConfigKeys = []struct {
 	Key         string
 	Label       string
@@ -187,31 +196,31 @@ var editableConfigKeys = []struct {
 	Placeholder string
 }{
 	{
-		Key:         "WELCOME_MESSAGE",
+		Key:         db.ConfigWelcomeMessage,
 		Label:       "Welcome Message",
 		Description: "Welcome message sent to FSD clients after they connect",
 		Placeholder: "Welcome to my FSD server!",
 	},
 	{
-		Key:         "FSD_SERVER_HOSTNAME",
+		Key:         db.ConfigFsdServerHostname,
 		Label:       "FSD Server Hostname",
 		Description: "Server hostname advertised to clients",
 		Placeholder: "myfsdserver.com",
 	},
 	{
-		Key:         "FSD_SERVER_IDENT",
+		Key:         db.ConfigFsdServerIdent,
 		Label:       "FSD Server Ident",
 		Description: "Server ident advertised to clients",
 		Placeholder: "MY-FSD-SERVER",
 	},
 	{
-		Key:         "FSD_SERVER_LOCATION",
+		Key:         db.ConfigFsdServerLocation,
 		Label:       "FSD Server Location",
 		Description: "Geographical server location advertised to clients",
 		Placeholder: "East US",
 	},
 	{
-		Key:         "API_SERVER_BASE_URL",
+		Key:         db.ConfigApiServerBaseURL,
 		Label:       "API Server Base URL",
 		Description: "API server base URL advertised to clients",
 		Placeholder: "https://example.com",

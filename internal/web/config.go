@@ -76,6 +76,7 @@ func (s *Server) handleUpdateConfig(c *gin.Context) {
 		return
 	}
 
+	// Best-effort multi-key write (no multi-Set transaction on ConfigRepo).
 	for i := range reqBody.KeyValuePairs {
 		kv := reqBody.KeyValuePairs[i]
 		if !isEditableConfigKey(kv.Key) {

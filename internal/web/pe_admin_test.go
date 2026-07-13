@@ -407,3 +407,180 @@ func TestConfigUpdateViaAPIStillRequiresAuth(t *testing.T) {
 		t.Fatalf("status %d want 401, body %s", w.Code, body)
 	}
 }
+
+// TestAPIUpdateUserCannotElevateRatingAboveActor is the Issue 1 regression:
+// supervisor cannot PATCH an observer to Administrator via the JSON API.
+func TestAPIUpdateUserCannotElevateRatingAboveActor(t *testing.T) {
+	ts := newTestServer(t)
+	sup := createTestUser(t, ts, "sup-pass", int(protocol.NetworkRatingSupervisor))
+	target := createTestUser(t, ts, "obs-pass", int(protocol.NetworkRatingObserver))
+
+	// Obtain Bearer access token
+	loginBody := `{"cid":` + itoa(sup.CID) + `,"password":"sup-pass"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(loginBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	ts.engine.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("auth login %d %s", w.Code, w.Body.String())
+	}
+	respBody := w.Body.String()
+	marker := `"access_token":"`
+	i := strings.Index(respBody, marker)
+	if i < 0 {
+		t.Fatalf("no access token in %s", respBody)
+	}
+	rest := respBody[i+len(marker):]
+	j := strings.Index(rest, `"`)
+	token := rest[:j]
+
+	// Attempt privilege escalation: set rating to Administrator (12)
+	payload := `{"cid":` + itoa(target.CID) + `,"network_rating":12}`
+	req = httptest.NewRequest(http.MethodPatch, "/api/v1/user/update", strings.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	w = httptest.NewRecorder()
+	ts.engine.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("elevate via API status %d want 403, body %s", w.Code, w.Body.String())
+	}
+
+	// DB must be unchanged
+	u, err := ts.dbRepo.UserRepo.GetUserByCID(target.CID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.NetworkRating != int(protocol.NetworkRatingObserver) {
+		t.Fatalf("target rating = %d, want still Observer", u.NetworkRating)
+	}
+}
+
+// Cookie+CSRF path of the same elevation hole.
+func TestAPIUpdateUserCannotElevateViaCookieSession(t *testing.T) {
+	ts := newTestServer(t)
+	sup := createTestUser(t, ts, "sup-pass", int(protocol.NetworkRatingSupervisor))
+	target := createTestUser(t, ts, "obs-pass", int(protocol.NetworkRatingObserver))
+	cookies := formLogin(t, ts, sup.CID, "sup-pass")
+
+	// Ensure CSRF cookie
+	_, cookies = authedGET(t, ts, "/dashboard", cookies)
+	csrf := csrfFromCookies(cookies)
+	if csrf == "" {
+		t.Fatal("missing csrf after dashboard")
+	}
+
+	payload := `{"cid":` + itoa(target.CID) + `,"network_rating":12}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/user/update", strings.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Cookie", cookieHeader(cookies))
+	req.Header.Set(csrfHeaderName, csrf)
+	// No Authorization — cookie session only
+	w := httptest.NewRecorder()
+	ts.engine.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("cookie elevate status %d want 403, body %s", w.Code, w.Body.String())
+	}
+
+	u, err := ts.dbRepo.UserRepo.GetUserByCID(target.CID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.NetworkRating != int(protocol.NetworkRatingObserver) {
+		t.Fatalf("target rating = %d after cookie elevate attempt", u.NetworkRating)
+	}
+}
+
+func TestSupervisorCannotCreateAdminViaForm(t *testing.T) {
+	ts := newTestServer(t)
+	sup := createTestUser(t, ts, "sup-pass", int(protocol.NetworkRatingSupervisor))
+	cookies := formLogin(t, ts, sup.CID, "sup-pass")
+
+	// UI should not offer Administrator option for supervisor
+	w, cookies := authedGET(t, ts, "/usereditor", cookies)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET usereditor %d", w.Code)
+	}
+	body := w.Body.String()
+	if strings.Contains(body, `value="12"`) {
+		t.Fatal("supervisor usereditor should not list Administrator (12) option")
+	}
+
+	form := url.Values{}
+	form.Set("first_name", "Elevated")
+	form.Set("password", "password99")
+	form.Set("network_rating", "12") // forced POST bypassing UI
+	w, _ = formPOST(t, ts, "/usereditor/create", form, cookies)
+	// Server re-renders with error (200), not redirect success
+	if w.Code == http.StatusSeeOther {
+		t.Fatalf("create admin must not redirect success, Location=%s", w.Header().Get("Location"))
+	}
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d want 200 re-render", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "You cannot create a user with that rating") {
+		t.Fatalf("expected rating ceiling error, body=%s", clip(w.Body.String(), 500))
+	}
+}
+
+func TestSupervisorCannotPromoteToAdminViaForm(t *testing.T) {
+	ts := newTestServer(t)
+	sup := createTestUser(t, ts, "sup-pass", int(protocol.NetworkRatingSupervisor))
+	target := createTestUser(t, ts, "obs-pass", int(protocol.NetworkRatingObserver))
+	cookies := formLogin(t, ts, sup.CID, "sup-pass")
+
+	form := url.Values{}
+	form.Set("cid", itoa(target.CID))
+	form.Set("first_name", "Still")
+	form.Set("last_name", "Observer")
+	form.Set("network_rating", "12")
+	form.Set("password", "")
+	w, _ := formPOST(t, ts, "/usereditor/update", form, cookies)
+	if w.Code == http.StatusSeeOther {
+		t.Fatalf("promote to admin must not succeed, Location=%s", w.Header().Get("Location"))
+	}
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d want 200 re-render", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "Cannot set rating above your own") {
+		t.Fatalf("expected ceiling error, body=%s", clip(w.Body.String(), 500))
+	}
+
+	u, err := ts.dbRepo.UserRepo.GetUserByCID(target.CID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.NetworkRating != int(protocol.NetworkRatingObserver) {
+		t.Fatalf("DB rating = %d, want Observer still", u.NetworkRating)
+	}
+}
+
+func TestSupervisorCannotUpdateHigherRatedUserViaForm(t *testing.T) {
+	ts := newTestServer(t)
+	// Create admin first so CID ordering is fine; login as supervisor
+	admin := createTestUser(t, ts, "admin-pass", int(protocol.NetworkRatingAdministator))
+	sup := createTestUser(t, ts, "sup-pass", int(protocol.NetworkRatingSupervisor))
+	cookies := formLogin(t, ts, sup.CID, "sup-pass")
+
+	form := url.Values{}
+	form.Set("cid", itoa(admin.CID))
+	form.Set("first_name", "Hacked")
+	form.Set("last_name", "Admin")
+	form.Set("network_rating", "11")
+	form.Set("password", "")
+	w, _ := formPOST(t, ts, "/usereditor/update", form, cookies)
+	if w.Code == http.StatusSeeOther {
+		t.Fatalf("must not update higher-rated user, Location=%s", w.Header().Get("Location"))
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "Cannot update user with higher network rating") {
+		t.Fatalf("expected higher-target error, body=%s", clip(body, 500))
+	}
+
+	u, err := ts.dbRepo.UserRepo.GetUserByCID(admin.CID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if safeStr(u.FirstName) == "Hacked" {
+		t.Fatal("admin first name must not change")
+	}
+}
