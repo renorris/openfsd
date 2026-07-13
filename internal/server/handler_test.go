@@ -21,6 +21,11 @@ import (
 
 // fakeRegistry is an in-memory Registry for handler unit tests.
 // Search/All deliver to every registered session except the source.
+// There is no geo/range filter — intentional simplification for unit tests
+// (handlers under test do not implement geo themselves).
+//
+// Search/All snapshot recipients under lock then invoke callbacks after unlock,
+// matching postoffice deadlock semantics (callbacks may Session.Send / re-enter).
 type fakeRegistry struct {
 	mu       sync.Mutex
 	sessions map[string]*session.Session
@@ -35,6 +40,9 @@ type fakeRegistry struct {
 	searchCalls int
 	allCalls    int
 }
+
+// Compile-time interface satisfaction (matches deps.go production checks).
+var _ Registry = (*fakeRegistry)(nil)
 
 func newFakeRegistry(ss ...*session.Session) *fakeRegistry {
 	r := &fakeRegistry{sessions: make(map[string]*session.Session)}
@@ -74,13 +82,20 @@ func (r *fakeRegistry) UpdatePosition(s *session.Session, center [2]float64, vis
 
 func (r *fakeRegistry) Search(s *session.Session, fn func(*session.Session) bool) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	r.searchCalls++
-	for cs, other := range r.sessions {
-		if cs == s.Callsign {
+	// Snapshot under lock; exclude self by pointer (matches postoffice.Search).
+	// No geo filter — every other registered session is "in range."
+	found := make([]*session.Session, 0, len(r.sessions))
+	for _, other := range r.sessions {
+		if other == s {
 			continue
 		}
-		if !fn(other) {
+		found = append(found, other)
+	}
+	r.mu.Unlock()
+
+	for _, recipient := range found {
+		if !fn(recipient) {
 			return
 		}
 	}
@@ -88,17 +103,19 @@ func (r *fakeRegistry) Search(s *session.Session, fn func(*session.Session) bool
 
 func (r *fakeRegistry) All(except *session.Session, fn func(*session.Session) bool) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	r.allCalls++
-	exceptCS := ""
-	if except != nil {
-		exceptCS = except.Callsign
-	}
-	for cs, other := range r.sessions {
-		if cs == exceptCS {
+	// Snapshot under lock; exclude by pointer identity (matches postoffice.All).
+	recipients := make([]*session.Session, 0, len(r.sessions))
+	for _, other := range r.sessions {
+		if other == except {
 			continue
 		}
-		if !fn(other) {
+		recipients = append(recipients, other)
+	}
+	r.mu.Unlock()
+
+	for _, recipient := range recipients {
+		if !fn(recipient) {
 			return
 		}
 	}
@@ -106,9 +123,9 @@ func (r *fakeRegistry) All(except *session.Session, fn func(*session.Session) bo
 
 func (r *fakeRegistry) Send(callsign, packet string) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	r.directSends = append(r.directSends, struct{ to, packet string }{callsign, packet})
 	s, ok := r.sessions[callsign]
+	r.mu.Unlock()
 	if !ok {
 		return ErrCallsignDoesNotExist
 	}
@@ -1066,25 +1083,29 @@ func TestHandleClientQuery(t *testing.T) {
 
 func TestHandleKillRequest(t *testing.T) {
 	tests := []struct {
-		name        string
-		client      func() *session.Session
-		packet      string
-		setupVictim bool
-		wantCancel  bool
-		wantErr     int
-		wantNoOp    bool
+		name       string
+		client     func() *session.Session
+		packet     string
+		victimCS   string // if non-empty, register this callsign as victim
+		wantCancel bool
+		wantErr    int
+		wantNoOp   bool
 	}{
 		{
-			name:        "supervisor kills victim",
-			client:      func() *session.Session { return newSUP("SUP1") },
-			packet:      "$!!SUP1:N123AB:reason\r\n",
-			setupVictim: true,
-			wantCancel:  true,
+			name:       "supervisor kills victim",
+			client:     func() *session.Session { return newSUP("SUP1") },
+			packet:     "$!!SUP1:N123AB:reason\r\n",
+			victimCS:   "N123AB",
+			wantCancel: true,
 		},
 		{
+			// Non-sup must not cancel a registered victim and must not emit $ER
+			// (rating gate returns before Find). Without a victim this subtest
+			// would assert nothing if the gate were dropped and Find failed.
 			name:     "non-sup ignored",
 			client:   func() *session.Session { return newPilot("N123AB") },
 			packet:   "$!!N123AB:N456CD:reason\r\n",
+			victimCS: "N456CD",
 			wantNoOp: true,
 		},
 		{
@@ -1100,8 +1121,8 @@ func TestHandleKillRequest(t *testing.T) {
 			client := tc.client()
 			var victim *session.Session
 			reg := newFakeRegistry(client)
-			if tc.setupVictim {
-				victim = newPilot("N123AB")
+			if tc.victimCS != "" {
+				victim = newPilot(tc.victimCS)
 				_ = reg.Register(victim)
 			}
 			s := testServer(reg, nil)
@@ -1114,14 +1135,22 @@ func TestHandleKillRequest(t *testing.T) {
 					t.Fatal("victim should be cancelled")
 				}
 			}
-			if tc.wantErr != 0 && !hasErrorCode(drainOutbound(client), tc.wantErr) {
-				t.Fatalf("expected error %d", tc.wantErr)
+			out := drainOutbound(client)
+			if tc.wantErr != 0 && !hasErrorCode(out, tc.wantErr) {
+				t.Fatalf("expected error %d, packets=%v", tc.wantErr, out)
 			}
-			if tc.wantNoOp && victim != nil {
+			if tc.wantNoOp {
+				if victim == nil {
+					t.Fatal("wantNoOp requires a registered victim")
+				}
 				select {
 				case <-victim.Ctx.Done():
 					t.Fatal("victim should not be cancelled")
 				default:
+				}
+				// Rating gate returns before Find: no $ER and no kill side effects.
+				if len(out) != 0 {
+					t.Fatalf("non-sup should emit no packets, got %v", out)
 				}
 			}
 		})
@@ -1185,10 +1214,7 @@ func TestHandleHandoff(t *testing.T) {
 			dst := newATC("JFK_APP", 5, NetworkRatingStudent3)
 			reg := newFakeRegistry(client, dst)
 			s := testServer(reg, nil)
-			pkt := []byte("#" /* place holder */)
-			// real handoff packet
-			cs := client.Callsign
-			pkt = []byte("$HO" + cs + ":JFK_APP:N999\r\n")
+			pkt := []byte("$HO" + client.Callsign + ":JFK_APP:N999\r\n")
 			s.handleHandoff(client, pkt)
 
 			if tc.wantDirect && (len(reg.directSends) == 0 || reg.directSends[0].to != "JFK_APP") {
