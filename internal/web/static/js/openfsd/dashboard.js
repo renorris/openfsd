@@ -1,7 +1,12 @@
-// Dashboard map enhancement (vanilla JS). User identity is server-rendered;
-// map polling is progressive enhancement only.
+// Dashboard map enhancement (vanilla JS, no jQuery).
+//
+// JS budget exception: this route may load Leaflet (vendor) + this module.
+// User identity and connection summary are server-rendered; map polling is
+// progressive enhancement only. credentials: 'same-origin' so the session
+// cookie authenticates datafeed fetches (no localStorage Bearer).
 
 let userNetworkRating = 0;
+let dashboardMarkers = [];
 
 async function kickUser(callsign) {
     try {
@@ -12,27 +17,7 @@ async function kickUser(callsign) {
     }
 }
 
-function networkRatingFromInt(val) {
-    switch (val) {
-        case -1: return "Inactive";
-        case 0: return "Suspended";
-        case 1: return "Observer";
-        case 2: return "Student 1";
-        case 3: return "Student 2";
-        case 4: return "Student 3";
-        case 5: return "Controller 1";
-        case 6: return "Controller 2";
-        case 7: return "Controller 3";
-        case 8: return "Instructor 1";
-        case 9: return "Instructor 2";
-        case 10: return "Instructor 3";
-        case 11: return "Supervisor";
-        case 12: return "Administrator";
-        default: return "Unknown";
-    }
-}
-
-document.addEventListener("DOMContentLoaded", async () => {
+document.addEventListener("DOMContentLoaded", async function () {
     const root = document.getElementById("dashboard-root");
     if (root) {
         userNetworkRating = parseInt(root.dataset.networkRating || "0", 10) || 0;
@@ -40,6 +25,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     const mapEl = document.getElementById("map");
     if (!mapEl || typeof L === "undefined") {
+        // Map enhancement unavailable; server-rendered summary already present.
         return;
     }
 
@@ -56,10 +42,10 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
 
     await populateMap(map, planeIcon);
-    setInterval(() => { populateMap(map, planeIcon); }, 15000);
+    setInterval(function () {
+        populateMap(map, planeIcon);
+    }, 15000);
 });
-
-let dashboardMarkers = [];
 
 async function populateMap(map, planeIcon) {
     try {
@@ -74,19 +60,19 @@ async function populateMap(map, planeIcon) {
         const data = await res.json();
 
         const openCallsigns = new Set();
-        dashboardMarkers.forEach((marker) => {
+        dashboardMarkers.forEach(function (marker) {
             if (marker.getPopup() && marker.getPopup().isOpen()) {
                 openCallsigns.add(marker.options.title);
             }
         });
 
-        dashboardMarkers.forEach((marker) => {
+        dashboardMarkers.forEach(function (marker) {
             map.removeLayer(marker);
         });
         dashboardMarkers = [];
 
         const pilots = (data && data.pilots) || [];
-        pilots.forEach((pilot) => {
+        pilots.forEach(function (pilot) {
             const callsign = pilot.callsign;
             const lat = pilot.latitude;
             const lon = pilot.longitude;
@@ -100,7 +86,7 @@ async function populateMap(map, planeIcon) {
                 title: callsign
             });
 
-            // Build popup with text nodes / safe strings only for user fields.
+            // Build popup with text nodes only (never innerHTML with user fields).
             const wrap = document.createElement("div");
             const b = document.createElement("b");
             b.textContent = "Callsign: ";
@@ -115,7 +101,9 @@ async function populateMap(map, planeIcon) {
                 const btn = document.createElement("button");
                 btn.type = "button";
                 btn.textContent = "Kick";
-                btn.addEventListener("click", () => kickUser(callsign));
+                btn.addEventListener("click", function () {
+                    kickUser(callsign);
+                });
                 wrap.appendChild(btn);
             }
             marker.bindPopup(wrap);
@@ -126,14 +114,16 @@ async function populateMap(map, planeIcon) {
                 marker.openPopup();
             }
         });
-        const countEl = document.getElementById("dashboard-connection-count");
-        if (countEl) {
-            countEl.textContent = String(dashboardMarkers.length);
+
+        // Optionally refresh the count as enhancement (table stays server-rendered
+        // until full page reload). Use textContent only.
+        const countEl = document.querySelector("[data-js=connection-count]");
+        if (countEl && countEl.tagName === "SPAN") {
+            const atc = (data && data.controllers) || (data && data.atc) || [];
+            const total = pilots.length + (Array.isArray(atc) ? atc.length : 0);
+            countEl.textContent = String(total);
         }
     } catch (error) {
         console.error("Failed to fetch pilot data:", error);
     }
 }
-
-// Keep label helper available for any future UI; networkRatingFromInt unused is OK.
-void networkRatingFromInt;

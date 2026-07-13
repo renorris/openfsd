@@ -344,24 +344,8 @@ func (s *Server) getDatafeed(c *gin.Context) {
 }
 
 func (s *Server) generateDatafeed() (feed *DatafeedCache, err error) {
-	client := http.Client{}
-	req, err := s.makeFsdHttpServiceHttpRequest("GET", "/online_users", nil)
+	onlineUsers, err := s.fetchOnlineUsers()
 	if err != nil {
-		return
-	}
-	res, err := client.Do(req)
-	if err != nil {
-		return
-	}
-
-	if res.StatusCode != http.StatusOK {
-		err = errors.New("FSD HTTP service returned a non-200 status code")
-		return
-	}
-
-	decoder := json.NewDecoder(res.Body)
-	onlineUsers := server.OnlineUsersResponseData{}
-	if err = decoder.Decode(&onlineUsers); err != nil {
 		return
 	}
 

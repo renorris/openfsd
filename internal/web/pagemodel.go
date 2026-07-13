@@ -35,12 +35,78 @@ type loginPage struct {
 	PassError  string
 }
 
-type dashboardPage struct {
-	basePage
+// connectionRow is one pilot or ATC line in the dashboard summary table.
+type connectionRow struct {
+	Callsign string
+	CID      int
+	Name     string
+	Kind     string // "pilot" or "atc"
+	Detail   string // altitude/gs or frequency
 }
 
-type editorPage struct {
+type dashboardPage struct {
 	basePage
+	// Server-rendered connection summary (no-JS path). Map is enhancement only.
+	ConnectionCount    int
+	PilotCount         int
+	ATCCount           int
+	Connections        []connectionRow
+	SummaryAvailable   bool
+	SummaryUnavailable bool
+	SummaryError       string
+}
+
+// ratingOption is a network-rating select entry.
+type ratingOption struct {
+	Value    int
+	Label    string
+	Selected bool
+}
+
+// userForm holds create/edit form field values and field-level errors.
+type userForm struct {
+	CID           string
+	FirstName     string
+	LastName      string
+	Password      string
+	NetworkRating int
+	CIDError      string
+	PasswordError string
+	RatingError   string
+	Error         string
+}
+
+type userEditorPage struct {
+	basePage
+	FlashSuccess string
+	FlashError   string
+	// Create form (left column)
+	Create userForm
+	// Search CID field
+	SearchCID string
+	// Edit form (right column); Edit.CID non-empty means a user was loaded
+	Edit          userForm
+	EditLoaded    bool
+	RatingOptions []ratingOption
+}
+
+// configField is one editable config key for the config editor form.
+type configField struct {
+	Key         string
+	Label       string
+	Description string
+	Value       string
+	Placeholder string
+}
+
+type configEditorPage struct {
+	basePage
+	Fields       []configField
+	FlashSuccess string
+	FlashError   string
+	// CreatedToken is set after a successful form POST create-token (server-rendered, escaped).
+	CreatedToken string
+	TokenExpiry  string
 }
 
 func pageUserFromClaims(claims *auth.CustomClaims) *pageUser {
@@ -97,4 +163,66 @@ func networkRatingLabel(val int) string {
 	default:
 		return "Unknown"
 	}
+}
+
+// allRatingOptions returns every network rating for select elements.
+func allRatingOptions(selected int) []ratingOption {
+	vals := []int{-1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}
+	out := make([]ratingOption, 0, len(vals))
+	for _, v := range vals {
+		out = append(out, ratingOption{
+			Value:    v,
+			Label:    networkRatingLabel(v),
+			Selected: v == selected,
+		})
+	}
+	return out
+}
+
+// editableConfigKeys is the allowlist of config keys shown/mutated via the form UI.
+var editableConfigKeys = []struct {
+	Key         string
+	Label       string
+	Description string
+	Placeholder string
+}{
+	{
+		Key:         "WELCOME_MESSAGE",
+		Label:       "Welcome Message",
+		Description: "Welcome message sent to FSD clients after they connect",
+		Placeholder: "Welcome to my FSD server!",
+	},
+	{
+		Key:         "FSD_SERVER_HOSTNAME",
+		Label:       "FSD Server Hostname",
+		Description: "Server hostname advertised to clients",
+		Placeholder: "myfsdserver.com",
+	},
+	{
+		Key:         "FSD_SERVER_IDENT",
+		Label:       "FSD Server Ident",
+		Description: "Server ident advertised to clients",
+		Placeholder: "MY-FSD-SERVER",
+	},
+	{
+		Key:         "FSD_SERVER_LOCATION",
+		Label:       "FSD Server Location",
+		Description: "Geographical server location advertised to clients",
+		Placeholder: "East US",
+	},
+	{
+		Key:         "API_SERVER_BASE_URL",
+		Label:       "API Server Base URL",
+		Description: "API server base URL advertised to clients",
+		Placeholder: "https://example.com",
+	},
+}
+
+func isEditableConfigKey(key string) bool {
+	for _, k := range editableConfigKeys {
+		if k.Key == key {
+			return true
+		}
+	}
+	return false
 }

@@ -101,11 +101,18 @@ func (s *Server) setupFrontendRoutes(parent *gin.RouterGroup) {
 	authed.Use(s.requireSessionHTML)
 	authed.GET("/dashboard", s.handleFrontendDashboard)
 
+	// Supervisor+ user admin: list/load via GET; create/update via form POST + CSRF.
 	sup := authed.Group("")
 	sup.Use(s.requireMinRatingHTML(protocol.NetworkRatingSupervisor))
 	sup.GET("/usereditor", s.handleFrontendUserEditor)
+	sup.POST("/usereditor/create", s.handleFrontendUserCreate)
+	sup.POST("/usereditor/update", s.handleFrontendUserUpdate)
 
+	// Admin config: form POST mutations with CSRF; no JS required.
 	admin := authed.Group("")
 	admin.Use(s.requireMinRatingHTML(protocol.NetworkRatingAdministator))
 	admin.GET("/configeditor", s.handleFrontendConfigEditor)
+	admin.POST("/configeditor", s.handleFrontendConfigUpdate)
+	admin.POST("/configeditor/reset-secret", s.handleFrontendConfigResetSecret)
+	admin.POST("/configeditor/create-token", s.handleFrontendConfigCreateToken)
 }

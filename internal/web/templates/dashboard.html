@@ -1,13 +1,69 @@
 {{ define "title" }}Dashboard{{ end }}
 
 {{ define "body" }}
+{{/*
+  JS budget exception (map route):
+  This page may load Leaflet (~vendor) + dashboard map module as progressive
+  enhancement. First-party openfsd JS remains small; Leaflet is a documented
+  exception to the 30–50 KB compressed first-party budget. If JS or Leaflet
+  fails, the server-rendered connection summary below still works.
+*/}}
 <main class="container-fluid d-flex flex-column justify-content-center align-items-center mt-3"
       id="dashboard-root"
       data-cid="{{ .User.CID }}"
       data-network-rating="{{ .User.NetworkRating }}"
-      data-display-name="{{ .User.DisplayName }}">
-    <div><span id="dashboard-connection-count">—</span> users connected</div>
-    <div id="map" class="mb-3 rounded" style="width: 600px; max-width: 100%; height: 400px;" role="img" aria-label="Map of connected pilots"></div>
+      data-display-name="{{ .User.DisplayName }}"
+      data-js="dashboard">
+    <h1 class="h4 visually-hidden">Dashboard</h1>
+
+    <section class="w-100 mb-3" style="max-width: 600px" aria-labelledby="connection-summary-heading">
+        <h2 id="connection-summary-heading" class="h5">Connections</h2>
+        {{ if .SummaryUnavailable }}
+        <p id="dashboard-connection-count" class="mb-2 text-muted" data-js="connection-count">
+            {{ .SummaryError }}
+        </p>
+        {{ else }}
+        <p class="mb-2">
+            <span id="dashboard-connection-count" data-js="connection-count">{{ .ConnectionCount }}</span>
+            connected
+            (<span data-js="pilot-count">{{ .PilotCount }}</span> pilots,
+            <span data-js="atc-count">{{ .ATCCount }}</span> ATC)
+        </p>
+        {{ if .Connections }}
+        <div class="table-responsive">
+            <table class="table table-sm table-striped" id="dashboard-connection-table">
+                <thead>
+                <tr>
+                    <th scope="col">Callsign</th>
+                    <th scope="col">CID</th>
+                    <th scope="col">Name</th>
+                    <th scope="col">Type</th>
+                    <th scope="col">Detail</th>
+                </tr>
+                </thead>
+                <tbody>
+                {{ range .Connections }}
+                <tr>
+                    <td>{{ .Callsign }}</td>
+                    <td>{{ .CID }}</td>
+                    <td>{{ .Name }}</td>
+                    <td>{{ .Kind }}</td>
+                    <td>{{ .Detail }}</td>
+                </tr>
+                {{ end }}
+                </tbody>
+            </table>
+        </div>
+        {{ else }}
+        <p class="text-muted small mb-0">No clients connected right now.</p>
+        {{ end }}
+        {{ end }}
+    </section>
+
+    <div id="map" class="mb-3 rounded" style="width: 600px; max-width: 100%; height: 400px;"
+         role="img" aria-label="Map of connected pilots (requires JavaScript)"
+         data-js="map-root"></div>
+
     <div class="d-flex justify-content-around w-100 mt-auto flex-wrap gap-3" style="max-width: 600px">
         <div>
             <div id="dashboard-real-name">

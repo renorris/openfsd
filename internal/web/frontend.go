@@ -100,33 +100,3 @@ func (s *Server) handleFrontendLogoutPost(c *gin.Context) {
 	s.clearCSRFCookie(c)
 	c.Redirect(http.StatusSeeOther, "/login")
 }
-
-func (s *Server) handleFrontendDashboard(c *gin.Context) {
-	claims := getJwtContext(c)
-	s.writeTemplate(c, "dashboard", dashboardPage{
-		basePage: basePage{
-			User:      pageUserFromClaims(claims),
-			CSRFToken: s.issueCSRFToken(c),
-		},
-	})
-}
-
-func (s *Server) handleFrontendUserEditor(c *gin.Context) {
-	claims := getJwtContext(c)
-	s.writeTemplate(c, "usereditor", editorPage{
-		basePage: basePage{
-			User:      pageUserFromClaims(claims),
-			CSRFToken: s.issueCSRFToken(c),
-		},
-	})
-}
-
-func (s *Server) handleFrontendConfigEditor(c *gin.Context) {
-	claims := getJwtContext(c)
-	s.writeTemplate(c, "configeditor", editorPage{
-		basePage: basePage{
-			User:      pageUserFromClaims(claims),
-			CSRFToken: s.issueCSRFToken(c),
-		},
-	})
-}

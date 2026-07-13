@@ -78,6 +78,11 @@ func (s *Server) handleUpdateConfig(c *gin.Context) {
 
 	for i := range reqBody.KeyValuePairs {
 		kv := reqBody.KeyValuePairs[i]
+		if !isEditableConfigKey(kv.Key) {
+			res := newAPIV1Failure("unknown or non-editable config key")
+			writeAPIV1Response(c, http.StatusBadRequest, &res)
+			return
+		}
 		if err := s.dbRepo.ConfigRepo.Set(kv.Key, kv.Value); err != nil {
 			res := newAPIV1Failure("Error writing key/value into persistent storage")
 			writeAPIV1Response(c, http.StatusInternalServerError, &res)

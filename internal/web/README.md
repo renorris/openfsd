@@ -5,6 +5,19 @@ This API provides programmatic access to manage users, configurations, authentic
 
 First-party browser UI is a progressive-enhancement MPA: form login sets a signed **HttpOnly session cookie**; `/api/v1` dual-accepts that cookie **or** a Bearer access token. External tools should use Bearer API tokens.
 
+### First-party HTML pages (no-JS primary path)
+| Page | Routes | Authz |
+|------|--------|-------|
+| Login | `GET/POST /login`, `POST /logout` | public / session |
+| Dashboard | `GET /dashboard` | session; **server-rendered connection summary** (table/counts from FSD service). Leaflet map is PE only (`credentials: 'same-origin'`) |
+| User editor | `GET /usereditor[?cid=]`, `POST /usereditor/create`, `POST /usereditor/update` | Supervisor+; CSRF on mutations |
+| Config editor | `GET/POST /configeditor`, `POST /configeditor/create-token`, `POST /configeditor/reset-secret` | Administrator; CSRF on mutations |
+
+JSON under `/api/v1` remains for external consumers and map polling. Admin mutations work with **cookie + CSRF only** (no `Authorization` header required).
+
+### JS budget / map exception
+First-party openfsd modules stay small and vanilla (no jQuery). The **dashboard route** may load **Leaflet** (vendor) + `dashboard.js` as a documented exception to the 30–50 KB compressed first-party budget. Failure mode: map is absent; connection summary HTML still works.
+
 ---
 
 ## Authentication
@@ -16,7 +29,7 @@ First-party browser UI is a progressive-enhancement MPA: form login sets a signe
 - `POST /logout` clears the session cookie
 - Cookie-authenticated API mutations require a CSRF synchronizer token (`csrf_token` form field or `X-CSRF-Token` header matching the `openfsd_csrf` cookie)
 - Suspended/inactive ratings cannot open a web session (same as FSD policy)
-- **Rating in the cookie is fixed until expiry.** Demotion/suspension does not revoke existing sessions until `exp` unless the JWT secret is rotated (Configure Server → Reset All). Prefer shorter TTL if faster revoke is required.
+- **Rating in the cookie is fixed until expiry.** Demotion/suspension does not revoke existing sessions until `exp` unless the JWT secret is rotated (Configure Server → Reset JWT secret). Prefer shorter TTL if faster revoke is required.
 
 ### Cookie `Secure` flag (`COOKIE_SECURE`)
 | Condition | Secure |
