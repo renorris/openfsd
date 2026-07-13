@@ -1,23 +1,50 @@
 # openfsd REST & frontend interface
 
 ## Overview
-This API provides programmatic access to manage users, configurations, authentication, and FSD connections. All API endpoints are versioned under `/api/v1` and use JSON for request and response bodies unless otherwise specified. Authentication is primarily handled via JWT bearer tokens.
+This API provides programmatic access to manage users, configurations, authentication, and FSD connections. All API endpoints are versioned under `/api/v1` and use JSON for request and response bodies unless otherwise specified.
+
+First-party browser UI is a progressive-enhancement MPA: form login sets a signed **HttpOnly session cookie**; `/api/v1` dual-accepts that cookie **or** a Bearer access token. External tools should use Bearer API tokens.
 
 ---
 
 ## Authentication
-Most endpoints require a valid JWT access token included in the `Authorization` header as a Bearer token:
+
+### Browser (first-party UI)
+- `POST /login` (form) → signed session cookie `openfsd_session` (HttpOnly, SameSite=Lax)
+- Session claims: CID, network rating, display name, expiry (stateless JWT, `token_type=session`)
+- TTL: **24h** default; **30 days** with “Remember me”
+- `POST /logout` clears the session cookie
+- Cookie-authenticated API mutations require a CSRF synchronizer token (`csrf_token` form field or `X-CSRF-Token` header matching the `openfsd_csrf` cookie)
+- Suspended/inactive ratings cannot open a web session (same as FSD policy)
+- **Rating in the cookie is fixed until expiry.** Demotion/suspension does not revoke existing sessions until `exp` unless the JWT secret is rotated (Configure Server → Reset All). Prefer shorter TTL if faster revoke is required.
+
+### Cookie `Secure` flag (`COOKIE_SECURE`)
+| Condition | Secure |
+|-----------|--------|
+| `COOKIE_SECURE=true` (or `1`/`yes`) | forced **true** |
+| `COOKIE_SECURE=false` (or `0`/`no`) | forced **false** |
+| unset + TLS listener | **true** |
+| unset + `X-Forwarded-Proto: https` | **true** |
+| unset + plain HTTP (local compose default) | **false** |
+
+**Production / reverse proxy:** terminate TLS at the proxy, strip or overwrite client `X-Forwarded-Proto`, and set **`COOKIE_SECURE=true`**. Do not rely on client-supplied XFP alone — any direct client can send that header when the app is reachable without a trusted proxy hop.
+
+### External API (Bearer)
+Most endpoints accept a valid JWT access token:
 ```
 Authorization: Bearer <access_token>
 ```
 - **API tokens** can be created via `/api/v1/config/createtoken` with a custom expiry date. See the **Server Configuration** menu in the frontend UI to generate one.
+- Bearer-authenticated clients do **not** need CSRF (CSRF applies only when the request is authenticated via the session cookie).
+- Dual-accept: a **valid** Bearer token wins over a session cookie; a garbage Bearer header does **not** disable CSRF if the session cookie is what authenticates the request.
 
 ---
 
 ## Network Ratings
-The API enforces role-based access control using `NetworkRating` values defined in the `fsd` package. Key thresholds:
+The API enforces role-based access control using `NetworkRating` values defined in `pkg/protocol`. Key thresholds:
 - **Supervisor (11)**: Can manage users (create, update, retrieve) and kick active connections.
 - **Administrator (12)**: Can manage server configuration, reset JWT secret keys, and create API tokens.
+- **Suspended (0) / Inactive (-1)**: Cannot log in to the web UI or obtain FSD JWTs.
 
 ---
 

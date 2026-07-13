@@ -40,6 +40,12 @@ func (s *Server) getAccessRefreshTokens(c *gin.Context) {
 		return
 	}
 
+	// Align with FSD policy: suspended/inactive cannot mint web tokens.
+	if user.NetworkRating <= int(protocol.NetworkRatingSuspended) {
+		writeAPIV1Response(c, http.StatusUnauthorized, &unauthRes)
+		return
+	}
+
 	access, refresh, err := s.makeAccessRefreshTokens(user, reqBody.RememberMe)
 	if err != nil {
 		writeAPIV1Response(c, http.StatusInternalServerError, &genericAPIV1InternalServerError)
@@ -156,6 +162,14 @@ func (s *Server) getFsdJwt(c *gin.Context) {
 		return
 	}
 
+	if !s.dbRepo.UserRepo.VerifyPasswordHash(reqBody.Password, user.Password) {
+		resBody := ResponseBody{
+			ErrorMsg: "Invalid CID and/or password",
+		}
+		c.JSON(http.StatusUnauthorized, &resBody)
+		return
+	}
+
 	if user.NetworkRating <= int(protocol.NetworkRatingSuspended) {
 		c.JSON(http.StatusForbidden, &ResponseBody{ErrorMsg: "Certificate suspended or inactive"})
 		return
@@ -191,15 +205,25 @@ func (s *Server) getFsdJwt(c *gin.Context) {
 	})
 }
 
+// Auth method keys for dual-accept (Bearer vs session cookie).
+// csrfIfCookieSession only skips CSRF when auth actually succeeded via Bearer.
+const (
+	authMethodContextKey = "auth_method"
+	authMethodBearer     = "bearer"
+	authMethodSession    = "session"
+)
+
 // jwtBearerMiddleware verifies a Bearer access token OR a signed session cookie
 // (KD-18 dual-accept). Cookie-authenticated mutations are CSRF-checked by
 // csrfIfCookieSession on the API group.
 func (s *Server) jwtBearerMiddleware(c *gin.Context) {
 	if s.tryBearerAuth(c) {
+		c.Set(authMethodContextKey, authMethodBearer)
 		c.Next()
 		return
 	}
 	if s.trySessionAuth(c) {
+		c.Set(authMethodContextKey, authMethodSession)
 		c.Next()
 		return
 	}
@@ -211,10 +235,10 @@ func (s *Server) jwtBearerMiddleware(c *gin.Context) {
 
 // tryBearerAuth parses Authorization: Bearer access tokens into the gin context.
 // Returns true when a valid access token was accepted.
+// The scheme match is case-insensitive ("Bearer " / "bearer ").
 func (s *Server) tryBearerAuth(c *gin.Context) bool {
-	authHeader := c.GetHeader("Authorization")
-	raw, found := strings.CutPrefix(authHeader, "Bearer ")
-	if !found || raw == "" {
+	raw, ok := cutBearerToken(c.GetHeader("Authorization"))
+	if !ok {
 		return false
 	}
 
@@ -235,6 +259,22 @@ func (s *Server) tryBearerAuth(c *gin.Context) bool {
 
 	setJwtContext(c, claims)
 	return true
+}
+
+// cutBearerToken extracts the token from an Authorization header with a
+// case-insensitive "Bearer " scheme. Empty tokens are rejected.
+func cutBearerToken(header string) (token string, ok bool) {
+	if len(header) < 7 {
+		return "", false
+	}
+	if !equalFoldASCII(header[:7], "Bearer ") {
+		return "", false
+	}
+	token = strings.TrimSpace(header[7:])
+	if token == "" {
+		return "", false
+	}
+	return token, true
 }
 
 // trySessionAuth parses the signed session cookie into the gin context.

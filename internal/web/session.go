@@ -26,7 +26,18 @@ var (
 )
 
 // cookieSecureFlag decides whether Set-Cookie should include the Secure attribute.
-// cookieSecureEnv is the COOKIE_SECURE value: "true"/"false" force; empty = auto.
+//
+// Policy:
+//   - COOKIE_SECURE=true|false|1|0|yes|no → force
+//   - unset + TLS listener → Secure
+//   - unset + X-Forwarded-Proto: https → Secure
+//   - otherwise (local docker-compose HTTP) → not Secure
+//
+// Operator note: X-Forwarded-Proto is only trustworthy when a reverse proxy
+// terminates TLS and overwrites/strips client-supplied XFP. For production
+// behind TLS termination, prefer COOKIE_SECURE=true so Secure does not depend
+// on client-controlled headers. Spoofing XFP=https on plain HTTP only makes
+// browsers drop the cookie (fail-closed for session use on that hop).
 func cookieSecureFlag(cookieSecureEnv string, tls bool, xForwardedProto string) bool {
 	switch strings.ToLower(strings.TrimSpace(cookieSecureEnv)) {
 	case "true", "1", "yes":

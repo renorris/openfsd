@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/renorris/openfsd/pkg/protocol"
 )
 
 func (s *Server) handleFrontendLanding(c *gin.Context) {
@@ -64,6 +65,14 @@ func (s *Server) handleFrontendLoginPost(c *gin.Context) {
 
 	user, err := s.dbRepo.UserRepo.GetUserByCID(cid)
 	if err != nil || !s.dbRepo.UserRepo.VerifyPasswordHash(password, user.Password) {
+		page.Error = "Bad CID and/or password"
+		s.writeTemplate(c, "login", page)
+		return
+	}
+
+	// Align with FSD policy: suspended/inactive cannot open a web session.
+	// Generic error avoids an account-status oracle.
+	if user.NetworkRating <= int(protocol.NetworkRatingSuspended) {
 		page.Error = "Bad CID and/or password"
 		s.writeTemplate(c, "login", page)
 		return

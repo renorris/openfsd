@@ -414,6 +414,84 @@ func TestAPIBearerAuthStillWorksWithoutCSRF(t *testing.T) {
 func TestObserverCannotAccessUserEditor(t *testing.T) {
 	ts := newTestServer(t)
 	user := createTestUser(t, ts, "pw", int(protocol.NetworkRatingObserver))
+	cookies := formLogin(t, ts, user.CID, "pw")
+
+	req := httptest.NewRequest(http.MethodGet, "/usereditor", nil)
+	req.Header.Set("Cookie", cookieHeader(cookies))
+	w := httptest.NewRecorder()
+	ts.engine.ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status %d", w.Code)
+	}
+	if loc := w.Header().Get("Location"); loc != "/dashboard" {
+		t.Fatalf("Location = %q want /dashboard", loc)
+	}
+}
+
+// TestAPICookieAuthCSRFNotBypassedByGarbageBearer is the Issue 1 regression:
+// valid session + Authorization: Bearer garbage + no CSRF must 403 (not skip CSRF).
+func TestAPICookieAuthCSRFNotBypassedByGarbageBearer(t *testing.T) {
+	ts := newTestServer(t)
+	user := createTestUser(t, ts, "pw", int(protocol.NetworkRatingSupervisor))
+	cookies := formLogin(t, ts, user.CID, "pw")
+
+	body := `{"cid":` + itoa(user.CID) + `}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/user/load", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Cookie", cookieHeader(cookies))
+	req.Header.Set("Authorization", "Bearer not-a-jwt")
+	w := httptest.NewRecorder()
+	ts.engine.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status %d want 403 (CSRF required when Bearer fails), body %s", w.Code, w.Body.String())
+	}
+
+	// lowercase scheme also must not bypass CSRF when token is garbage
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/user/load", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Cookie", cookieHeader(cookies))
+	req.Header.Set("Authorization", "bearer x")
+	w = httptest.NewRecorder()
+	ts.engine.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("lowercase bearer garbage status %d want 403, body %s", w.Code, w.Body.String())
+	}
+}
+
+func TestSupervisorCannotAccessConfigEditor(t *testing.T) {
+	ts := newTestServer(t)
+	user := createTestUser(t, ts, "pw", int(protocol.NetworkRatingSupervisor))
+	cookies := formLogin(t, ts, user.CID, "pw")
+
+	req := httptest.NewRequest(http.MethodGet, "/configeditor", nil)
+	req.Header.Set("Cookie", cookieHeader(cookies))
+	w := httptest.NewRecorder()
+	ts.engine.ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status %d", w.Code)
+	}
+	if loc := w.Header().Get("Location"); loc != "/dashboard" {
+		t.Fatalf("Location = %q want /dashboard", loc)
+	}
+}
+
+func TestAdminCanAccessConfigEditor(t *testing.T) {
+	ts := newTestServer(t)
+	user := createTestUser(t, ts, "pw", int(protocol.NetworkRatingAdministator))
+	cookies := formLogin(t, ts, user.CID, "pw")
+
+	req := httptest.NewRequest(http.MethodGet, "/configeditor", nil)
+	req.Header.Set("Cookie", cookieHeader(cookies))
+	w := httptest.NewRecorder()
+	ts.engine.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d want 200", w.Code)
+	}
+}
+
+func TestSuspendedUserCannotFormLogin(t *testing.T) {
+	ts := newTestServer(t)
+	user := createTestUser(t, ts, "pw", int(protocol.NetworkRatingSuspended))
 
 	csrf, cookies := getLoginCSRF(t, ts)
 	form := url.Values{}
@@ -425,18 +503,120 @@ func TestObserverCannotAccessUserEditor(t *testing.T) {
 	req.Header.Set("Cookie", cookieHeader(cookies))
 	w := httptest.NewRecorder()
 	ts.engine.ServeHTTP(w, req)
-	cookies = mergeCookies(cookies, w.Result())
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d want 200 re-render", w.Code)
+	}
+	if extractCookie(w.Result(), sessionCookieName) != "" {
+		t.Fatal("suspended user must not receive session cookie")
+	}
+	if !strings.Contains(w.Body.String(), "Bad CID and/or password") {
+		t.Fatalf("expected generic error, body=%s", clip(w.Body.String(), 300))
+	}
+}
 
-	req = httptest.NewRequest(http.MethodGet, "/usereditor", nil)
+func TestInactiveUserCannotFormLogin(t *testing.T) {
+	ts := newTestServer(t)
+	user := createTestUser(t, ts, "pw", int(protocol.NetworkRatingInactive))
+
+	csrf, cookies := getLoginCSRF(t, ts)
+	form := url.Values{}
+	form.Set("cid", itoa(user.CID))
+	form.Set("password", "pw")
+	form.Set("csrf_token", csrf)
+	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Cookie", cookieHeader(cookies))
+	w := httptest.NewRecorder()
+	ts.engine.ServeHTTP(w, req)
+	if extractCookie(w.Result(), sessionCookieName) != "" {
+		t.Fatal("inactive user must not receive session cookie")
+	}
+}
+
+func TestFsdJwtRequiresPassword(t *testing.T) {
+	ts := newTestServer(t)
+	user := createTestUser(t, ts, "correct-password", int(protocol.NetworkRatingObserver))
+
+	// Wrong password → 401
+	form := url.Values{}
+	form.Set("cid", itoa(user.CID))
+	form.Set("password", "wrong")
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/fsd-jwt", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	ts.engine.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong password status %d want 401, body %s", w.Code, w.Body.String())
+	}
+
+	// Correct password → 200 + token
+	form.Set("password", "correct-password")
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/fsd-jwt", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w = httptest.NewRecorder()
 	ts.engine.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("good password status %d want 200, body %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"success":true`) && !strings.Contains(w.Body.String(), `"success": true`) {
+		// gin may encode without spaces
+		if !strings.Contains(w.Body.String(), "token") {
+			t.Fatalf("expected token in response: %s", w.Body.String())
+		}
+	}
+}
+
+func TestRememberMeSetsLongerSessionMaxAge(t *testing.T) {
+	ts := newTestServer(t)
+	user := createTestUser(t, ts, "pw", int(protocol.NetworkRatingObserver))
+
+	csrf, cookies := getLoginCSRF(t, ts)
+	form := url.Values{}
+	form.Set("cid", itoa(user.CID))
+	form.Set("password", "pw")
+	form.Set("csrf_token", csrf)
+	form.Set("remember_me", "on")
+	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Cookie", cookieHeader(cookies))
+	w := httptest.NewRecorder()
+	ts.engine.ServeHTTP(w, req)
 	if w.Code != http.StatusSeeOther {
-		t.Fatalf("status %d", w.Code)
+		t.Fatalf("login status %d", w.Code)
 	}
-	if loc := w.Header().Get("Location"); loc != "/dashboard" {
-		t.Fatalf("Location = %q want /dashboard", loc)
+	found := false
+	for _, sc := range w.Result().Header.Values("Set-Cookie") {
+		if !strings.HasPrefix(sc, sessionCookieName+"=") {
+			continue
+		}
+		found = true
+		// Max-Age for 30 days = 2592000
+		if !strings.Contains(sc, "Max-Age=2592000") && !strings.Contains(sc, "max-age=2592000") {
+			t.Fatalf("remember-me Max-Age want 2592000, Set-Cookie=%s", sc)
+		}
 	}
+	if !found {
+		t.Fatal("missing session Set-Cookie")
+	}
+}
+
+// formLogin performs a successful no-JS form login and returns merged cookies.
+func formLogin(t *testing.T, ts *testServer, cid int, password string) []*http.Cookie {
+	t.Helper()
+	csrf, cookies := getLoginCSRF(t, ts)
+	form := url.Values{}
+	form.Set("cid", itoa(cid))
+	form.Set("password", password)
+	form.Set("csrf_token", csrf)
+	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Cookie", cookieHeader(cookies))
+	w := httptest.NewRecorder()
+	ts.engine.ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("form login status %d body %s", w.Code, w.Body.String())
+	}
+	return mergeCookies(cookies, w.Result())
 }
 
 func itoa(n int) string {

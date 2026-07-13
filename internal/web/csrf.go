@@ -92,8 +92,12 @@ func (s *Server) requireCSRF(c *gin.Context) {
 	c.AbortWithStatus(http.StatusForbidden)
 }
 
-// csrfIfCookieSession enforces CSRF on state-changing requests that use the
-// session cookie (not Bearer). Bearer API clients skip CSRF.
+// csrfIfCookieSession enforces CSRF on state-changing requests authenticated
+// via the session cookie. CSRF is skipped only when dual-accept auth
+// actually succeeded with a valid Bearer access token (auth_method=bearer).
+//
+// A junk Authorization: Bearer header must NOT disable CSRF while a session
+// cookie still authenticates the request (Issue 1 dual-accept bypass).
 func (s *Server) csrfIfCookieSession(c *gin.Context) {
 	switch c.Request.Method {
 	case http.MethodGet, http.MethodHead, http.MethodOptions, http.MethodTrace:
@@ -101,21 +105,13 @@ func (s *Server) csrfIfCookieSession(c *gin.Context) {
 		return
 	}
 
-	// Bearer auth is not browser-cookie CSRF-vulnerable in the same way.
-	if authHeader := c.GetHeader("Authorization"); len(authHeader) >= 7 {
-		prefix := authHeader[:7]
-		if equalFoldASCII(prefix, "Bearer ") {
-			c.Next()
-			return
-		}
-	}
-
-	// No session cookie → nothing to CSRF-protect; auth middleware will 401.
-	if raw, err := c.Cookie(sessionCookieName); err != nil || raw == "" {
+	// Only skip CSRF when jwtBearerMiddleware recorded a successful Bearer auth.
+	if method, ok := c.Get(authMethodContextKey); ok && method == authMethodBearer {
 		c.Next()
 		return
 	}
 
+	// Session-authenticated (or any non-bearer) mutation requires CSRF.
 	if s.validateCSRF(c) {
 		c.Next()
 		return
