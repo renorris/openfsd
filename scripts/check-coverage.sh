@@ -1,7 +1,14 @@
 #!/usr/bin/env bash
 # Fail if overall statement coverage (excluding cmd/) is below the floor.
-# Usage: scripts/check-coverage.sh [floor_percent]
-# Default floor: 80
+# Also enforces pure-package floors from the design phased gates.
+#
+# Usage: scripts/check-coverage.sh [overall_floor_percent]
+# Default overall floor: 80
+#
+# Pure package hard floors (fail CI):
+#   pkg/protocol ≥98, internal/geo ≥98, internal/auth ≥95, internal/postoffice ≥90
+# Soft / reported only (do not fail):
+#   internal/web (aspirational ≥80), overall aspirational 90
 set -euo pipefail
 
 FLOOR="${1:-80}"
@@ -15,17 +22,70 @@ trap 'rm -f "$COVER_OUT"' EXIT
 go test -coverprofile="$COVER_OUT" $(go list ./... | grep -v '/cmd/')
 
 TOTAL_LINE="$(go tool cover -func="$COVER_OUT" | tail -1)"
-# e.g. total: (statements) 80.6%
-PCT="$(echo "$TOTAL_LINE" | awk '{print $NF}' | tr -d '%')"
+echo "coverage total line: $TOTAL_LINE"
 
-echo "coverage total: ${PCT}% (floor ${FLOOR}%)"
-echo "$TOTAL_LINE"
+# Statement-weighted package + overall floors from cover.out
+python3 - "$COVER_OUT" "$FLOOR" <<'PY'
+import re, sys
+from collections import defaultdict
 
-# awk comparison handles floats
-awk -v pct="$PCT" -v floor="$FLOOR" 'BEGIN {
-  if (pct+0 < floor+0) {
-    printf("FAIL: coverage %.1f%% < floor %s%%\n", pct, floor) > "/dev/stderr"
-    exit 1
-  }
-  printf("OK: coverage %.1f%% >= floor %s%%\n", pct, floor)
-}'
+cover_out, overall_floor = sys.argv[1], float(sys.argv[2])
+stmts = defaultdict(lambda: [0, 0])  # pkg -> [total, covered]
+with open(cover_out) as f:
+    next(f)
+    for line in f:
+        line = line.strip()
+        m = re.match(r"(.+):(\d+)\.(\d+),(\d+)\.(\d+) (\d+) (\d+)", line)
+        if not m:
+            continue
+        path = m.group(1)
+        nstmt, count = int(m.group(6)), int(m.group(7))
+        if "/openfsd/" in path:
+            rel = path.split("/openfsd/", 1)[1]
+        else:
+            rel = path
+        pkg = "/".join(rel.split("/")[:-1])  # drop filename
+        stmts[pkg][0] += nstmt
+        if count > 0:
+            stmts[pkg][1] += nstmt
+
+hard = {
+    "pkg/protocol": 98.0,
+    "internal/geo": 98.0,
+    "internal/auth": 95.0,
+    "internal/postoffice": 90.0,
+}
+soft = {
+    "internal/web": 80.0,  # aspirational PE-era floor; report only
+}
+
+failed = False
+print("--- package floors ---")
+for pkg, floor in sorted(hard.items()):
+    t, c = stmts.get(pkg, [0, 0])
+    pct = 100.0 * c / t if t else 0.0
+    status = "OK" if pct + 1e-9 >= floor else "FAIL"
+    print(f"{status}: {pkg} {pct:.1f}% (floor {floor:.0f}%, {c}/{t})")
+    if status == "FAIL":
+        failed = True
+
+for pkg, floor in sorted(soft.items()):
+    t, c = stmts.get(pkg, [0, 0])
+    pct = 100.0 * c / t if t else 0.0
+    note = "meets" if pct + 1e-9 >= floor else "below (soft)"
+    print(f"SOFT: {pkg} {pct:.1f}% (aspirational {floor:.0f}%, {note}, {c}/{t})")
+
+total_t = sum(v[0] for v in stmts.values())
+total_c = sum(v[1] for v in stmts.values())
+overall = 100.0 * total_c / total_t if total_t else 0.0
+print("--- overall ---")
+print(f"overall {overall:.1f}% (floor {overall_floor:.0f}%, aspirational 90%)")
+if overall + 1e-9 < overall_floor:
+    print(f"FAIL: coverage {overall:.1f}% < floor {overall_floor:.0f}%", file=sys.stderr)
+    failed = True
+else:
+    print(f"OK: coverage {overall:.1f}% >= floor {overall_floor:.0f}%")
+
+if failed:
+    sys.exit(1)
+PY

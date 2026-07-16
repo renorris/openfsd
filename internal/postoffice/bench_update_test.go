@@ -38,3 +38,39 @@ func BenchmarkUpdatePosition(b *testing.B) {
 		})
 	}
 }
+
+// BenchmarkBroadcastRanged measures Search + fan-out Send cost (broadcast path).
+// Sessions use nil Conn; Send enqueues to the outbound buffer (drained each iter).
+func BenchmarkBroadcastRanged(b *testing.B) {
+	for _, n := range []int{100, 1000} {
+		b.Run(fmt.Sprintf("n=%d", n), func(b *testing.B) {
+			p := New()
+			// Cluster clients so Search hits many peers.
+			clients := make([]*session.Session, n)
+			for i := 0; i < n; i++ {
+				c := newTestClient(
+					fmt.Sprintf("B%d", i),
+					33.9+float64(i%10)*0.01,
+					-118.4+float64(i/10)*0.001,
+					50*1852,
+				)
+				if err := p.Register(c); err != nil {
+					b.Fatal(err)
+				}
+				clients[i] = c
+			}
+			pkt := "broadcast\r\n"
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				src := clients[i%n]
+				p.Search(src, func(recipient *session.Session) bool {
+					_ = recipient.Send(pkt)
+					// Keep channel from filling (buffer 32).
+					_, _ = recipient.DequeueOutbound()
+					return true
+				})
+			}
+		})
+	}
+}

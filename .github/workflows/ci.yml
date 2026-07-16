@@ -6,6 +6,7 @@ on:
   schedule:
     # Weekly stress baselines (optional; does not gate PRs on latency).
     - cron: "0 6 * * 1"
+  workflow_dispatch:
 
 jobs:
   test:

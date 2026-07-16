@@ -51,40 +51,37 @@ func TestConfigResetSecretForm(t *testing.T) {
 	user := createTestUser(t, ts, "pass12345", int(protocol.NetworkRatingAdministator))
 	cookies := formLogin(t, ts, user.CID, "pass12345")
 
-	// Missing confirm
+	// Missing confirm → re-render config editor with flash error (200)
 	form := url.Values{}
 	form.Set("confirm", "")
 	w, cookies := formPOST(t, ts, "/configeditor/reset-secret", form, cookies)
-	// re-renders with flash error or 403 without CSRF handled by formPOST
-	assert.True(t, w.Code == http.StatusOK || w.Code == http.StatusSeeOther || w.Code == http.StatusForbidden, w.Body.String())
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), "Confirm the secret reset")
 
-	// Confirm reset
+	// Confirm reset → secret rotated; session cleared; redirect to login
 	form = url.Values{}
 	form.Set("confirm", "yes")
 	w, _ = formPOST(t, ts, "/configeditor/reset-secret", form, cookies)
-	// Success: redirect login after secret rotate
-	if w.Code == http.StatusSeeOther {
-		assert.Equal(t, "/login", w.Header().Get("Location"))
-	}
+	require.Equal(t, http.StatusSeeOther, w.Code, w.Body.String())
+	assert.Equal(t, "/login", w.Header().Get("Location"))
 }
 
 func TestKickActiveConnectionAPI(t *testing.T) {
 	env := setupTestAPI(t)
 	access, _ := env.login(t, env.admin.CID, env.adminPass)
 
-	// Supervisor required — admin is fine
+	// Admin may call kick; FSD service is unreachable in unit tests → 500
 	w := env.doJSON(t, http.MethodPost, "/api/v1/fsdconn/kickuser", map[string]any{
 		"callsign": "NONE",
 	}, access)
-	// FSD unreachable → 500 or incomplete response handled without panic
-	assert.True(t, w.Code == http.StatusInternalServerError || w.Code == http.StatusOK || w.Code == http.StatusNotFound || w.Code == 0 || w.Code >= 400, w.Code)
+	require.Equal(t, http.StatusInternalServerError, w.Code, w.Body.String())
 
 	// Observer forbidden
 	obsAccess, _ := env.login(t, env.observer.CID, env.observerPass)
 	w = env.doJSON(t, http.MethodPost, "/api/v1/fsdconn/kickuser", map[string]any{
 		"callsign": "NONE",
 	}, obsAccess)
-	assert.Equal(t, http.StatusForbidden, w.Code)
+	require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
 }
 
 func TestOptionalSession(t *testing.T) {

@@ -35,12 +35,15 @@ func (s *Server) handleKickActiveConnection(c *gin.Context) {
 	defer client.CloseIdleConnections()
 	req, err := s.makeFsdHttpServiceHttpRequest("POST", "/kick_user", &buf)
 	if err != nil {
+		writeAPIV1Response(c, http.StatusInternalServerError, &genericAPIV1InternalServerError)
 		return
 	}
 	res, err := client.Do(req)
 	if err != nil {
+		writeAPIV1Response(c, http.StatusInternalServerError, &genericAPIV1InternalServerError)
 		return
 	}
+	defer res.Body.Close()
 
 	switch res.StatusCode {
 	case http.StatusNoContent:

@@ -143,40 +143,67 @@ func TestHandleTextMessagePaths(t *testing.T) {
 	atc := newSess("LAX_TWR", true, NetworkRatingController1)
 	sup := newSess("SUP1", true, NetworkRatingSupervisor)
 	other := newSess("N200", false, NetworkRatingObserver)
+	// Register at default (0,0), then UpdatePosition so the R-tree is rewritten
+	// (pre-setting LatLon/VisRange to the same center would skip the tree rewrite).
 	for _, s := range []*session.Session{pilot, atc, sup, other} {
 		if err := reg.Register(s); err != nil {
 			t.Fatal(err)
 		}
-		s.SetLatLon(34.0, -118.0)
-		s.VisRange.Store(50 * 1852)
+		reg.UpdatePosition(s, [2]float64{34.0, -118.0}, 50*1852)
 	}
-	reg.UpdatePosition(pilot, [2]float64{34.0, -118.0}, 50*1852)
-	reg.UpdatePosition(atc, [2]float64{34.0, -118.0}, 50*1852)
-	reg.UpdatePosition(sup, [2]float64{34.0, -118.0}, 50*1852)
-	reg.UpdatePosition(other, [2]float64{34.0, -118.0}, 50*1852)
 
-	// ATC chat — pilot ignored
+	// ATC chat — pilot ignored (not ATC)
 	srv.handleTextMessage(pilot, []byte("#TMN100:@49999:hi\r\n"))
-	// ATC chat — atc broadcasts
-	srv.handleTextMessage(atc, []byte("#TMLAX_TWR:@49999:hi\r\n"))
-	// Frequency
-	srv.handleTextMessage(pilot, []byte("#TMN100:@12345:freq\r\n"))
-	// Wallop
-	srv.handleTextMessage(pilot, []byte("#TMN100:*S:help\r\n"))
-	// Server-wide as non-sup: no-op
-	srv.handleTextMessage(pilot, []byte("#TMN100:*:all\r\n"))
-	// Server-wide as sup
-	srv.handleTextMessage(sup, []byte("#TMSUP1:*:all\r\n"))
-	// FP / SERVER stubs
-	srv.handleTextMessage(pilot, []byte("#TMN100:FP:x\r\n"))
-	srv.handleTextMessage(pilot, []byte("#TMN100:SERVER:x\r\n"))
+	requireNoOutbound(t, pilot, "pilot ATC-chat should not enqueue")
+
+	// ATC chat — atc broadcasts to in-range ATC (sup receives)
+	srv.handleTextMessage(atc, []byte("#TMLAX_TWR:@49999:atcchat\r\n"))
+	outSup := drain(sup)
+	if !hasOutboundContaining(outSup, "atcchat") {
+		t.Fatalf("ATC chat not delivered to SUP1: %v", outSup)
+	}
+
 	// Direct message
 	srv.handleTextMessage(pilot, []byte("#TMN100:N200:hello\r\n"))
-	// Missing recipient
+	outOther := drain(other)
+	if !hasOutboundContaining(outOther, "#TMN100:N200:hello") {
+		t.Fatalf("direct message not delivered to N200: %v", outOther)
+	}
+
+	// Missing recipient → $ER to sender
 	srv.handleTextMessage(pilot, []byte("#TMN100:NOSUCH:hello\r\n"))
+	outPilot := drain(pilot)
+	if !hasOutboundContaining(outPilot, "$ER") {
+		t.Fatalf("expected $ER for missing callsign, got %v", outPilot)
+	}
+
+	// Frequency / wallop / server-wide paths (smoke + drain)
+	srv.handleTextMessage(pilot, []byte("#TMN100:@12345:freq\r\n"))
+	srv.handleTextMessage(pilot, []byte("#TMN100:*S:help\r\n"))
+	srv.handleTextMessage(pilot, []byte("#TMN100:*:all\r\n")) // non-sup no-op
+	srv.handleTextMessage(sup, []byte("#TMSUP1:*:all\r\n"))
+	srv.handleTextMessage(pilot, []byte("#TMN100:FP:x\r\n"))
+	srv.handleTextMessage(pilot, []byte("#TMN100:SERVER:x\r\n"))
 	_ = drain(pilot)
 	_ = drain(atc)
+	_ = drain(sup)
 	_ = drain(other)
+}
+
+func requireNoOutbound(t *testing.T, s *session.Session, msg string) {
+	t.Helper()
+	if out := drain(s); len(out) != 0 {
+		t.Fatalf("%s: got %v", msg, out)
+	}
+}
+
+func hasOutboundContaining(packets []string, substr string) bool {
+	for _, p := range packets {
+		if strings.Contains(p, substr) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestHandleATCPosition(t *testing.T) {
@@ -340,20 +367,41 @@ func TestHandleClientQuery(t *testing.T) {
 		reg.UpdatePosition(s, [2]float64{34, -118}, 50*1852)
 	}
 
-	// SERVER ATC query — active facility
+	// SERVER ATC query — active facility → Y
 	srv.handleClientQuery(atc, []byte("$CQLAX_TWR:SERVER:ATC:LAX_TWR\r\n"))
+	outATC := drain(atc)
+	if !hasOutboundContaining(outATC, "ATC:Y:") {
+		t.Fatalf("expected ATC:Y response, got %v", outATC)
+	}
 	// SERVER ATC query — OBS facility → N
 	srv.handleClientQuery(atc, []byte("$CQLAX_TWR:SERVER:ATC:OBS1\r\n"))
+	outATC = drain(atc)
+	if !hasOutboundContaining(outATC, "ATC:N:") {
+		t.Fatalf("expected ATC:N response, got %v", outATC)
+	}
 	// SERVER ATC missing
 	srv.handleClientQuery(atc, []byte("$CQLAX_TWR:SERVER:ATC:NONE\r\n"))
+	if !hasOutboundContaining(drain(atc), "$ER") {
+		t.Fatal("expected $ER for missing ATC target")
+	}
 	// SERVER ATC bad field count
 	srv.handleClientQuery(atc, []byte("$CQLAX_TWR:SERVER:ATC\r\n"))
+	_ = drain(atc)
+
 	// SERVER IP
 	srv.handleClientQuery(pilotIP, []byte("$CQN100IP:SERVER:IP\r\n"))
+	outIP := drain(pilotIP)
+	if !hasOutboundContaining(outIP, "$CRSERVER:") || !hasOutboundContaining(outIP, ":IP:") {
+		t.Fatalf("expected IP response, got %v", outIP)
+	}
 	// SERVER FP as pilot (ignored)
 	srv.handleClientQuery(pilot, []byte("$CQN100:SERVER:FP:N200\r\n"))
 	// SERVER FP as ATC
 	srv.handleClientQuery(atc, []byte("$CQLAX_TWR:SERVER:FP:N200\r\n"))
+	outATC = drain(atc)
+	if !hasOutboundContaining(outATC, "$FP") {
+		t.Fatalf("expected $FP for flightplan request, got %v", outATC)
+	}
 	// SERVER FP no plan
 	empty := newSess("N300", false, NetworkRatingObserver)
 	_ = reg.Register(empty)
@@ -365,10 +413,16 @@ func TestHandleClientQuery(t *testing.T) {
 
 	// Unprivileged ATC query from pilot → error
 	srv.handleClientQuery(pilot, []byte("$CQN100:@94835:BY\r\n"))
+	if !hasOutboundContaining(drain(pilot), "$ER") {
+		t.Fatal("pilot BY query should $ER")
+	}
 	// Unprivileged from ATC
 	srv.handleClientQuery(atc, []byte("$CQLAX_TWR:@94835:BY\r\n"))
 	// Privileged from OBS facility → error
 	srv.handleClientQuery(obsATC, []byte("$CQOBS1:N200:IT\r\n"))
+	if !hasOutboundContaining(drain(obsATC), "$ER") {
+		t.Fatal("OBS facility IT should $ER")
+	}
 	// Privileged OK
 	srv.handleClientQuery(atc, []byte("$CQLAX_TWR:N200:IT\r\n"))
 	// ACC from any

@@ -2,7 +2,9 @@ package db
 
 import (
 	"database/sql"
+	"database/sql/driver"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -30,17 +32,41 @@ func TestNewRepositoriesSQLite(t *testing.T) {
 	require.NotNil(t, cfgRepo)
 }
 
-func TestNewRepositoriesUnsupportedDriver(t *testing.T) {
-	// sqlmock-free approach: open with a driver that isn't pq or sqlite.
-	// The default "mysql" driver is not registered — Open may succeed but
-	// Driver() type won't match. Use a custom minimal driver via sql.OpenDB if needed.
-	// Simpler: pass a closed DB opened with sqlite then... actually Driver() still sqlite.
+// stubDriver is a minimal database/sql driver used only to hit the
+// "unsupported database" branch of NewUserRepository / NewConfigRepository.
+type stubDriver struct{}
 
-	// Register nothing — create empty DB handle that panics on Driver? Not possible cleanly.
-	// Cover the default branch by calling NewUserRepository with a *sql.DB whose driver is
-	// not pq/sqlite. modernc and pq are the only registered ones in tests.
-	// Skip unsupported branch if we cannot construct it without extra deps.
-	t.Log("unsupported driver branch covered at compile-time via switch default; runtime requires exotic driver")
+func (stubDriver) Open(name string) (driver.Conn, error) { return stubConn{}, nil }
+
+type stubConn struct{}
+
+func (stubConn) Prepare(query string) (driver.Stmt, error) { return nil, driver.ErrSkip }
+func (stubConn) Close() error                              { return nil }
+func (stubConn) Begin() (driver.Tx, error)                 { return nil, driver.ErrSkip }
+
+var registerStubDriver sync.Once
+
+func TestNewRepositoriesUnsupportedDriver(t *testing.T) {
+	const name = "openfsd_stub_unsupported"
+	registerStubDriver.Do(func() {
+		sql.Register(name, stubDriver{})
+	})
+
+	sqlDB, err := sql.Open(name, "")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = sqlDB.Close() })
+
+	_, err = NewUserRepository(sqlDB)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unsupported database")
+
+	_, err = NewConfigRepository(sqlDB)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unsupported database")
+
+	_, err = NewRepositories(sqlDB)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unsupported database")
 }
 
 func TestGetWelcomeMessageAndInitDefault(t *testing.T) {
