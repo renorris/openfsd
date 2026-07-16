@@ -118,7 +118,17 @@ type Session struct {
 
 	Auth            Auth // Optional; set by server when client auth is used
 	SendFastEnabled bool
+
+	// sendEnqueueObs is an optional test/stress hook invoked after a successful
+	// enqueue on sendChan (not under any postoffice lock). nil is a no-op.
+	sendEnqueueObs SendEnqueueObserver
 }
+
+// SendEnqueueObserver is invoked after a packet is successfully enqueued on a
+// session's outbound channel. Used by stress tests to measure handler-to-enqueue
+// timing. Implementations must not block or call back into session/postoffice
+// under lock.
+type SendEnqueueObserver func(callsign string, enqueuedAt time.Time, queueDepth int)
 
 // New constructs a Session with a cancellable child context and outbound buffer.
 // conn may be nil in unit tests that only exercise Send/state.
@@ -171,10 +181,20 @@ func (s *Session) SendError(code int, message string) error {
 func (s *Session) Send(packet string) error {
 	select {
 	case s.sendChan <- packet:
+		if obs := s.sendEnqueueObs; obs != nil {
+			// queueDepth is approximate (len after enqueue); safe for stress only.
+			obs(s.Callsign, time.Now(), len(s.sendChan))
+		}
 		return nil
 	case <-s.Ctx.Done():
 		return s.Ctx.Err()
 	}
+}
+
+// SetSendEnqueueObserver installs a test/stress hook for successful Send enqueues.
+// Pass nil to clear. Not safe to call concurrently with Send.
+func (s *Session) SetSendEnqueueObserver(obs SendEnqueueObserver) {
+	s.sendEnqueueObs = obs
 }
 
 // LatLon returns the current [lat, lon] coordinates.

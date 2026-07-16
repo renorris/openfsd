@@ -16,6 +16,32 @@ As of May 2025, FSD is still used to facilitate over 140,000 active members conn
 - Integrate web-based management for users, settings, and connections.
 - Support SQLite and PostgreSQL for persistent storage.
 
+## Package layout
+
+```
+cmd/openfsd/          # FSD binary entrypoint (Docker still outputs /fsd)
+cmd/openfsd-web/      # Web binary entrypoint (Docker still outputs /fsdweb)
+pkg/protocol/         # Pure wire format (parse/marshal; no I/O)
+pkg/fsdclient/        # Public mock/real FSD client for e2e and tools
+internal/server/      # TCP accept, login, handlers, service HTTP
+internal/session/     # Per-connection state + outbound send worker
+internal/postoffice/  # Callsign registry + geospatial index
+internal/geo/         # Pure haversine / bounding box
+internal/auth/        # JWT + VATSIM client auth
+internal/metar/       # METAR worker pool (injectable HTTP)
+internal/db/          # Repositories + migrations
+internal/web/         # Importable Gin app (PE MPA + /api/v1)
+```
+
+There is no residual top-level `fsd/` package.
+
+## Binaries
+
+```bash
+go build -o openfsd ./cmd/openfsd
+go build -o openfsd-web ./cmd/openfsd-web
+```
+
 ## Quick Start with Docker
 
 The preferred way to run openfsd is using **Docker** and **Docker Compose**. See the [Deployment Wiki](https://github.com/renorris/openfsd/wiki/Deployment).
@@ -47,6 +73,28 @@ The preferred way to run openfsd is using **Docker** and **Docker Compose**. See
 
 4. **Connect**:
    See the [Client Connection Wiki](https://github.com/renorris/openfsd/wiki/Client-Connection) for client-specific instructions.
+
+## Tests
+
+```bash
+# Unit + e2e (race detector). Stress is behind build tag and is not run here.
+go test -race ./...
+
+# Coverage excluding cmd/ (CI hard floor ≥80%; aspirational 90%)
+go test -coverprofile=cover.out $(go list ./... | grep -v '/cmd/')
+go tool cover -func=cover.out | tail -1
+# or:
+bash scripts/check-coverage.sh 80
+
+# Benchmarks (postoffice + protocol)
+go test -bench=. -benchmem ./internal/postoffice/ ./pkg/protocol/
+
+# Stress baselines (optional; not on every PR)
+go test -tags=stress -count=1 -timeout=120s ./internal/server/ -run TestStress -v
+# Override pilot count: OPENFSD_STRESS_M=500 go test -tags=stress ...
+```
+
+E2E scenarios live in `internal/server/e2e_test.go` and use `pkg/fsdclient` against `StartTestServer`.
 
 ## API
 

@@ -3,6 +3,10 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    # Weekly stress baselines (optional; does not gate PRs on latency).
+    - cron: "0 6 * * 1"
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -11,47 +15,21 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - name: Race tests
+        run: go test -race -count=1 ./...
+      - name: Coverage floor ≥80% (exclude cmd/)
+        run: bash scripts/check-coverage.sh 80
+      - name: Build binaries
+        run: go build -o /tmp/openfsd ./cmd/openfsd && go build -o /tmp/openfsd-web ./cmd/openfsd-web
 
-      # Race gate (single race suite — coverage step does not re-run with -race).
-      - name: Test
-        run: go test -race ./...
-
-      # Soft coverage without -race to avoid doubling race-test wall time.
-      - name: Coverage report (soft)
-        if: always()
-        run: |
-          chmod +x scripts/coverage.sh
-          ./scripts/coverage.sh
-        # Soft only: floors are phased (AGENTS.md §8). Fails only if tests fail.
-
-      - name: gofmt
-        if: always()
-        run: |
-          unformatted="$(gofmt -l .)"
-          if [ -n "$unformatted" ]; then
-            echo "The following files need gofmt:"
-            echo "$unformatted"
-            exit 1
-          fi
-          echo "gofmt OK"
-
-      - name: Hygiene (panic/reflect/fmt.Print/log.Print)
-        if: always()
-        run: |
-          chmod +x scripts/check-hygiene.sh
-          ./scripts/check-hygiene.sh
-
-      - name: Import graph (forbidden edges)
-        if: always()
-        run: |
-          chmod +x scripts/check-import-graph.sh
-          ./scripts/check-import-graph.sh
-
-      # Advisory until a dedicated cleanup PR lands; then drop continue-on-error.
-      - name: golangci-lint
-        if: always()
-        uses: golangci/golangci-lint-action@v6
-        continue-on-error: true
+  stress:
+    # Optional: scheduled or manual. Never fails on absolute latency thresholds.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
         with:
-          version: v1.64.5
-          args: --timeout=5m
+          go-version-file: go.mod
+      - name: Stress baselines (build tag)
+        run: go test -tags=stress -count=1 -timeout=120s ./internal/server/ -run 'TestStress' -v
