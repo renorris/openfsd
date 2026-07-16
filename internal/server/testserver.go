@@ -15,8 +15,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/renorris/openfsd/db"
 	"github.com/renorris/openfsd/internal/auth"
+	"github.com/renorris/openfsd/internal/db"
 	"github.com/renorris/openfsd/internal/metar"
 	"github.com/renorris/openfsd/internal/postoffice"
 	"github.com/renorris/openfsd/pkg/protocol"
