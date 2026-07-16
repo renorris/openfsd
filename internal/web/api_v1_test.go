@@ -195,23 +195,28 @@ func TestBearerMiddleware(t *testing.T) {
 	env := setupTestAPI(t)
 	access, refresh := env.login(t, env.admin.CID, env.adminPass)
 
+	// Dual-accept (KD-18): missing/invalid Bearer without session is unauthorized.
+
 	// missing Authorization
 	w := env.doJSON(t, http.MethodPost, "/api/v1/user/load", map[string]any{"cid": env.admin.CID}, "")
-	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
 	res := decodeAPIV1(t, w)
 	require.NotNil(t, res.Err)
-	assert.Contains(t, *res.Err, "bearer")
+	assert.Contains(t, *res.Err, "unauthorized")
 
 	// garbage token
 	w = env.doJSON(t, http.MethodPost, "/api/v1/user/load", map[string]any{"cid": env.admin.CID}, "not-a-jwt")
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	res = decodeAPIV1(t, w)
+	require.NotNil(t, res.Err)
+	assert.Contains(t, *res.Err, "unauthorized")
 
 	// refresh token is not an access token
 	w = env.doJSON(t, http.MethodPost, "/api/v1/user/load", map[string]any{"cid": env.admin.CID}, refresh)
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 	res = decodeAPIV1(t, w)
 	require.NotNil(t, res.Err)
-	assert.Contains(t, *res.Err, "token type")
+	assert.Contains(t, *res.Err, "unauthorized")
 
 	// valid access token
 	w = env.doJSON(t, http.MethodPost, "/api/v1/user/load", map[string]any{"cid": env.admin.CID}, access)

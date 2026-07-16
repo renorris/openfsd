@@ -20,7 +20,6 @@ type Sender interface {
 }
 
 // Auth is the optional VATSIM client-auth challenge state for a session.
-// Implemented by fsd's vatsimAuthState (auth remains in fsd until PR4).
 type Auth interface {
 	Initialize(clientID uint16, initialChallenge []byte) error
 	IsInitialized() bool

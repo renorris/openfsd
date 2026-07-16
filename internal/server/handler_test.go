@@ -5,12 +5,16 @@ import (
 	"io"
 	"log/slog"
 	"net"
-	"reflect"
-	"runtime"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/renorris/openfsd/internal/auth"
+	"github.com/renorris/openfsd/internal/postoffice"
+	"github.com/renorris/openfsd/internal/session"
+	"github.com/renorris/openfsd/pkg/protocol"
+)
 
 // memRegistry is a thin adapter so tests can use postoffice as Registry.
 type memRegistry struct {
