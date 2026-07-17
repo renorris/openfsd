@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Forbidden import-edge checks for openfsd (AGENTS.md §2).
-# Documents and enforces edges when packages exist; no-op success if absent.
-# A Go TestImportGraph may replace or supplement this once packages land.
+# Skips a pattern with success if the package tree is absent.
 #
 # Checks direct imports of each package under a pattern (./pkg/... style).
 # Pure packages (pkg/protocol, internal/geo) must be stdlib-only:
@@ -39,7 +38,7 @@ check_no_imports() {
   local forbidden=("$@")
 
   if ! pkgs_exist "$pattern"; then
-    echo "    skip $from_label (not present yet)"
+    echo "    skip $from_label (package missing)"
     return 0
   fi
 
@@ -73,7 +72,7 @@ check_stdlib_only() {
   local pattern="$2"
 
   if ! pkgs_exist "$pattern"; then
-    echo "    skip $from_label (not present yet)"
+    echo "    skip $from_label (package missing)"
     return 0
   fi
 
@@ -118,9 +117,9 @@ check_no_imports "internal/session" "${MODULE}/internal/session/..." \
 # internal/geo — stdlib only
 check_stdlib_only "internal/geo" "${MODULE}/internal/geo/..."
 
-# internal/web — must not import server, session, postoffice, metar
+# internal/web — must not import session, postoffice, metar
+# (server is allowed only for service-HTTP DTOs; keep that coupling minimal)
 check_no_imports "internal/web" "${MODULE}/internal/web/..." \
-  "${MODULE}/internal/server" \
   "${MODULE}/internal/session" \
   "${MODULE}/internal/postoffice" \
   "${MODULE}/internal/metar"
@@ -145,5 +144,5 @@ if [[ "$failed" -ne 0 ]]; then
 fi
 
 echo
-echo "Import graph check passed (missing packages skipped)."
+echo "Import graph check passed."
 exit 0

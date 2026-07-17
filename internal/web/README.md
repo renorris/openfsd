@@ -1,9 +1,10 @@
 # openfsd REST & frontend interface
 
 ## Overview
-This API provides programmatic access to manage users, configurations, authentication, and FSD connections. All API endpoints are versioned under `/api/v1` and use JSON for request and response bodies unless otherwise specified.
 
-First-party browser UI is a progressive-enhancement MPA: form login sets a signed **HttpOnly session cookie**; `/api/v1` dual-accepts that cookie **or** a Bearer access token. External tools should use Bearer API tokens.
+Part of the single `openfsd` binary (`cmd/openfsd -web`; default runs FSD + web). Shares `internal/db` with the FSD server; live connection state comes from the FSD service HTTP API (`FSD_HTTP_SERVICE_ADDRESS`, default `http://127.0.0.1:13618`).
+
+JSON under `/api/v1` for external tools and map polling. First-party UI is a progressive-enhancement MPA: form login sets a signed **HttpOnly session cookie**; `/api/v1` dual-accepts that cookie **or** a Bearer access token. External tools should use Bearer API tokens.
 
 ### First-party HTML pages (no-JS primary path)
 | Page | Routes | Authz |

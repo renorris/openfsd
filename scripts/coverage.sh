@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Soft coverage report for openfsd.
-# Fails only if tests fail — never fails on coverage floor (floors are phased; see AGENTS.md §8).
+# Fails only if tests fail — never fails on coverage floor.
+# For hard floors use: bash scripts/check-coverage.sh 80 (see AGENTS.md §8).
 #
 # Does NOT use -race: CI already runs `go test -race ./...` separately.
 # Locally run `go test -race ./...` for the race gate; use this for cover profile only.
@@ -43,32 +44,9 @@ if [[ -f "${OUT}" ]]; then
     echo "    (unexpected coverprofile format; skipped filter)"
   fi
 
-  # List packages that exist under pkg/ and internal/ for floor tracking later
-  echo "    target packages present:"
-  found_target=0
-  for p in \
-    "${MODULE}/pkg/protocol" \
-    "${MODULE}/pkg/fsdclient" \
-    "${MODULE}/internal/geo" \
-    "${MODULE}/internal/auth" \
-    "${MODULE}/internal/postoffice" \
-    "${MODULE}/internal/session" \
-    "${MODULE}/internal/metar" \
-    "${MODULE}/internal/server" \
-    "${MODULE}/internal/db" \
-    "${MODULE}/internal/web"
-  do
-    if go list "$p" >/dev/null 2>&1; then
-      echo "      - $p"
-      found_target=1
-    fi
-  done
-  if [[ "$found_target" -eq 0 ]]; then
-    echo "      (none yet — legacy fsd/db/web; floors soft until package split)"
-  fi
 fi
 
 echo
-echo "Coverage report complete (soft — no floor enforced yet; cmd/* soft-excluded from summary)."
-echo "See AGENTS.md §8. Race detection: run go test -race ./... separately (CI Test step)."
+echo "Coverage report complete (soft — no floor enforced; use scripts/check-coverage.sh for hard floors)."
+echo "See AGENTS.md §8. Race detection: run go test -race ./... separately."
 exit 0

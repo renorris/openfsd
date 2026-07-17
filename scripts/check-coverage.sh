@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # Fail if overall statement coverage (excluding cmd/) is below the floor.
-# Also enforces pure-package floors from the design phased gates.
+# Also enforces pure-package hard floors (see AGENTS.md §8).
 #
 # Usage: scripts/check-coverage.sh [overall_floor_percent]
 # Default overall floor: 80
 #
-# Pure package hard floors (fail CI):
+# Hard floors (fail CI):
 #   pkg/protocol ≥98, internal/geo ≥98, internal/auth ≥95, internal/postoffice ≥90
-# Soft / reported only (do not fail):
-#   internal/web (aspirational ≥80), overall aspirational 90
+# Soft / reported only:
+#   internal/web ≥80, overall aspirational 90
 set -euo pipefail
 
 FLOOR="${1:-80}"

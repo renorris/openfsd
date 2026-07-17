@@ -12,126 +12,121 @@ As of May 2025, FSD is still used to facilitate over 140,000 active members conn
 
 ## Features
 
-- Facilitate multiplayer flight simulation with VATSIM protocol compatibility.
-- Integrate web-based management for users, settings, and connections.
-- Support SQLite and PostgreSQL for persistent storage.
+- Multiplayer flight simulation with VATSIM protocol compatibility
+- Web-based management for users, settings, and connections
+- SQLite and PostgreSQL for persistent storage
+- **Single binary** — FSD and web share one process and one database; enable services with CLI flags
 
 ## Package layout
 
 ```
-cmd/openfsd/          # FSD binary entrypoint (Docker still outputs /fsd)
-cmd/openfsd-web/      # Web binary entrypoint (Docker still outputs /fsdweb)
+cmd/openfsd/          # Binary entrypoint (FSD + web; image CMD is /openfsd)
 pkg/protocol/         # Pure wire format (parse/marshal; no I/O)
-pkg/fsdclient/        # Public mock/real FSD client for e2e and tools
+pkg/fsdclient/        # Mock/real FSD client for e2e and tools
 internal/server/      # TCP accept, login, handlers, service HTTP
 internal/session/     # Per-connection state + outbound send worker
 internal/postoffice/  # Callsign registry + geospatial index
 internal/geo/         # Pure haversine / bounding box
 internal/auth/        # JWT + VATSIM client auth
 internal/metar/       # METAR worker pool (injectable HTTP)
-internal/db/          # Repositories + migrations
-internal/web/         # Importable Gin app (PE MPA + /api/v1)
+internal/db/          # Shared repositories + migrations
+internal/web/         # Gin MPA + /api/v1
 ```
 
-There is no residual top-level `fsd/` package.
-
-## Binaries
+## Build and run
 
 ```bash
 go build -o openfsd ./cmd/openfsd
-go build -o openfsd-web ./cmd/openfsd-web
+
+./openfsd              # both FSD and web (default)
+./openfsd -fsd         # FSD only (:6809 + service HTTP :13618)
+./openfsd -web         # web only (:8000)
 ```
 
-## Quick Start with Docker
+| Flag | Effect |
+|------|--------|
+| *(none)* | Both services |
+| `-fsd` | FSD only |
+| `-web` | Web only |
+| `-fsd -web` | Both (same as default) |
 
-The preferred way to run openfsd is using **Docker** and **Docker Compose**. See the [Deployment Wiki](https://github.com/renorris/openfsd/wiki/Deployment).
+### Environment
 
-### Prerequisites
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `DATABASE_DRIVER` | `sqlite` | `sqlite` or `postgres` |
+| `DATABASE_SOURCE_NAME` | `:memory:` | Shared by both services |
+| `DATABASE_AUTO_MIGRATE` | `false` | FSD applies migrations on startup |
+| `FSD_LISTEN_ADDRS` | `:6809` | FSD TCP listen address(es) |
+| `SERVICE_HTTP_LISTEN_ADDR` | `:13618` | Internal FSD admin HTTP |
+| `FSD_HTTP_SERVICE_ADDRESS` | `http://127.0.0.1:13618` | Web → FSD service HTTP |
+| `LISTEN_ADDR` | `:8000` | Web UI + `/api/v1` |
+| `LOG_DEBUG` | *(unset)* | Set `true` for debug logging |
 
-- [Docker](https://docs.docker.com/get-docker/)
-- [Docker Compose](https://docs.docker.com/compose/install/)
+Colocated mode (default) uses the shared DB and in-process service HTTP. For `-web` against a remote FSD, set `FSD_HTTP_SERVICE_ADDRESS`.
 
-### Steps
+## Quick start (Docker)
 
-1. **Clone the Repository**:
-   ```bash
-   git clone https://github.com/renorris/openfsd.git
-   cd openfsd
-   ```
+Preferred for operators. See the [Deployment Wiki](https://github.com/renorris/openfsd/wiki/Deployment).
 
-2. **Start with Docker Compose**:
-   ```bash
-   docker-compose up -d
-   ```
-   This launches the FSD server and web server sharing an SQLite database persisted in a named Docker volume. This setup will work great for most people running small servers.
-
-3. **Configure the Server via Web Interface**:
-    - Open `http://localhost:8000` in a browser.
-    - Log in with the default administrator credentials (printed in the FSD server logs on first startup).
-    - Navigate to the **Configure Server** menu
-    - Set configuration values. See the [Configuration](https://github.com/renorris/openfsd/wiki/Configuration) wiki.
-
-4. **Connect**:
-   See the [Client Connection Wiki](https://github.com/renorris/openfsd/wiki/Client-Connection) for client-specific instructions.
-
-## Tests
+Images: **`ghcr.io/renorris/openfsd`** (`:latest`, `:dev`, `sha-*`) published by CI on every push to `main` and `dev`.
 
 ```bash
-# Unit + e2e (race detector). Stress is behind build tag and is not run here.
-go test -race ./...
-
-# Coverage excluding cmd/ (CI hard floor ≥80%; aspirational 90%)
-# Also enforces pure-package floors: protocol/geo ≥98%, auth ≥95%, postoffice ≥90%.
-# Web ≥80% is reported as soft/aspirational only.
-go test -coverprofile=cover.out $(go list ./... | grep -v '/cmd/')
-go tool cover -func=cover.out | tail -1
-# or:
-bash scripts/check-coverage.sh 80
-
-# Benchmarks (postoffice + protocol)
-go test -bench=. -benchmem ./internal/postoffice/ ./pkg/protocol/
-
-# Stress baselines (optional; not on every PR)
-# Also available via GitHub Actions: workflow_dispatch or weekly schedule.
-go test -tags=stress -count=1 -timeout=120s ./internal/server/ -run TestStress -v
-# Override pilot count: OPENFSD_STRESS_M=500 go test -tags=stress ...
+git clone https://github.com/renorris/openfsd.git
+cd openfsd
+docker compose up -d          # pull/build single image; both services
+# or: docker compose up -d --build
 ```
 
-E2E scenarios live in `internal/server/e2e_test.go` and use `pkg/fsdclient` against `StartTestServer`.
+1. Open `http://localhost:8000`
+2. Log in with the default admin credentials (printed in container logs on first startup)
+3. **Configure Server** — see the [Configuration](https://github.com/renorris/openfsd/wiki/Configuration) wiki
+4. Connect a client — [Client Connection Wiki](https://github.com/renorris/openfsd/wiki/Client-Connection)
 
-### Compose smoke (manual checklist)
-
-Published compose images (`ghcr.io/...`) may lag local source. For a local smoke after building images from this tree:
+### Service selection
 
 ```bash
-# Build local images (Dockerfiles produce /fsd and /fsdweb entrypoints)
-docker build -f Dockerfile_fsd -t openfsd-fsd:local .
-docker build -f Dockerfile_web -t openfsd-web:local .
+# Both (default CMD)
+docker run --rm -p 6809:6809 -p 8000:8000 ghcr.io/renorris/openfsd:latest
 
-# Point compose at local tags (or run containers manually sharing a volume), then:
-docker compose up -d
-# Web UI / PE login page
+# FSD only
+docker run --rm -p 6809:6809 ghcr.io/renorris/openfsd:latest /openfsd -fsd
+
+# Web only (remote FSD)
+docker run --rm -p 8000:8000 \
+  -e FSD_HTTP_SERVICE_ADDRESS=http://fsd-host:13618 \
+  ghcr.io/renorris/openfsd:latest /openfsd -web
+```
+
+### Local smoke
+
+```bash
+docker compose up -d --build
 curl -fsS -o /dev/null -w "%{http_code}\n" http://localhost:8000/login
-# Public data status (after API base URL is configured)
-curl -fsS http://localhost:8000/api/v1/data/status.txt | head
-# FSD TCP port open
 nc -z localhost 6809 && echo "fsd:6809 open"
 docker compose down
 ```
 
-Full image CI/publish is out of band; this is an operator checklist, not a PR gate.
+## Tests
+
+```bash
+go test -race ./...
+bash scripts/check-coverage.sh 80    # overall ≥80%; pure-pkg floors (see AGENTS.md)
+go test -bench=. -benchmem ./internal/postoffice/ ./pkg/protocol/
+go test -tags=stress -count=1 -timeout=120s ./internal/server/ -run TestStress -v
+```
+
+E2E: `internal/server/e2e_test.go` via `pkg/fsdclient` + `StartTestServer`. Stress is optional (CI schedule / `workflow_dispatch`).
 
 ## API
 
-The web server exposes APIs under `/api/v1` for authentication, user management, and configuration. Although a basic web interface is provided, users are encouraged to call this API from their own external applications. See the [API](https://github.com/renorris/openfsd/tree/main/internal/web) documentation.
+`/api/v1` covers auth, users, config, and FSD connections. See [internal/web](https://github.com/renorris/openfsd/tree/main/internal/web).
 
-## Docs
+## Protocol docs
 
-Unofficial reverse-engineered protocol documentation is included in this repository:
+Unofficial reverse-engineered FSD protocol docs live under `docs/`:
 
-```
+```bash
 pip install mkdocs
-git clone git@github.com:renorris/openfsd.git
-cd openfsd/
 mkdocs serve
 ```

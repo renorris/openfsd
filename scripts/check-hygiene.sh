@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
-# Hygiene greps for openfsd (AGENTS.md).
-# Targets target-layout trees pkg/ and internal/ only.
-# No-op success if those directories are missing or empty of .go files.
-# Legacy fsd/ will move into these trees; do not add panics/prints in new packages.
+# Hygiene greps for openfsd (AGENTS.md §10).
+# Scans non-test .go under pkg/ and internal/.
 #
 # Limitation: greps can still match string literals (false positives).
 # Pure // and * block-comment lines are skipped. Prefer fixing real call sites;
@@ -58,9 +56,9 @@ elif printf '%s\n' "$files" | scan_files '\bpanic\s*\('; then
   echo "    OK"
 fi
 
-echo "==> Hygiene: reflect usage in pkg/protocol (when present)"
+echo "==> Hygiene: reflect usage in pkg/protocol"
 if [[ ! -d pkg/protocol ]]; then
-  echo "    skip (pkg/protocol not present yet)"
+  echo "    skip (pkg/protocol missing)"
 else
   proto_files="$(list_non_test_go pkg/protocol | grep -v '^$' || true)"
   if [[ -z "$proto_files" ]]; then
