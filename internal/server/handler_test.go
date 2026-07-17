@@ -392,6 +392,22 @@ func TestHandleClientQuery(t *testing.T) {
 	srv.handleClientQuery(atc, []byte("$CQLAX_TWR:SERVER:ATC\r\n"))
 	_ = drain(atc)
 
+	// SERVER CAPS (query → advertised payload; no SECPOS)
+	srv.handleClientQuery(atc, []byte("$CQLAX_TWR:SERVER:CAPS\r\n"))
+	outCAPS := drain(atc)
+	wantCAPS := "$CRSERVER:LAX_TWR:CAPS:" + ServerCapabilitiesPayload() + "\r\n"
+	if !hasOutboundContaining(outCAPS, wantCAPS) {
+		t.Fatalf("expected CAPS response %q, got %v", wantCAPS, outCAPS)
+	}
+	if hasOutboundContaining(outCAPS, "SECPOS=") {
+		t.Fatalf("server CAPS must not advertise SECPOS until multi-center lands, got %v", outCAPS)
+	}
+	// SERVER CAPS client announce ($CR) is accepted and ignored (no reply, no $ER)
+	srv.handleClientQuery(atc, []byte("$CRLAX_TWR:SERVER:CAPS:VERSION=1:ATCINFO=1\r\n"))
+	if out := drain(atc); len(out) != 0 {
+		t.Fatalf("client CAPS announce to SERVER should be silent, got %v", out)
+	}
+
 	// SERVER IP
 	srv.handleClientQuery(pilotIP, []byte("$CQN100IP:SERVER:IP\r\n"))
 	outIP := drain(pilotIP)

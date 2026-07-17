@@ -348,6 +348,8 @@ _"Yes, SAN_GND has active ATC privileges."_
 
 ### `CAPS` (Capabilities)
 - Query the capabilities of another client or the server.
+- Full flag inventory, vatSys compatibility behavior, and openfsd's advertised server set: **[capabilities.md](capabilities.md)**.
+- Flags are colon-separated `NAME=1` tokens (see [Client Capabilities](enumerations.md#client-capabilities)). Absent = unsupported.
 
 Request Payload Fields:
 
@@ -355,9 +357,31 @@ N/A
 
 Response Payload Fields:
 
-| Response Field                         | Description                   |
-|----------------------------------------|-------------------------------|
-| Capabilities List (several FSD fields) | List of [Capabilities](#TODO) |
+| Response Field                         | Description                                                                 |
+|----------------------------------------|-----------------------------------------------------------------------------|
+| Capabilities List (several FSD fields) | Zero or more `NAME=1` tokens (e.g. `VERSION=1`, `ATCINFO=1`, `FASTPOS=1`) |
+
+#### Server query (client → `SERVER`)
+
+Modern ATC clients (e.g. vatSys) send this immediately after login. The server **must** answer; without a reply, clients keep empty server capabilities and will not enable features gated on server CAPS (notably `SECPOS` secondary visibility centers).
+
+Request Example:
+```text
+$CQKSFO_TWR:SERVER:CAPS
+```
+
+Response Example (openfsd — only flags with real server support):
+```text
+$CRSERVER:KSFO_TWR:CAPS:VERSION=1:ATCINFO=1:NEWATIS=1:GLOBALDATA=1:ICAOEQ=1:ATCMULTI=1:FASTPOS=1
+```
+
+Notes:
+
+- Wire form is `$CRSERVER:…` (no colon between `$CR` and `SERVER`), matching `$CRSERVER:…:ATC:…` / `$CRSERVER:…:IP:…`.
+- openfsd does **not** advertise `SECPOS=1` until secondary visibility centers are implemented.
+- `$CR{callsign}:SERVER:CAPS:…` from clients is accepted and ignored (no error).
+
+#### Peer query (client → client)
 
 Request Example:
 ```text
@@ -372,6 +396,8 @@ $CRJBU1005:JBU325:CAPS:VERSION=1:ATCINFO=1:MODELDESC=1:ACCONFIG=1:VISUPDATE=1:AT
 ```
 
 _"This is JBU1005. I would like to share my client's capabilities with JBU325."_
+
+openfsd forwards peer CAPS queries/responses; it does not invent peer flag lists.
 
 <br>
 

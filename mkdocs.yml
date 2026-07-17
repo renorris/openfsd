@@ -6,6 +6,7 @@ nav:
   - 'index.md'
   - 'about.md'
   - 'protocol.md'
+  - 'capabilities.md'
   - 'enumerations.md'
   - 'authentication-token.md'
   - 'vatsim-auth.md'

@@ -45,30 +45,40 @@ Serialization values for different pilot ratings used in the system.
 
 ## Client Capabilities
 
-- Capabilities a client or the server can advertise to the network. 
-- Each corresponds to a specific feature or functionality that a client supports.
+- Capabilities a client or the server can advertise on the wire via `$CQ`/`$CR` **`CAPS`**.
+- On the wire each supported flag appears as `{ID}=1` (e.g. `ATCINFO=1`). Absent means unsupported.
+- Deep reference (vatSys gates, openfsd server advertisement, lifecycle): **[capabilities.md](capabilities.md)**.
 
 | Shorthand Identifier | Name                     | Description |
 |----------------------|--------------------------|-------------|
-| `VERSION`            | Version                  |             |
-| `ATCINFO`            | ATC Info                 |             |
-| `MODELDESC`          | Model Description        |             |
-| `ACCONFIG`           | Aircraft Configuration   |             |
-| `VISUPDATE`          | Visual Position Updates  |             |
-| `RADARUPDATE`        | Radar Updates            |             |
-| `ATCMULTI`           | ATC Multi                |             |
-| `SECPOS`             | Secondary Position       |             |
-| `ICAOEQ`             | ICAO Equipment Suffixes  |             |
-| `FASTPOS`            | Fast Position Updates    |             |
-| `ONGOINGCOORD`       | Ongoing Coordination     |             |
-| `INTERIMPOS`         | Interim Position Updates |             |
-| `STEALTH`            | Stealth Mode             |             |
-| `TEAMSPEAK`          | TeamSpeak Integration    |             |
-| `NEWATIS`            | New ATIS                 |             |
-| `MUMBLE`             | Mumble Integration       |             |
-| `GLOBALDATA`         | Global Data              |             |
-| `SIMULATED`          | Simulated                |             |
-| `OBSPILOT`           | Observer/Pilot           |             |
+| `VERSION`            | Version                  | Capabilities schema version; always `VERSION=1` when present |
+| `ATCINFO`            | ATC Info                 | ATC/controller info features; server advertises when ATC info paths work |
+| `MODELDESC`          | Model Description        | Aircraft model description (typically pilot clients) |
+| `ACCONFIG`           | Aircraft Configuration   | Aircraft config JSON via `$CQ …:ACC` (typically pilot clients) |
+| `VISUPDATE`          | Visual Position Updates  | High-rate visual position stream |
+| `RADARUPDATE`        | Radar Updates            | Radar-style high-rate updates; vatSys mirrors server `FASTPOS` into this |
+| `ATCMULTI`           | ATC Multi                | Multi-controller coexistence / multi-facility operation |
+| `SECPOS`             | Secondary Position       | Secondary ATC visibility centers; **do not advertise unless server implements multi-center range** |
+| `ICAOEQ`             | ICAO Equipment Suffixes  | ICAO equipment / equipment-code flightplan fields |
+| `FASTPOS`            | Fast Position Updates    | Fast pilot positions (`^`, `#SL`, `#ST`) and related `$SF` enable path |
+| `ONGOINGCOORD`       | Ongoing Coordination     | Ongoing coordination (seen in some client CAPS; not used by vatSys `Capabilities.cs`) |
+| `INTERIMPOS`         | Interim Position Updates | Interim position updates |
+| `STEALTH`            | Stealth Mode             | Stealth / reduced presence |
+| `TEAMSPEAK`          | TeamSpeak Integration    | Legacy TeamSpeak integration |
+| `NEWATIS`            | New ATIS                 | `NEWATIS` / new-ATIS letter broadcasts |
+| `MUMBLE`             | Mumble Integration       | Mumble/VSCS landline-related client features |
+| `GLOBALDATA`         | Global Data              | Global ops data (`GD` via `$CQ` / `#PC`) |
+| `ESTIMATES`          | Estimates                | Estimate coordination (`EST` client queries) |
+| `SIMULATED`          | Simulated                | Simulated traffic marker |
+| `OBSPILOT`           | Observer/Pilot           | Observer/pilot hybrid |
+
+### openfsd server advertisement
+
+openfsd currently replies to `$CQ …:SERVER:CAPS` with:
+
+`VERSION=1:ATCINFO=1:NEWATIS=1:GLOBALDATA=1:ICAOEQ=1:ATCMULTI=1:FASTPOS=1`
+
+`SECPOS` is intentionally omitted until secondary visibility centers are implemented.
 
 ## Simulator Types
 

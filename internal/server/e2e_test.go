@@ -278,6 +278,55 @@ func TestE2E_ATCLogin(t *testing.T) {
 	}
 }
 
+// TestE2E_ServerCAPS mirrors vatSys post-login $CQ {cs}:SERVER:CAPS and expects
+// $CRSERVER:{cs}:CAPS:… with the openfsd capability set (no SECPOS).
+func TestE2E_ServerCAPS(t *testing.T) {
+	ts := server.StartTestServer(t)
+	c := dial(t, ts)
+
+	const cs = "CAPS_TWR"
+	loginATC(t, c, cs, ts.ATCCID, ts.ATCPassword, protocol.NetworkRatingController1)
+	waitMOTD(t, c, cs)
+
+	if err := c.Send([]byte("$CQ" + cs + ":SERVER:CAPS\r\n")); err != nil {
+		t.Fatalf("send CAPS query: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	wantPrefix := []byte("$CRSERVER:" + cs + ":CAPS:")
+	r, err := c.WaitFor(ctx, func(r fsdclient.Received) bool {
+		return r.Type == protocol.PacketTypeClientQueryResponse &&
+			bytes.HasPrefix(r.Raw, wantPrefix)
+	})
+	if err != nil {
+		t.Fatalf("wait CAPS response: %v (recorder=%v)", err, c.Recorder().All())
+	}
+	raw := string(r.Raw)
+	if !strings.Contains(raw, server.ServerCapabilitiesPayload()) {
+		t.Fatalf("CAPS payload mismatch: got %q want contains %q", raw, server.ServerCapabilitiesPayload())
+	}
+	if strings.Contains(raw, "SECPOS=") {
+		t.Fatalf("server CAPS must not advertise SECPOS: %q", raw)
+	}
+	// Pilot path also gets CAPS (vatSys-compatible for any client type)
+	c2 := dial(t, ts)
+	loginPilot(t, c2, "CAPS_PLT", ts.PilotCID, ts.PilotPassword, protocol.NetworkRatingObserver)
+	waitMOTD(t, c2, "CAPS_PLT")
+	if err := c2.Send([]byte("$CQCAPS_PLT:SERVER:CAPS\r\n")); err != nil {
+		t.Fatalf("pilot CAPS query: %v", err)
+	}
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel2()
+	_, err = c2.WaitFor(ctx2, func(r fsdclient.Received) bool {
+		return r.Type == protocol.PacketTypeClientQueryResponse &&
+			bytes.HasPrefix(r.Raw, []byte("$CRSERVER:CAPS_PLT:CAPS:"))
+	})
+	if err != nil {
+		t.Fatalf("wait pilot CAPS: %v (recorder=%v)", err, c2.Recorder().All())
+	}
+}
+
 func TestE2E_DuplicateCallsignRejected(t *testing.T) {
 	ts := server.StartTestServer(t)
 

@@ -81,6 +81,12 @@ func (s *Server) handleClientQuery(client *session.Session, packet []byte) {
 			s.handleClientQueryIPRequest(client, packet)
 		case "FP":
 			s.handleClientQueryFlightplanRequest(client, packet)
+		case "CAPS":
+			// $CQ{cs}:SERVER:CAPS → advertise server features.
+			// $CR{cs}:SERVER:CAPS:… (client announce) is accepted and ignored.
+			if getPacketType(packet) == PacketTypeClientQuery {
+				s.handleClientQueryCAPSRequest(client, packet)
+			}
 		}
 		return
 	}
@@ -165,6 +171,14 @@ func (s *Server) handleClientQueryATCRequest(client *session.Session, packet []b
 	} else {
 		p = fmt.Sprintf("$CRSERVER:%s:ATC:N:%s\r\n", client.Callsign, targetCallsign)
 	}
+	client.Send(p)
+}
+
+// handleClientQueryCAPSRequest answers $CQ{callsign}:SERVER:CAPS with the
+// openfsd server capability set. Clients (notably vatSys) send this immediately
+// after login and gate features such as SECPOS / FASTPOS on the reply.
+func (s *Server) handleClientQueryCAPSRequest(client *session.Session, _ []byte) {
+	p := fmt.Sprintf("$CRSERVER:%s:CAPS:%s\r\n", client.Callsign, serverCapabilitiesWire)
 	client.Send(p)
 }
 
