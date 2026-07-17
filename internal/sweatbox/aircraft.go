@@ -84,7 +84,30 @@ type SimAircraft struct {
 	PatternTraffic string
 	// NoStop is set by nostop/nohold (don't stop when clear of runway).
 	NoStop bool
+
+	// Air vector targets (set by fh/cm/spd family; Tick consumes in PR 4).
+	// Has* flags distinguish "not commanded" from zero values.
+	DesiredHeading    float64
+	HasDesiredHeading bool
+	// TurnDir: TurnShortest (0), TurnRight (+1), or TurnLeft (-1).
+	TurnDir int
+	// ImmediateHeading is set by fhn so the next tick (or domain apply) snaps
+	// heading instead of turning. fh/tr/tl/fph clear it.
+	ImmediateHeading bool
+
+	DesiredAlt    float64
+	HasDesiredAlt bool
+
+	DesiredSpeed    float64
+	HasDesiredSpeed bool
 }
+
+// Turn direction for heading vectors (consumed by PR 4 kinematics).
+const (
+	TurnShortest = 0
+	TurnRight    = 1
+	TurnLeft     = -1
+)
 
 // snapshot returns a value copy suitable for host / HTTP (no shared pointers).
 func (a *SimAircraft) snapshot() AircraftSnapshot {
@@ -92,40 +115,48 @@ func (a *SimAircraft) snapshot() AircraftSnapshot {
 		return AircraftSnapshot{}
 	}
 	return AircraftSnapshot{
-		Callsign:       a.Callsign,
-		Type:           a.Type,
-		Engine:         a.Engine,
-		Rules:          a.Rules,
-		Weight:         a.Weight,
-		Dep:            a.Dep,
-		Arr:            a.Arr,
-		CruiseAlt:      a.CruiseAlt,
-		Route:          a.Route,
-		Remarks:        a.Remarks,
-		Squawk:         a.Squawk,
-		XPDRMode:       a.XPDRMode,
-		Ident:          a.Ident,
-		Lat:            a.Lat,
-		Lon:            a.Lon,
-		Alt:            a.Alt,
-		Speed:          a.Speed,
-		Heading:        a.Heading,
-		Status:         a.Status,
-		Instruction:    a.Instruction,
-		CurrentSurface: a.CurrentSurface,
-		Parking:        a.Parking,
-		LandingRunway:  a.LandingRunway,
-		DepRunway:      a.DepRunway,
-		PositionHold:   a.PositionHold,
-		HoldShortOf:    a.HoldShortOf,
-		ClearedTakeoff: a.ClearedTakeoff,
-		DepHeading:     a.DepHeading,
-		HasDepHeading:  a.HasDepHeading,
-		PatternTraffic: a.PatternTraffic,
-		NoStop:         a.NoStop,
-		TaxiWPIndex:    a.TaxiWPIndex,
-		TaxiParking:    a.TaxiParking,
-		TaxiSteps:      append([]string(nil), a.TaxiSteps...),
+		Callsign:          a.Callsign,
+		Type:              a.Type,
+		Engine:            a.Engine,
+		Rules:             a.Rules,
+		Weight:            a.Weight,
+		Dep:               a.Dep,
+		Arr:               a.Arr,
+		CruiseAlt:         a.CruiseAlt,
+		Route:             a.Route,
+		Remarks:           a.Remarks,
+		Squawk:            a.Squawk,
+		XPDRMode:          a.XPDRMode,
+		Ident:             a.Ident,
+		Lat:               a.Lat,
+		Lon:               a.Lon,
+		Alt:               a.Alt,
+		Speed:             a.Speed,
+		Heading:           a.Heading,
+		Status:            a.Status,
+		Instruction:       a.Instruction,
+		CurrentSurface:    a.CurrentSurface,
+		Parking:           a.Parking,
+		LandingRunway:     a.LandingRunway,
+		DepRunway:         a.DepRunway,
+		PositionHold:      a.PositionHold,
+		HoldShortOf:       a.HoldShortOf,
+		ClearedTakeoff:    a.ClearedTakeoff,
+		DepHeading:        a.DepHeading,
+		HasDepHeading:     a.HasDepHeading,
+		PatternTraffic:    a.PatternTraffic,
+		NoStop:            a.NoStop,
+		TaxiWPIndex:       a.TaxiWPIndex,
+		TaxiParking:       a.TaxiParking,
+		TaxiSteps:         append([]string(nil), a.TaxiSteps...),
+		DesiredHeading:    a.DesiredHeading,
+		HasDesiredHeading: a.HasDesiredHeading,
+		TurnDir:           a.TurnDir,
+		ImmediateHeading:  a.ImmediateHeading,
+		DesiredAlt:        a.DesiredAlt,
+		HasDesiredAlt:     a.HasDesiredAlt,
+		DesiredSpeed:      a.DesiredSpeed,
+		HasDesiredSpeed:   a.HasDesiredSpeed,
 	}
 }
 

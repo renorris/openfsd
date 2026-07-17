@@ -72,8 +72,10 @@ func isAircraftVerb(tok string) bool {
 		"ctomlt", "ctomrt",
 		"nostop", "nohold":
 		return true
-	// Reserved for later PRs so "CS, verb …" still targets if typed early:
-	case "fh", "fhn", "tr", "tl", "fph", "cm", "spd", "speed", "slow", "sln",
+	// Air vectors + flight plan (PR 3c):
+	case "fh", "fhn", "tr", "tl", "fph", "fch",
+		"cm", "dm",
+		"spd", "speed", "slow", "sln", "sl", "ds", "is",
 		"fp", "vp", "remarks",
 		"ctopp", "land", "hs":
 		return true
@@ -97,6 +99,12 @@ func normalizeVerb(tok string) string {
 		return "ctoc"
 	case "nohold":
 		return "nostop"
+	case "fch":
+		return "fph"
+	case "dm":
+		return "cm"
+	case "speed", "slow", "sln", "sl", "ds", "is":
+		return "spd"
 	default:
 		return strings.ToLower(tok)
 	}

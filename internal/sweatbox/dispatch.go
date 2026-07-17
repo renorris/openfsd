@@ -85,6 +85,26 @@ func (e *Engine) Command(selectedCS, line string) CommandResult {
 		return e.cmdXPDRLocked(target, XPDRModeStandby)
 	case "id":
 		return e.cmdIdentLocked(target)
+	case "fh":
+		return e.cmdFlyHeadingLocked(target, args, TurnShortest, false)
+	case "fhn":
+		return e.cmdFlyHeadingLocked(target, args, TurnShortest, true)
+	case "tr":
+		return e.cmdFlyHeadingLocked(target, args, TurnRight, false)
+	case "tl":
+		return e.cmdFlyHeadingLocked(target, args, TurnLeft, false)
+	case "fph":
+		return e.cmdFlyPresentHeadingLocked(target)
+	case "cm":
+		return e.cmdClimbMaintainLocked(target, args)
+	case "spd":
+		return e.cmdSpeedLocked(target, args)
+	case "fp":
+		return e.cmdFlightPlanLocked(target, args, RulesIFR)
+	case "vp":
+		return e.cmdFlightPlanLocked(target, args, RulesVFR)
+	case "remarks":
+		return e.cmdRemarksLocked(target, args)
 	default:
 		return CommandResult{OK: false, Message: "Invalid command: " + rest[0]}
 	}
@@ -586,6 +606,177 @@ func (e *Engine) cmdIdentLocked(target string) CommandResult {
 	ac.Ident = true
 	ac.XPDRMode = XPDRModeNormal
 	return CommandResult{OK: true}
+}
+
+// cmdFlyHeadingLocked implements fh / fhn / tr / tl.
+// immediate (fhn) snaps Heading now and sets ImmediateHeading for the tick.
+func (e *Engine) cmdFlyHeadingLocked(target string, args []string, turnDir int, immediate bool) CommandResult {
+	ac, errMsg := e.requireAircraftLocked(target)
+	if errMsg != "" {
+		return CommandResult{OK: false, Message: errMsg}
+	}
+	if len(args) < 1 {
+		return CommandResult{OK: false, Message: `Missing parameters. Example: "fh 120"`}
+	}
+	hdg, ok := parseFiniteFloat(args[0])
+	if !ok {
+		return CommandResult{OK: false, Message: `Missing parameters. Example: "fh 120"`}
+	}
+	hdg = normalizeHeading(hdg)
+	ac.DesiredHeading = hdg
+	ac.HasDesiredHeading = true
+	ac.TurnDir = turnDir
+	ac.ImmediateHeading = immediate
+	if immediate {
+		// fhn: snap domain heading immediately (no realistic turn).
+		ac.Heading = hdg
+	}
+	switch turnDir {
+	case TurnRight:
+		ac.Instruction = fmt.Sprintf("Turn right heading %03.0f", hdg)
+	case TurnLeft:
+		ac.Instruction = fmt.Sprintf("Turn left heading %03.0f", hdg)
+	default:
+		ac.Instruction = fmt.Sprintf("Fly heading %03.0f", hdg)
+	}
+	return CommandResult{OK: true}
+}
+
+func (e *Engine) cmdFlyPresentHeadingLocked(target string) CommandResult {
+	ac, errMsg := e.requireAircraftLocked(target)
+	if errMsg != "" {
+		return CommandResult{OK: false, Message: errMsg}
+	}
+	hdg := normalizeHeading(ac.Heading)
+	ac.DesiredHeading = hdg
+	ac.HasDesiredHeading = true
+	ac.TurnDir = TurnShortest
+	ac.ImmediateHeading = false
+	ac.Instruction = "Fly present heading"
+	return CommandResult{OK: true}
+}
+
+func (e *Engine) cmdClimbMaintainLocked(target string, args []string) CommandResult {
+	ac, errMsg := e.requireAircraftLocked(target)
+	if errMsg != "" {
+		return CommandResult{OK: false, Message: errMsg}
+	}
+	if len(args) < 1 {
+		return CommandResult{OK: false, Message: `Missing parameters. Example: "cm 14000"`}
+	}
+	alt, ok := parseFiniteFloat(args[0])
+	if !ok {
+		return CommandResult{OK: false, Message: `Missing parameters. Example: "cm 14000"`}
+	}
+	ac.DesiredAlt = alt
+	ac.HasDesiredAlt = true
+	switch {
+	case alt > ac.Alt+0.5:
+		ac.Instruction = fmt.Sprintf("Climb and maintain %.0f", alt)
+	case alt < ac.Alt-0.5:
+		ac.Instruction = fmt.Sprintf("Descend and maintain %.0f", alt)
+	default:
+		ac.Instruction = fmt.Sprintf("Maintain %.0f", alt)
+	}
+	return CommandResult{OK: true}
+}
+
+func (e *Engine) cmdSpeedLocked(target string, args []string) CommandResult {
+	ac, errMsg := e.requireAircraftLocked(target)
+	if errMsg != "" {
+		return CommandResult{OK: false, Message: errMsg}
+	}
+	if len(args) < 1 {
+		return CommandResult{OK: false, Message: `Missing parameters. Example: "spd 250"`}
+	}
+	spd, ok := parseFiniteFloat(args[0])
+	if !ok || spd < 0 {
+		return CommandResult{OK: false, Message: `Missing parameters. Example: "spd 250"`}
+	}
+	ac.DesiredSpeed = spd
+	ac.HasDesiredSpeed = true
+	ac.Instruction = fmt.Sprintf("Speed %.0f", spd)
+	return CommandResult{OK: true}
+}
+
+// cmdFlightPlanLocked implements fp (IFR) and vp (VFR).
+// Syntax: fp|vp type altitude route...
+// Altitude: values in [1, 999] are treated as flight levels (×100 feet);
+// otherwise feet MSL (matches TWRTrainer examples: "fp b738 220 …" vs "vp c172 8500 …").
+func (e *Engine) cmdFlightPlanLocked(target string, args []string, rules string) CommandResult {
+	ac, errMsg := e.requireAircraftLocked(target)
+	if errMsg != "" {
+		return CommandResult{OK: false, Message: errMsg}
+	}
+	usage := `Missing parameters. Example: "fp b738 220 kbos dct kjfk"`
+	if rules == RulesVFR {
+		usage = `Missing parameters. Example: "vp c172 8500 kbos dct kbtv"`
+	}
+	if len(args) < 2 {
+		return CommandResult{OK: false, Message: usage}
+	}
+	acType := strings.ToUpper(strings.TrimSpace(args[0]))
+	if acType == "" {
+		return CommandResult{OK: false, Message: usage}
+	}
+	altRaw, ok := parseFiniteFloat(args[1])
+	if !ok || altRaw < 0 {
+		return CommandResult{OK: false, Message: usage}
+	}
+	cruise := parseCruiseAltitude(altRaw)
+
+	routeToks := args[2:]
+	route := strings.Join(routeToks, " ")
+
+	ac.Rules = rules
+	ac.Type = acType
+	ac.CruiseAlt = cruise
+	ac.Route = route
+	// When the route starts/ends with airport-like tokens, update Dep/Arr.
+	if len(routeToks) >= 1 && looksLikeAirport(routeToks[0]) {
+		ac.Dep = strings.ToUpper(routeToks[0])
+	}
+	if len(routeToks) >= 2 && looksLikeAirport(routeToks[len(routeToks)-1]) {
+		ac.Arr = strings.ToUpper(routeToks[len(routeToks)-1])
+	}
+	return CommandResult{OK: true}
+}
+
+func (e *Engine) cmdRemarksLocked(target string, args []string) CommandResult {
+	ac, errMsg := e.requireAircraftLocked(target)
+	if errMsg != "" {
+		return CommandResult{OK: false, Message: errMsg}
+	}
+	if len(args) < 1 {
+		return CommandResult{OK: false, Message: `Missing parameters. Example: "remarks Request VFR closed traffic"`}
+	}
+	// Preserve instructor casing/spacing of remarks text (tokens re-joined).
+	ac.Remarks = strings.Join(args, " ")
+	return CommandResult{OK: true}
+}
+
+// parseCruiseAltitude converts a raw altitude number to feet MSL.
+// Values in (0, 1000) are treated as flight levels (hundreds of feet).
+func parseCruiseAltitude(raw float64) int {
+	if raw > 0 && raw < 1000 {
+		return int(math.Round(raw * 100))
+	}
+	return int(math.Round(raw))
+}
+
+// looksLikeAirport reports whether s looks like an ICAO/IATA airport code
+// (3–4 alphabetic characters). Used only as a Dep/Arr hint for fp/vp.
+func looksLikeAirport(s string) bool {
+	s = strings.TrimSpace(s)
+	if len(s) < 3 || len(s) > 4 {
+		return false
+	}
+	for _, r := range s {
+		if (r < 'A' || r > 'Z') && (r < 'a' || r > 'z') {
+			return false
+		}
+	}
+	return true
 }
 
 func (e *Engine) requireAircraftLocked(target string) (*SimAircraft, string) {

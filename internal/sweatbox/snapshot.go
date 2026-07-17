@@ -46,6 +46,16 @@ type AircraftSnapshot struct {
 	TaxiWPIndex    int
 	TaxiParking    string
 	TaxiSteps      []string
+
+	// Air vector targets (domain; host/UI may surface instruction instead).
+	DesiredHeading    float64
+	HasDesiredHeading bool
+	TurnDir           int
+	ImmediateHeading  bool
+	DesiredAlt        float64
+	HasDesiredAlt     bool
+	DesiredSpeed      float64
+	HasDesiredSpeed   bool
 }
 
 // EngineSnapshot is a point-in-time view of the pure engine (no sessions).
