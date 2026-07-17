@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"time"
 
 	"github.com/sethvargo/go-envconfig"
 )
@@ -20,6 +21,13 @@ type Config struct {
 	NumMetarWorkers int `env:"NUM_METAR_WORKERS, default=4"` // Number of METAR fetch workers to run
 
 	ServiceHTTPListenAddr string `env:"SERVICE_HTTP_LISTEN_ADDR, default=:13618"`
+
+	// Sweatbox (integrated simulator). Disabled by default for general FSD deploys.
+	SweatboxEnabled      bool          `env:"SWEATBOX_ENABLED, default=false"`
+	SweatboxCID          int           `env:"SWEATBOX_CID, default=900001"`
+	SweatboxTickInterval time.Duration `env:"SWEATBOX_TICK_INTERVAL, default=1s"`
+	// SweatboxTickHz, when > 0, overrides SweatboxTickInterval (interval = 1/Hz).
+	SweatboxTickHz float64 `env:"SWEATBOX_TICK_HZ"`
 }
 
 func loadConfig(ctx context.Context) (*Config, error) {

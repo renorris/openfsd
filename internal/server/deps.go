@@ -74,6 +74,9 @@ type Deps struct {
 	// Signature matches net.Listen. nil => net.Listen("tcp", ServiceHTTPListenAddr).
 	// Prefer returning a pre-bound listener so tests avoid bind/close/rebind TOCTOU.
 	HTTPListen func(network, addr string) (net.Listener, error)
+	// SweatboxEnabled gates SweatboxHost allocation. NewDefault copies from Config.
+	// StartTestServer defaults true for e2e convenience.
+	SweatboxEnabled bool
 }
 
 type realClock struct{}

@@ -32,6 +32,8 @@ type Server struct {
 	httpListen func(network, addr string) (net.Listener, error)
 	// httpDone is closed when runServiceHTTP returns (after Serve exits).
 	httpDone chan struct{}
+	// sweatbox is the integrated simulator host (nil when disabled).
+	sweatbox *SweatboxHost
 }
 
 // New constructs a Server from injected Deps.
@@ -65,7 +67,7 @@ func New(d Deps) (*Server, error) {
 		listen = defaultListen
 	}
 
-	return &Server{
+	s := &Server{
 		cfg:        d.Config,
 		users:      d.Users,
 		configKV:   d.ConfigKV,
@@ -76,7 +78,13 @@ func New(d Deps) (*Server, error) {
 		listen:     listen,
 		httpListen: d.HTTPListen,
 		httpDone:   make(chan struct{}),
-	}, nil
+	}
+	// Two-phase: Server exists so SweatboxHost can hold a back-ref for
+	// unexported broadcast helpers, registry, clock, and logger.
+	if d.SweatboxEnabled {
+		s.sweatbox = newSweatboxHost(s)
+	}
+	return s, nil
 }
 
 // NewDefault builds Deps from environment variables and default wiring, then calls New.
@@ -153,11 +161,12 @@ func NewDefault(ctx context.Context) (*Server, error) {
 	po := postoffice.New()
 
 	return New(Deps{
-		Config:   config,
-		Users:    dbRepo.UserRepo,
-		ConfigKV: dbRepo.ConfigRepo,
-		Registry: po,
-		Metar:    metarSvc,
+		Config:          config,
+		Users:           dbRepo.UserRepo,
+		ConfigKV:        dbRepo.ConfigRepo,
+		Registry:        po,
+		Metar:           metarSvc,
+		SweatboxEnabled: config.SweatboxEnabled,
 	})
 }
 
@@ -186,6 +195,11 @@ func generateDefaultAdminUser(dbRepo *db.Repositories) (user *db.User, err error
 func (s *Server) Run(ctx context.Context) (err error) {
 	// Start metar worker pool (MetarQueue.Run is required on the interface).
 	go s.metar.Run(ctx)
+
+	// Sweatbox tick loop (no-op host when disabled / nil).
+	if s.sweatbox != nil {
+		go s.sweatbox.Run(ctx)
+	}
 
 	// Start HTTP service
 	go s.runServiceHTTP(ctx)

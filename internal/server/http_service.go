@@ -187,6 +187,14 @@ func (s *Server) handleKickUser(c *gin.Context) {
 		return
 	}
 
+	// Synthetic (sweatbox) sessions have no handleConn Release defer — Remove
+	// performs pointer-scoped #DP + registry.Release + engine.Delete.
+	if client.Synthetic && s.sweatbox != nil {
+		_ = s.sweatbox.Remove(client.Callsign)
+		c.AbortWithStatus(http.StatusNoContent)
+		return
+	}
+
 	// Cancelling the context will cause the client's event loop to close
 	client.Cancel()
 

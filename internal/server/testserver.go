@@ -117,6 +117,7 @@ type TestServer struct {
 //   - Fake METAR HTTP transport (no real NOAA)
 //   - FSD listen on 127.0.0.1:0
 //   - Service HTTP on a pre-bound 127.0.0.1 listener (no bind/close/rebind TOCTOU)
+//   - SweatboxEnabled true by default (empty engine until LoadAirport/scenario)
 //
 // Returns FSD/HTTP addresses and registers t.Cleanup for shutdown.
 func StartTestServer(t testing.TB) *TestServer {
@@ -240,12 +241,13 @@ func StartTestServer(t testing.TB) *TestServer {
 	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
 
 	srv, err := New(Deps{
-		Config:   cfg,
-		Users:    repos.UserRepo,
-		ConfigKV: repos.ConfigRepo,
-		Registry: postoffice.New(),
-		Metar:    metarSvc,
-		Logger:   logger,
+		Config:          cfg,
+		Users:           repos.UserRepo,
+		ConfigKV:        repos.ConfigRepo,
+		Registry:        postoffice.New(),
+		Metar:           metarSvc,
+		Logger:          logger,
+		SweatboxEnabled: true, // e2e convenience; empty until airport/scenario load
 		// Pass through network/addr from listenLoop (proves config address wiring).
 		Listen: func(ctx context.Context, network, addr string) (net.Listener, error) {
 			var lc net.ListenConfig

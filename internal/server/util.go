@@ -408,7 +408,7 @@ func buildBeaconCodePacket(source, recipient, targetCallsign, beaconCode string)
 }
 
 func pitchBankHeading(packed uint32) (pitch float64, bank float64, heading float64) {
-	// Map 11 bits of resolution to degrees [0..359]
+	// Map 10 bits of resolution to degrees [0..359]
 	const conversionRatio float64 = 359.0 / 1023.0
 	const mask uint32 = 1023 // 0b1111111111
 
@@ -417,6 +417,37 @@ func pitchBankHeading(packed uint32) (pitch float64, bank float64, heading float
 	heading = float64(packed>>2&mask) * conversionRatio
 
 	return
+}
+
+// packPitchBankHeading encodes pitch/bank/heading degrees into the FSD PBH
+// uint32 (10 bits each; lowest 2 bits zero). Inverse of pitchBankHeading.
+// Angles outside [0, 360) are normalized; values near 360 map to 1023.
+func packPitchBankHeading(pitch, bank, heading float64) uint32 {
+	const invRatio float64 = 1023.0 / 359.0
+	const mask uint32 = 1023
+
+	encode := func(deg float64) uint32 {
+		// Normalize to [0, 360).
+		for deg < 0 {
+			deg += 360
+		}
+		for deg >= 360 {
+			deg -= 360
+		}
+		// 360° ≡ 0° on the wire scale; map [0, 359] via round.
+		if deg > 359 {
+			deg = 359
+		}
+		v := uint32(deg*invRatio + 0.5)
+		if v > mask {
+			v = mask
+		}
+		return v
+	}
+	p := encode(pitch)
+	b := encode(bank)
+	h := encode(heading)
+	return (p << 22) | (b << 12) | (h << 2)
 }
 
 func strPtr(str string) *string {
