@@ -490,6 +490,8 @@ func (e *Engine) cmdCTOLocked(target string, args []string, patternDir string) C
 	if atRunway {
 		ac.Status = StatusTakeoff
 		ac.HoldShortOf = ""
+		// Align ground-roll heading to runway (taxi entry is often perpendicular).
+		e.alignTakeoffHeadingLocked(ac)
 	}
 
 	ac.Instruction = formatCTOInstruction(ac)

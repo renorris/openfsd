@@ -854,3 +854,189 @@ func TestTick_EmptyDtAndNilAircraft(t *testing.T) {
 		t.Error("dtSec=0 expand")
 	}
 }
+
+// Issue 1 regression: multi-WP path with hold at last index must follow the
+// polyline (east then north) — no corner-cut straight to the hold.
+func TestTick_TaxiFollowsPolylineUntilHold(t *testing.T) {
+	e := loadKBTVEngine(t)
+	r := e.CommandLine("add v s p @GA9")
+	if !r.OK {
+		t.Fatal(r.Message)
+	}
+	cs := r.Added[0].Callsign
+
+	// Synthetic L-shaped path: east along constant lat, then north to hold.
+	// ~0.01° lon ≈ 800–900 m east; ~0.01° lat ≈ 1100 m north.
+	const lat0 = 44.4700
+	const lon0 = -73.1500
+	const lonMid = -73.1400 // end of east leg
+	const latHold = 44.4800 // hold at north end
+	eastEnd := Point{Lat: lat0, Lon: lonMid}
+	holdPt := Point{Lat: latHold, Lon: lonMid}
+
+	e.mu.Lock()
+	ac := e.aircraft[cs]
+	ac.Lat, ac.Lon = lat0, lon0
+	ac.Heading = 90
+	ac.Status = StatusTaxiing
+	ac.TaxiWaypoints = []Point{
+		{Lat: lat0, Lon: lon0 + 0.003},   // WP0 mid-east
+		eastEnd,                          // WP1 end of east leg
+		{Lat: lat0 + 0.005, Lon: lonMid}, // WP2 mid-north
+		holdPt,                           // WP3 hold
+	}
+	ac.TaxiWPIndex = 0
+	ac.TaxiHolds = []TaxiHold{{
+		Name:          "H1",
+		Point:         holdPt,
+		WaypointIndex: 3,
+	}}
+	ac.TaxiParking = ""
+	ac.DepRunway = ""
+	e.mu.Unlock()
+
+	e.Unpause()
+
+	// While still on the east leg (lon not yet past mid-point of east segment),
+	// latitude must not jump north toward the hold.
+	eastMidLon := (lon0 + lonMid) / 2
+	for i := 0; i < 400; i++ {
+		e.Tick(time.Second)
+		snap := e.mustGet(t, cs)
+		if snap.Status == StatusHoldingShort {
+			break
+		}
+		// Early east-leg check: until lon past east mid, lat must stay near lat0.
+		if snap.Lon < eastMidLon {
+			if snap.Lat > lat0+0.001 { // ~100 m north is already a corner-cut
+				t.Fatalf("corner-cut on east leg: lat=%.6f lon=%.6f (wpIdx path should stay ~lat0 until lon mid)",
+					snap.Lat, snap.Lon)
+			}
+		}
+	}
+
+	final := e.mustGet(t, cs)
+	if final.Status != StatusHoldingShort {
+		t.Fatalf("expected hold short, got %s lat=%.5f lon=%.5f", final.Status, final.Lat, final.Lon)
+	}
+	if final.HoldShortOf != "H1" {
+		t.Errorf("HoldShortOf = %q", final.HoldShortOf)
+	}
+	// Must be near hold point, not still on east leg start.
+	dHold := geo.Distance(final.Lat, final.Lon, holdPt.Lat, holdPt.Lon)
+	if dHold > 20 {
+		t.Errorf("stopped %.0fm from hold (lat=%.5f lon=%.5f)", dHold, final.Lat, final.Lon)
+	}
+	// And we must have actually traveled east first: lon should be near lonMid.
+	if final.Lon < lonMid-0.002 {
+		t.Errorf("final lon=%.5f, expected near %.5f (followed east then north)", final.Lon, lonMid)
+	}
+}
+
+// Issue 2 regression: cto from hold-short with wrong heading aligns to runway
+// and rolls along centerline, not the old taxi heading.
+func TestTick_CTOAlignsRunwayHeadingFromHoldShort(t *testing.T) {
+	e := loadKBTVEngine(t)
+	r := e.CommandLine("add v s p @GA9")
+	if !r.OK {
+		t.Fatal(r.Message)
+	}
+	cs := r.Added[0].Callsign
+
+	s := e.Airport().FindSurface("33")
+	if s == nil {
+		t.Fatal("no rwy 33")
+	}
+	thr, rwyHdg, ok := runwayThreshold(s, "33")
+	if !ok {
+		t.Fatal("threshold")
+	}
+	// Perpendicular to runway (taxi-entry style).
+	wrongHdg := normalizeHeading(rwyHdg + 90)
+
+	e.mu.Lock()
+	ac := e.aircraft[cs]
+	ac.Lat, ac.Lon = thr.Lat, thr.Lon
+	ac.Heading = wrongHdg
+	ac.Alt = e.airport.FieldElev
+	ac.Speed = 0
+	ac.Status = StatusHoldingShort
+	ac.HoldShortOf = "33"
+	ac.DepRunway = "33"
+	ac.CurrentSurface = "33"
+	ac.TaxiWaypoints = nil
+	ac.ClearedTakeoff = false
+	e.mu.Unlock()
+
+	// cto from hold-short of dep runway → StatusTakeoff + align heading.
+	r = e.Command(cs, "cto")
+	if !r.OK {
+		t.Fatal(r.Message)
+	}
+	afterCTO := e.mustGet(t, cs)
+	if afterCTO.Status != StatusTakeoff {
+		t.Fatalf("status after cto = %s", afterCTO.Status)
+	}
+	if math.Abs(headingDelta(afterCTO.Heading, rwyHdg)) > 1 {
+		t.Errorf("heading after cto = %.1f, want runway %.1f (was wrong %.1f)",
+			afterCTO.Heading, rwyHdg, wrongHdg)
+	}
+
+	// Roll a few seconds; position should advance along runway heading, not +90°.
+	startLat, startLon := afterCTO.Lat, afterCTO.Lon
+	e.Unpause()
+	for i := 0; i < 5; i++ {
+		e.Tick(time.Second)
+	}
+	rolled := e.mustGet(t, cs)
+	if rolled.Speed < 20 {
+		t.Fatalf("expected roll speed, got %.1f", rolled.Speed)
+	}
+	// Bearing from start to current should be near runway heading.
+	movedBrg := initialBearingDeg(startLat, startLon, rolled.Lat, rolled.Lon)
+	if math.Abs(headingDelta(movedBrg, rwyHdg)) > 15 {
+		t.Errorf("roll track heading %.1f, want ~runway %.1f (not taxi %.1f)",
+			movedBrg, rwyHdg, wrongHdg)
+	}
+	// Must not still be on the old perpendicular heading.
+	if math.Abs(headingDelta(rolled.Heading, wrongHdg)) < 5 {
+		t.Errorf("still on wrong heading %.1f", rolled.Heading)
+	}
+}
+
+// Issue 2: tick transition path (ClearedTakeoff already set, HoldingInPosition).
+func TestTick_CTOAlignsFromInPositionOnTick(t *testing.T) {
+	e := loadKBTVEngine(t)
+	r := e.CommandLine("add v s p @GA9")
+	cs := r.Added[0].Callsign
+
+	s := e.Airport().FindSurface("33")
+	thr, rwyHdg, ok := runwayThreshold(s, "33")
+	if !ok {
+		t.Fatal("threshold")
+	}
+	wrongHdg := normalizeHeading(rwyHdg + 90)
+
+	e.mu.Lock()
+	ac := e.aircraft[cs]
+	ac.Lat, ac.Lon = thr.Lat, thr.Lon
+	ac.Heading = wrongHdg
+	ac.Alt = e.airport.FieldElev
+	ac.Speed = 0
+	ac.Status = StatusHoldingInPosition
+	ac.PositionHold = true
+	ac.DepRunway = "33"
+	ac.ClearedTakeoff = true // set without going through atRunway cmd branch
+	ac.TaxiWaypoints = nil
+	e.mu.Unlock()
+
+	e.Unpause()
+	e.Tick(time.Second)
+	snap := e.mustGet(t, cs)
+	if snap.Status != StatusTakeoff {
+		t.Fatalf("status = %s", snap.Status)
+	}
+	if math.Abs(headingDelta(snap.Heading, rwyHdg)) > 1 {
+		t.Errorf("tick transition heading = %.1f, want runway %.1f", snap.Heading, rwyHdg)
+	}
+}

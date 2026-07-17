@@ -106,6 +106,7 @@ func (e *Engine) tickAircraftLocked(ac *SimAircraft, dtSec float64) (changed boo
 			ac.Status = StatusTakeoff
 			ac.PositionHold = false
 			ac.HoldShortOf = ""
+			e.alignTakeoffHeadingLocked(ac)
 			changed = true
 		case StatusHoldingShort:
 			if ac.DepRunway != "" && ac.HoldShortOf != "" &&
@@ -113,6 +114,7 @@ func (e *Engine) tickAircraftLocked(ac *SimAircraft, dtSec float64) (changed boo
 				ac.Status = StatusTakeoff
 				ac.HoldShortOf = ""
 				ac.PositionHold = false
+				e.alignTakeoffHeadingLocked(ac)
 				changed = true
 			}
 		}
@@ -175,6 +177,8 @@ func (e *Engine) tickAircraftLocked(ac *SimAircraft, dtSec float64) (changed boo
 
 // tickTaxiLocked advances along TaxiWaypoints at taxi speed.
 // Stops at active hold-shorts; finishes path to parking / dep runway / stop.
+// Always follows the polyline; holds only stop when the current waypoint index
+// is the hold's WaypointIndex (no corner-cut to a future hold point).
 func (e *Engine) tickTaxiLocked(ac *SimAircraft, dtSec float64) (changed bool, shouldDelete bool) {
 	if !ac.hasTaxiPath() {
 		if ac.Speed != 0 {
@@ -194,46 +198,26 @@ func (e *Engine) tickTaxiLocked(ac *SimAircraft, dtSec float64) (changed bool, s
 			return e.finishTaxiPathLocked(ac)
 		}
 
-		// Active hold at (or before) the current target index?
-		if h := holdAtOrBefore(ac, ac.TaxiWPIndex); h != nil {
-			// Move toward the hold point, then stop holding short.
-			target := h.Point
-			// Prefer the planned waypoint coordinate when indices match.
-			if h.WaypointIndex >= 0 && h.WaypointIndex < len(ac.TaxiWaypoints) {
-				target = ac.TaxiWaypoints[h.WaypointIndex]
-			}
-			d := geo.Distance(ac.Lat, ac.Lon, target.Lat, target.Lon)
-			if d <= taxiArriveEpsM || d <= budget {
-				if d > taxiArriveEpsM {
-					ac.Heading = initialBearingDeg(ac.Lat, ac.Lon, target.Lat, target.Lon)
-				}
-				ac.Lat, ac.Lon = target.Lat, target.Lon
-				// Snap arrived: advance index past the hold waypoint for resume.
-				if h.WaypointIndex >= ac.TaxiWPIndex {
-					ac.TaxiWPIndex = h.WaypointIndex + 1
-				}
+		target := ac.TaxiWaypoints[ac.TaxiWPIndex]
+		// Hold-short only when we have reached the hold's waypoint index.
+		// Intermediate WPs are walked normally even if a later hold exists.
+		h := holdAtIndex(ac, ac.TaxiWPIndex)
+
+		d := geo.Distance(ac.Lat, ac.Lon, target.Lat, target.Lon)
+		if d <= taxiArriveEpsM {
+			// Arrive at current waypoint.
+			ac.Lat, ac.Lon = target.Lat, target.Lon
+			moved = true
+			if h != nil {
+				// Stop holding short at this waypoint; advance index for resume.
+				ac.TaxiWPIndex++
 				ac.Status = StatusHoldingShort
 				ac.HoldShortOf = h.Name
 				ac.Speed = 0
 				ac.Instruction = "Holding short of " + h.Name
 				return true, false
 			}
-			// Approach hold.
-			brg := initialBearingDeg(ac.Lat, ac.Lon, target.Lat, target.Lon)
-			ac.Heading = brg
-			ac.Lat, ac.Lon = destinationPoint(ac.Lat, ac.Lon, brg, budget)
-			moved = true
-			budget = 0
-			break
-		}
-
-		target := ac.TaxiWaypoints[ac.TaxiWPIndex]
-		d := geo.Distance(ac.Lat, ac.Lon, target.Lat, target.Lon)
-		if d <= taxiArriveEpsM {
-			// Arrive at waypoint; zero-length advance.
-			ac.Lat, ac.Lon = target.Lat, target.Lon
 			ac.TaxiWPIndex++
-			moved = true
 			if ac.TaxiWPIndex >= len(ac.TaxiWaypoints) {
 				return e.finishTaxiPathLocked(ac)
 			}
@@ -245,14 +229,22 @@ func (e *Engine) tickTaxiLocked(ac *SimAircraft, dtSec float64) (changed bool, s
 			ac.Heading = brg
 			ac.Lat, ac.Lon = target.Lat, target.Lon
 			budget -= d
-			ac.TaxiWPIndex++
 			moved = true
+			if h != nil {
+				ac.TaxiWPIndex++
+				ac.Status = StatusHoldingShort
+				ac.HoldShortOf = h.Name
+				ac.Speed = 0
+				ac.Instruction = "Holding short of " + h.Name
+				return true, false
+			}
+			ac.TaxiWPIndex++
 			if ac.TaxiWPIndex >= len(ac.TaxiWaypoints) {
 				return e.finishTaxiPathLocked(ac)
 			}
 			continue
 		}
-		// Partial segment.
+		// Partial segment toward current waypoint (never skip ahead to a hold).
 		brg := initialBearingDeg(ac.Lat, ac.Lon, target.Lat, target.Lon)
 		ac.Heading = brg
 		ac.Lat, ac.Lon = destinationPoint(ac.Lat, ac.Lon, brg, budget)
@@ -267,25 +259,33 @@ func (e *Engine) tickTaxiLocked(ac *SimAircraft, dtSec float64) (changed bool, s
 	return false, false
 }
 
-// holdAtOrBefore returns the nearest remaining hold whose WaypointIndex is at
-// or after the current WP index (i.e. we must stop when we reach it).
-func holdAtOrBefore(ac *SimAircraft, wpIndex int) *TaxiHold {
+// holdAtIndex returns a remaining hold whose WaypointIndex equals wpIndex.
+func holdAtIndex(ac *SimAircraft, wpIndex int) *TaxiHold {
 	if ac == nil || len(ac.TaxiHolds) == 0 {
 		return nil
 	}
-	var best *TaxiHold
-	bestIdx := math.MaxInt
 	for i := range ac.TaxiHolds {
 		h := &ac.TaxiHolds[i]
-		if h.WaypointIndex < wpIndex {
-			continue
-		}
-		if h.WaypointIndex < bestIdx {
-			bestIdx = h.WaypointIndex
-			best = h
+		if h.WaypointIndex == wpIndex {
+			return h
 		}
 	}
-	return best
+	return nil
+}
+
+// alignTakeoffHeadingLocked sets Heading to the dep runway landing/takeoff
+// direction when DepRunway resolves. No-op if airport/runway unavailable.
+func (e *Engine) alignTakeoffHeadingLocked(ac *SimAircraft) {
+	if ac == nil || ac.DepRunway == "" || e.airport == nil {
+		return
+	}
+	s := e.airport.FindSurface(ac.DepRunway)
+	if s == nil {
+		return
+	}
+	if _, hdg, ok := runwayThreshold(s, ac.DepRunway); ok {
+		ac.Heading = hdg
+	}
 }
 
 // finishTaxiPathLocked is called when the aircraft reaches the last taxi waypoint.
@@ -318,14 +318,7 @@ func (e *Engine) finishTaxiPathLocked(ac *SimAircraft) (changed bool, shouldDele
 		ac.HoldShortOf = ""
 		ac.PositionHold = false
 		ac.CurrentSurface = ac.DepRunway
-		// Align heading with runway if possible.
-		if e.airport != nil {
-			if s := e.airport.FindSurface(ac.DepRunway); s != nil {
-				if _, hdg, ok := runwayThreshold(s, ac.DepRunway); ok {
-					ac.Heading = hdg
-				}
-			}
-		}
+		e.alignTakeoffHeadingLocked(ac)
 		return true, false
 	}
 
