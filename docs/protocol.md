@@ -1,38 +1,63 @@
 # Protocol
 
-| Name                                                                     | Identifier | Purpose                                                                                         |
-|--------------------------------------------------------------------------|------------|-------------------------------------------------------------------------------------------------|
-| [Server Identification](#server-identification-di)                       | `$DI`      | Server identification                                                                           |
-| [Client Identification](#client-identification-id)                       | `$ID`      | Client identification                                                                           |
-| [Add Pilot](#add-pilot-ap)                                               | `#AP`      | Login as pilot                                                                                  |
-| [Add ATC](#add-atc-aa)                                                   | `#AA`      | Login as ATC                                                                                    |
-| [Pilot Position](#pilot-position-)                                       | `@`        | Pilot geographical position/velocity update                                                     |
-| [Fast Pilot Position](#fast-pilot-position)                              | `^`        | Pilot geographical position/velocity update, sent at a higher frequency                         |
-| [Fast Pilot Position (Slow)](#fast-pilot-position-slow-variant-sl)       | `#SL`      | Pilot geographical position/velocity update, sent at a lower frequency                          |
-| [Fast Pilot Position (Stopped)](#fast-pilot-position-stopped-variant-st) | `#ST`      | Pilot geographical position/velocity update, sent when the airplane is stopped (zero velocity). |
-| [ATC Position](#atc-position)                                            | `%`        | ATC geographical position update                                                                |
-| [Ping](#ping-pi)                                                         | `$PI`      | Ping a recipient                                                                                |
-| [Pong](#pong-po)                                                         | `$PO`      | Respond to a ping                                                                               |
-| [Client Query](#client-query-cq)                                         | `$CQ`      | Query information about a recipient                                                             |
-| [Client Query Response](#client-query-response-cr)                       | `$CR`      | Respond to a client query                                                                       |
-| [METAR Request](#metar-request-ax)                                       | `$AX`      | Request a METAR                                                                                 |
-| [METAR Response](#metar-response-ar)                                     | `$AR`      | Respond to a METAR request                                                                      |
-| [Wind Data](#wind-data-wd)                                               | `#WD`      | Wind data                                                                                       |
-| [Cloud Data](#cloud-data-cd)                                             | `#CD`      | Cloud data                                                                                      |
-| [Temperature Data](#temperature-data-td)                                 | `#TD`      | Temperature data                                                                                |
-| [Initiate Handoff](#initiate-handoff-ho)                                 | `$HO`      | Initiate an ATC handoff request                                                                 |
-| [Accept Handoff](#accept-handoff-ha)                                     | `$HA`      | Accept an ATC handoff request                                                                   |
-| [Weather Profile Request](#weather-profile-request-wx)                   | `#WX`      | Request the server's weather profile                                                            | 
-| [Flight Plan](#flight-plan-fp)                                           | `$FP`      | Send a flightplan                                                                               |
-| [Flight Plan Amendment](#flight-plan-amendment-am)                       | `$AM`      | Amend a flightplan                                                                              |
-| [Delete Pilot](#delete-pilot-dp)                                         | `#DP`      | Notify server before disconnecting (pilot connections)                                          |
-| [Delete ATC](#delete-atc-da)                                             | `#DA`      | Notify server before disconnecting (ATC connections)                                            |                                           |
-| [Kill Request](#kill-request)                                            | `$!!`      | Kick a user from the server (admin/supervisor only)                                             |
-| [Auth Challenge](#auth-challenge-zc)                                     | `$ZC`      | Challenge other side of the connection using an obfuscation technique                           |
-| [Auth Response](#auth-response-zr)                                       | `$ZR`      | Respond to an auth challenge                                                                    |
-| [ATC Shared State](#atc-shared-state-pc)                                 | `#PC`      | ATC-specific data exchange                                                                      |
-| [Plane Information](#plane-information-sb)                               | `#SB`      | Pilot-specific data exchange                                                                    |
-| [Text Message](#text-message-tm)                                         | `#TM`      | Send a text message                                                                             |
+> Reverse-engineered. Unconfirmed details are marked as such. openfsd-specific behavior is called out where relevant.
+
+## Connection flow (ATC)
+
+After the TCP connection is up and `$DI` has been received, a typical modern ATC client:
+
+1. **`$ID`** — client identification (callsign, software ID/name/version, CID, system UID, initial challenge).  
+2. **`#AA`** — add ATC with **protocol revision 100**, real name, CID, JWT (or password on non-official servers), rating.  
+3. **`$CQ …:SERVER:IP`**  
+4. **`$CQ …:SERVER:CAPS`** — server **must** answer (see [capabilities.md](capabilities.md)).  
+5. **`$CQ …:SERVER:ATC:{self}`** — self “valid ATC” query.  
+6. **`%` ATC position** — primary visibility center; secondary centers only if server CAPS has `SECPOS` (see [Secondary visibility centers](#secondary-visibility-centers)).
+
+ATIS is commonly a **second FSD session**: `$ID` + `#AA` (revision **100**) + `%` (often facility tower/`4`, range `0`) + CAPS answers limited to `VERSION=1:ATCINFO=1`.
+
+Auth challenges (`$ZC`/`$ZR`) run throughout the session ([vatsim-auth.md](vatsim-auth.md)).
+
+---
+
+## Packet index
+
+| Name | Identifier | Purpose |
+|------|------------|---------|
+| [Server Identification](#server-identification-di) | `$DI` | Server identification |
+| [Client Identification](#client-identification-id) | `$ID` | Client identification |
+| [Add Pilot](#add-pilot-ap) | `#AP` | Login as pilot |
+| [Add ATC](#add-atc-aa) | `#AA` | Login as ATC |
+| [Pilot Position](#pilot-position-) | `@` | Pilot position (≈0.2 Hz) |
+| [Fast Pilot Position](#fast-pilot-position) | `^` | High-rate pilot visual/velocity update |
+| [Fast Pilot Position (Slow)](#fast-pilot-position-slow-variant-sl) | `#SL` | Proto-101 slow visual update |
+| [Fast Pilot Position (Stopped)](#fast-pilot-position-stopped-variant-st) | `#ST` | Proto-101 stopped visual update |
+| [Send Fast](#send-fast-sf) | `$SF` | Server → client: enable/disable fast (`^`) stream |
+| [ATC Position](#atc-position) | `%` | ATC geographical position update |
+| [Secondary visibility centers](#secondary-visibility-centers) | *(see section)* | Extra ATC vis centers when `SECPOS` |
+| [Ping](#ping-pi) | `$PI` | Ping a recipient |
+| [Pong](#pong-po) | `$PO` | Respond to a ping |
+| [Client Query](#client-query-cq) | `$CQ` | Query / ATC coordination command |
+| [Client Query Response](#client-query-response-cr) | `$CR` | Query response |
+| [METAR Request](#metar-request-ax) | `$AX` | Request a METAR |
+| [METAR Response](#metar-response-ar) | `$AR` | METAR response |
+| [Wind Data](#wind-data-wd) | `#WD` | Wind data (legacy weather profile) |
+| [Cloud Data](#cloud-data-cd) | `#CD` | Cloud data (legacy weather profile) |
+| [Temperature Data](#temperature-data-td) | `#TD` | Temperature data (legacy weather profile) |
+| [Handoff Request](#handoff-request-ho) | `$HO` | Initiate ATC handoff |
+| [Handoff Accept](#handoff-accept-ha) | `$HA` | Accept ATC handoff |
+| [Handoff Cancel](#handoff-cancel) | *(see section)* | Cancel handoff |
+| [Weather Profile Request](#weather-profile-request-wx) | `#WX` | Request weather profile (**legacy**; modern clients use `$AX` METAR) |
+| [Flight Plan](#flight-plan-fp) | `$FP` | File / distribute flight plan |
+| [Flight Plan Amendment](#flight-plan-amendment-am) | `$AM` | Amend flight plan |
+| [Delete Pilot](#delete-pilot-dp) | `#DP` | Pilot disconnect notify |
+| [Delete ATC](#delete-atc-da) | `#DA` | ATC disconnect notify |
+| [Kill Request](#kill-request) | `$!!` | Kick user (supervisor/admin) |
+| [Auth Challenge](#auth-challenge-zc) | `$ZC` | In-band auth challenge |
+| [Auth Response](#auth-response-zr) | `$ZR` | In-band auth response |
+| [Server Error](#server-error-er) | `$ER` | Server error |
+| [ATC Shared State](#atc-shared-state-pc) | `#PC` | ATC shared state / landline / coordination |
+| [Plane Information](#plane-information-sb) | `#SB` | Pilot model-matching / interim data |
+| [Text Message](#text-message-tm) | `#TM` | Text / radio / wallop-style messages |
 
 <br>
 
@@ -47,7 +72,7 @@
 
 - First packet sent by the server upon TCP connection establishment.
 - The client must wait for this packet before continuing initialization.
-- TODO: see Connection Flow
+- Clients continue with `$ID` / `#AA` or `#AP` / post-login queries after server identification (see [Connection flow](#connection-flow-atc)).
 
 Example:
 ```text
@@ -75,7 +100,7 @@ $DISERVER:CLIENT:VATSIM FSD V3.50:76617473696d
 - The Client Software ID is a static VATSIM-assigned value given to each [approved software](https://vatsim.net/docs/policy/approved-software) client. It is used as an input for the VATSIM Auth obfuscation scheme.
 - The Client Software Major and Minor versions describe the release version of the client software. e.g. given `v1.0`: major version = 1, minor version = 0
 - CID or "cert ID" is the VATSIM-equivalent of a username.
-- The System UID is a hardware-specific identifier. Some clients [derive](https://github.com/expipiplus1/openvatsimauth/blob/9cf39462aed7316936d77f33ad91e02116b8f8c7/openvatsimauth.cpp#L175) it from the MAC address of their network card. Other clients such as vatSys generate it using hardware information from the Win32 [GetVolumeInformation()](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getvolumeinformationa) call.
+- The System UID is a hardware-specific identifier. Some clients [derive](https://github.com/expipiplus1/openvatsimauth/blob/9cf39462aed7316936d77f33ad91e02116b8f8c7/openvatsimauth.cpp#L175) it from the MAC address of their network card; others use volume or other host fingerprints.
 
 Example:
 ```text
@@ -119,11 +144,11 @@ Example:
 | CID               | integer | VATSIM-assigned user certificate ID          |                 |
 | Token             | string  | [Authentication JWT](/authentication-token/) |                 |
 | Network Rating    | integer | VATSIM [Network Rating](/network-rating/)    | ATC Rating      |
-| Protocol Revision | integer |                                              |                 |
+| Protocol Revision | integer | Modern ATC commonly uses **`100`** (main and ATIS) |                 |
 
-- The second packet required by the login initialization process.
+- Second packet of the ATC login sequence (after `$ID`).
 - Indicates that a client wishes to connect as an Air Traffic Controller.
-- Sent immediately after the [Client Identification](#client-identification-id) packet.
+- Official network servers expect a JWT in the Token field; private servers may still accept a password.
 - Upon successful login, retransmitted by the server to all other clients with the Token field omitted.
 
 Example:
@@ -168,16 +193,16 @@ Example:
 | True Altitude                       | floating-point number   | Aircraft [true altitude](https://en.wikipedia.org/wiki/Altitude#In_aviation)     | Unit is feet                 |
 | Altitude AGL                        | floating-point number   | Aircraft [altitude AGL](https://en.wikipedia.org/wiki/Height_above_ground_level) | Unit is feet                 |
 | Pitch/Bank/Heading                  | unsigned 32-bit integer | [Encoded pitch, bank, and heading](#pitchbankheading-encoding) information       |                              |
-| Positional Velocity Vector (X-axis) | floating-point number   | Aircraft positional velocity (X-axis)                                            | Unit is radians/second       |
-| Positional Velocity Vector (Y-axis) | floating-point number   | Aircraft positional velocity (Y-axis)                                            | Unit is radians/second       |
-| Positional Velocity Vector (Z-axis) | floating-point number   | Aircraft positional velocity (Z-axis)                                            | Unit is radians/second       |
-| Rotational Velocity Vector (X-axis) | floating-point number   | Aircraft rotational velocity (X-axis)                                            | Unit is radians/second       |
-| Rotational Velocity Vector (Y-axis) | floating-point number   | Aircraft rotational velocity (Y-axis)                                            | Unit is radians/second       |
-| Rotational Velocity Vector (Z-axis) | floating-point number   | Aircraft rotational velocity (Z-axis)                                            | Unit is radians/second       |
+| Positional Velocity Vector (X-axis) | floating-point number   | Aircraft positional velocity (X-axis)                                            | Unit: **m/s** (see [Notes](#fast-pilot-positions)) |
+| Positional Velocity Vector (Y-axis) | floating-point number   | Aircraft positional velocity (Y-axis)                                            | Unit: **m/s** |
+| Positional Velocity Vector (Z-axis) | floating-point number   | Aircraft positional velocity (Z-axis)                                            | Unit: **m/s** |
+| Rotational Velocity Vector (X-axis) | floating-point number   | Aircraft rotational velocity (X-axis)                                            | Unit: **rad/s** |
+| Rotational Velocity Vector (Y-axis) | floating-point number   | Aircraft rotational velocity (Y-axis)                                            | Unit: **rad/s** |
+| Rotational Velocity Vector (Z-axis) | floating-point number   | Aircraft rotational velocity (Z-axis)                                            | Unit: **rad/s** |
 | Nose Gear Angle                     | floating-point number   | Aircraft nose gear tiller angle                                                  | Unit is degrees              |
 
 - Sent by pilot clients supporting protocol revision `101` at **5Hz** intervals when:<br>
-1\. A [Send Fast](#send-fast) packet flagged as `true` is received.<br>
+1\. A [Send Fast](#send-fast-sf) packet flagged as `true` is received.<br>
 - Retransmitted by the server to all other clients within visibility range supporting protocol revision `101`.
 - See [Notes on Fast Pilot Positions](#fast-pilot-positions)
 
@@ -193,7 +218,7 @@ Example:
 | *Fields are identical to [Fast Pilot Position](#fast-pilot-position)*
 
 - Sent by pilot clients supporting protocol revision `101` at **0.2Hz** intervals when:<br>
-1\. A [Send Fast](#send-fast) packet flagged as `false` is received, and<br>
+1\. A [Send Fast](#send-fast-sf) packet flagged as `false` is received, and<br>
 2\. The aircraft velocity is greater than zero.
 - Retransmitted by the server to all other clients within visibility range supporting protocol revision `101`.
 - See [Notes on Fast Pilot Positions](#fast-pilot-positions)
@@ -232,15 +257,45 @@ Example:
 | Network Rating    | integer                         | VATSIM [Network Rating](/network-rating/)                                                                                                                               |                                                        |
 | Latitude          | floating-point number           | Geographical latitude                                                                                                                                                   | Formatted in decimal degrees                           |
 | Longitude         | floating-point number           | Geographical longitude                                                                                                                                                  | Formatted in decimal degrees                           |
-| Unknown `0` Value | integer                         | A static field with the value `0` appended to each ATC position packet. Its purpose is unknown.                                                                         |                                                        |
+| Trailing field | integer                         | Observed as `0` on the wire in common captures. **Purpose unconfirmed.** |                                                        |
 
-- Sent by air traffic controller clients at 15-second intervals.
-- Retransmitted by the server to all other clients within visibility range.
+- Sent by ATC clients on a client-side interval (often rate-limited to about twice per second locally); the server decides broadcast fan-out.
+- Primary position is the first visibility center; additional centers use [secondary visibility center](#secondary-visibility-centers) packets when `SECPOS` is available.
+- Retransmitted by the server to clients within visibility range.
 
 Example:
 ```text
 %EWR_P_APP:28550:5:150:4:40.67317:-74.18533:0
 ```
+
+<br>
+
+## Secondary visibility centers
+
+- Sent after the primary `%` when the server advertised `SECPOS=1` in CAPS.
+- Carries an extra visibility center: callsign, zero-based index, latitude, longitude.
+- **Exact wire prefix and full line layout are unconfirmed** (not frozen in this documentation). Do not invent a prefix in implementations until confirmed by capture.
+- openfsd does **not** implement secondary centers and therefore does not advertise `SECPOS` ([capabilities.md](capabilities.md)).
+
+<br>
+
+## Send Fast (`$SF`)
+
+Server → client instruction to enable or disable high-rate (`^`) pilot position updates (protocol revision **101**).
+
+| Field Name | Type | Description | Notes |
+|------------|------|-------------|-------|
+| From | string | Source callsign | always `SERVER` on the server-originated form |
+| To | string | Pilot callsign | |
+| Enabled | `0` or `1` | `1` = send fast (`^`); `0` = do not | |
+
+Example (openfsd):
+```text
+$SFSERVER:N7938C:1
+```
+
+- openfsd enables `$SF` when a proto-101 pilot is within ~5 NM of another velocity-capable client, and disables outside that threshold.
+- `#SL` / `#ST` continue on the slow path regardless of `$SF` (see [Notes on Fast Pilot Positions](#fast-pilot-positions)).
 
 <br>
 
@@ -348,7 +403,7 @@ _"Yes, SAN_GND has active ATC privileges."_
 
 ### `CAPS` (Capabilities)
 - Query the capabilities of another client or the server.
-- Full flag inventory, vatSys compatibility behavior, and openfsd's advertised server set: **[capabilities.md](capabilities.md)**.
+- Full flag inventory, client gates, and openfsd's advertised server set: **[capabilities.md](capabilities.md)**.
 - Flags are colon-separated `NAME=1` tokens (see [Client Capabilities](enumerations.md#client-capabilities)). Absent = unsupported.
 
 Request Payload Fields:
@@ -363,7 +418,7 @@ Response Payload Fields:
 
 #### Server query (client → `SERVER`)
 
-Modern ATC clients (e.g. vatSys) send this immediately after login. The server **must** answer; without a reply, clients keep empty server capabilities and will not enable features gated on server CAPS (notably `SECPOS` secondary visibility centers).
+Modern ATC clients send this immediately after login. The server **must** answer; without a reply, clients keep empty server capabilities and will not enable features gated on server CAPS (notably `SECPOS` secondary visibility centers).
 
 Request Example:
 ```text
@@ -779,7 +834,7 @@ N/A
 - ATC only.
 - Request help from other controllers.
 - Sent to special recipient [@94835](#94835).
-- This packet is ignored by the [vatSys](https://virtualairtrafficsystem.com) client.
+- Some ATC clients ignore this packet.
 
 Request Payload Fields:
 
@@ -844,8 +899,8 @@ Response Example:
 
 N/A
 
-- A [Pro Controller](#pro-controller-pc) packet is used to reply to this query.
-- TODO: list pro controller packet types
+- Reply path is the shared-state / “I have” family: **`#PC …:CCP:IH:{callsign}`** (and related tracking queries), not a `$CR` payload for `WH`.
+- See [Shared State Types](#shared-state-types) (`IH`).
 
 <br>
 
@@ -1048,7 +1103,7 @@ _"To all nearby ATCs, this is SCT_S_APP. I assigned scratchpad code 'SFR' to N79
 - ATC-only
 - Set the voice type for a target.
 - Sent to special recipient [@94835](#94835).
-- The vatSys client ignores this packet.
+- Some clients ignore this packet.
 
 | Request Field   | Description                                               |
 |-----------------|-----------------------------------------------------------|
@@ -1160,7 +1215,7 @@ _"To all nearby pilots, this is SKW3272. My flaps are now 10 percent deployed."_
 - ATC-only
 - Broadcast when a new ATIS/information is current.
 - Assumed to be sent to special recipient [@94835](#94835).
-- The vatSys client ignores this packet.
+- Some clients ignore this packet.
 - This packet may be deprecated.
 
 | Request Field   | Description                                                |
@@ -1181,7 +1236,7 @@ _"To all nearby ATCs, this is KSAN_ATIS. Information Bravo is now current."_
 - ATC-only
 - Broadcast when a new ATIS is current.
 - Assumed to be sent to special recipient [@94835](#94835).
-- The vatSys client ignores this packet.
+- Some clients ignore this packet.
 - This packet may be deprecated.
 
 | Request Field             | Description                                                                                          |
@@ -1287,7 +1342,7 @@ _"Hello SAN_GND, this is the server. Here is the latest METAR report I have for 
 - Request a weather profile from the server.
 - The server responds to this request with [Wind Data](#wind-data-wd), [Cloud Data](#cloud-data-cd), and [Temperature Data](#temperature-data-td) packets.
 - No modern client is known to use this packet. It is possible this is how legacy clients obtained real-time weather information.
-- The vatSys client ignores this packet.
+- Some clients ignore this packet.
 
 | Field Name | Type   | Description                              | Notes             |
 |------------|--------|------------------------------------------|-------------------|
@@ -1417,13 +1472,13 @@ Example:
 
 - ATC only
 - Initiate a handoff of a target
-- TODO: determine recipients
+- **Recipients:** directed to the receiving controller’s callsign (`To`). The server forwards point-to-point (openfsd: `sendDirect` with an ATC privilege gate).
 
 | Field Name | Type   | Description                       | Notes             |
 |------------|--------|-----------------------------------|-------------------|
 | From       | string | Source callsign                   |                   |
-| To         | string | Recipient callsign                |                   |
-| Target     | string | Callsign of the target to handoff |                   |
+| To         | string | Recipient controller callsign     |                   |
+| Target     | string | Callsign of the aircraft to handoff |                   |
 
 Example:
 ```text
@@ -1438,20 +1493,34 @@ _"Hello LAX_35_CTR, this is SAN_APP. Handing off ROU1887 to you."_
 
 - ATC only
 - Accept a [Handoff Request](#handoff-request-ho)
-- TODO: determine recipients
+- **Recipients:** directed to the offering controller’s callsign (`To`). Same direct-forward pattern as `$HO`.
 
 | Field Name | Type   | Description                       | Notes             |
 |------------|--------|-----------------------------------|-------------------|
 | From       | string | Source callsign                   |                   |
-| To         | string | Recipient callsign                |                   |
-| Target     | string | Callsign of the target to handoff |                   |
+| To         | string | Recipient controller callsign     |                   |
+| Target     | string | Callsign of the aircraft handed off |                   |
 
 Example:
 ```text
-$HOLAX_35_CTR:SAN_APP:ROU1887
+$HALAX_35_CTR:SAN_APP:ROU1887
 ```
 
 _"Hello SAN_APP, this is LAX_35_CTR. I accept your handoff request. I will now track ROU1887."_
+
+<br>
+
+## Handoff Cancel
+
+Two related mechanisms appear in the wild; exact exclusive use is **not fully settled**:
+
+1. **Shared state** — `#PC{from}:{to}:CCP:HC:{target}` (relayed by openfsd as privileged ATC shared state; often to `@94835` for range broadcast).
+2. **Dedicated cancel PDU** — some client stacks expose a distinct handoff-cancelled type parallel to `$HO`/`$HA`. **Wire prefix unconfirmed** in this documentation; openfsd does not currently type a separate cancel packet beyond `#PC HC`.
+
+Example (shared-state form):
+```text
+#PCSAN_APP:LAX_35_CTR:CCP:HC:ROU1887
+```
 
 <br>
 
@@ -2288,11 +2357,12 @@ $!!ABC_SUP:N505GS:Refusing to follow ATC instructions
 |-------------------|---------|-------------------------------------------------------|------------------------------|
 | From              | string  | Source callsign                                       | Always `SERVER`              |
 | To                | string  | Recipient callsign                                    | May be `CLIENT` or `unknown` |
-| Error Code        | integer | [Server Error Code](/enumerations#server-error-codes) |                              |
+| Error Code        | integer | [Server Error Code](enumerations.md#server-error-codes) |                              |
 | Causing Parameter | string  | Repeated FSD field causing the error                  | May be empty if not relevant |
 | Description       | string  | Human-readable description of the error               |                              |
 
-- The error code always fills 3 digits e.g., `006` (`%3d`)
+- Many servers pad the error code to 3 digits e.g. `006` (`%03d`).
+- openfsd currently emits a variant: lowercase `server`, unpadded code (`$ERserver:unknown:6::…`). Receivers should accept both.
 
 Example:
 ```text
@@ -2306,14 +2376,19 @@ $ERSERVER:unknown:006::Invalid CID/password.
 - Sent by pilot clients before terminating the connection.
 - Broadcasted to all other clients on the server.
 
-| Field Name | Type    | Description                           | Notes             |
-|------------|---------|---------------------------------------|-------------------|
-| From       | string  | Source callsign                       |                   |
-| CID        | integer | User's assigned VATSIM Certificate ID |                   |
+| Field Name | Type    | Description                           | Notes |
+|------------|---------|---------------------------------------|-------|
+| From       | string  | Source callsign                       |       |
+| CID        | integer | User's assigned VATSIM Certificate ID | Optional on some paths; openfsd also emits `SERVER` as an intermediate field on disconnect broadcast |
 
 Example:
 ```text
 #DPAAL325:1400000
+```
+
+openfsd disconnect broadcast form:
+```text
+#DPAAL325:SERVER:1400000
 ```
 
 <br>
@@ -2322,16 +2397,21 @@ Example:
 
 - Sent by ATC clients before terminating the connection.
 - Broadcasted to all other clients on the server.
+- Fields are callsign and CID (no auth challenge field).
 
-| Field Name | Type                       | Description                           | Notes |
-|------------|----------------------------|---------------------------------------|-------|
-| From       | string                     | Source callsign                       |       |
-| CID        | integer                    | User's assigned VATSIM Certificate ID |       |
-| Challenge  | hexadecimal-encoded string | Auth challenge                        |       |
+| Field Name | Type    | Description                           | Notes |
+|------------|---------|---------------------------------------|-------|
+| From       | string  | Source callsign                       |       |
+| CID        | integer | User's assigned VATSIM Certificate ID | Optional on some paths; openfsd also emits `SERVER` as an intermediate field on disconnect broadcast |
 
 Example:
 ```text
 #DASAN_TWR:1555555
+```
+
+openfsd disconnect broadcast form:
+```text
+#DASAN_TWR:SERVER:1555555
 ```
 
 <br>

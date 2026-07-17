@@ -1,34 +1,35 @@
 # About
 
-The FSD protocol functions primarily as a message forwarder.
-Aside from a few direct client-server interactions, its main purpose is to relay messages between flight simulator clients via a centralized server.
+The FSD protocol functions primarily as a **message forwarder**.
+Aside from a few direct client–server interactions (login, METAR, capability advertisement, range fan-out, auth challenges), its main purpose is to relay messages between flight-simulator clients via a centralized server.
 This architecture is not peer-to-peer; all communication is routed through the central server.
 
-FSD is a plaintext protocol that can be easily intercepted and analyzed with tools such as Wireshark. 
-By default, it operates on TCP port 6809, and its functionality can be tested using [telnet](https://linux.die.net/man/1/telnet):
+FSD is a plaintext protocol that can be intercepted and analyzed with tools such as Wireshark.
+By default it operates on **TCP port 6809**, and its functionality can be tested with [telnet](https://linux.die.net/man/1/telnet):
 
-```
+```text
 telnet <FSD server address> 6809
 ```
 
 Various implementations of FSD exist, each with unique protocol nuances.
-This project specifically replicates VATSIM behavior, which differs from other networks such as [IVAO](https://www.ivao.aero/).
+This site documents the **modern VATSIM dialect**. openfsd-specific behavior is called out where the server intentionally differs or is incomplete.
 
-- FSD messages consist of plaintext MS-DOS-style lines ending with CR/LF characters.
-- The protocol is strictly limited to the [ISO/IEC 8859-1](https://en.wikipedia.org/wiki/ISO/IEC_8859-1) aka. 'Latin alphabet no. 1' character set.
-- Each message, or 'line', begins with a 1- or 3-character packet identifier, followed by colon (`:`) delimited fields.
-- All numerical values are encoded as base-10 (or occasionally base-16) ASCII strings, with no raw binary data used.
-- Clients are identified by plaintext aviation callsigns (e.g., `N7938C`). 
-- Most packets include "From" and "To" fields, which serve as source and recipient identifiers, respectively. 
-- Depending on the packet type, the "To" field may specify a single recipient or a group of clients.
+## Wire conventions
 
-#### Example [Server Identification](/packets/#server-identification-di) Packet
+- FSD messages are plaintext lines ending with **CR/LF** (`\r\n`, `0x0d0a`).
+- Effective character set on the wire is [ISO/IEC 8859-1](https://en.wikipedia.org/wiki/ISO/IEC_8859-1) (“Latin alphabet no. 1”).
+- Each message begins with a short **packet identifier**, followed by colon (`:`) delimited fields.
+- Numerical values are base-10 (or occasionally base-16) ASCII; no raw binary payload.
+- Clients are identified by plaintext aviation callsigns (e.g. `N7938C`, `KSFO_TWR`).
+- Most packets include **From** and **To** (source and recipient). **To** may be a callsign, `SERVER`, or a special group token (see [Special Recipients](protocol.md#special-recipients)).
+
+## Example: Server Identification (`$DI`)
 
 ```text
 $DISERVER:CLIENT:VATSIM FSD V3.43:d95f57db664f\r\n
 ```
 
-##### Hexadecimal Representation
+##### Hexadecimal representation
 
 ```text
 00000000  24 44 49 53 45 52 56 45  52 3a 43 4c 49 45 4e 54   $DISERVE R:CLIENT
@@ -37,12 +38,14 @@ $DISERVER:CLIENT:VATSIM FSD V3.43:d95f57db664f\r\n
 ```
 
 ##### Explanation
-- Packet Type Identifier: `$DI`
-- Fields are delimited by colon (`:`) characters.
-- Sender: `SERVER` (reserved callsign for the server)<br>
-- Recipient: `CLIENT` (placeholder used for an unknown client)<br>
-- Server version identifier: `VATSIM FSD V3.43`<br>
-- Random data (see [documentation](/packets/#server-identification-di)): `d95f57db664f`
-- Packet is terminated with the delimiter sequence: `\r\n` (`0x0d0a`)
 
-For technical documentation on packet types, see [Protocol](/protocol/).
+| Piece | Value | Notes |
+|-------|-------|-------|
+| Packet type | `$DI` | Server identification |
+| From | `SERVER` | Reserved callsign for the server |
+| To | `CLIENT` | Placeholder used before the client callsign is known |
+| Version string | `VATSIM FSD V3.43` | Human-readable server software version (format varies by server) |
+| Initial challenge | `d95f57db664f` | Random hex data for [VATSIM Auth](vatsim-auth.md) |
+| Terminator | `\r\n` | `0x0d 0x0a` |
+
+Full packet catalog: [Protocol](protocol.md).

@@ -1,61 +1,66 @@
-# VATSIM Auth
+# VATSIM Auth (in-band client authenticity)
+
+Separate from [JWT login tokens](authentication-token.md).
 
 ## Overview
 
-VATSIM employs a bidirectional obfuscation scheme to "verify" a client's authenticity over an FSD connection.
+VATSIM employs a bidirectional obfuscation scheme to “verify” that both ends of an FSD connection know a client-software secret.
 
-Every VATSIM-approved client receives a unique unsigned 16-bit integer client ID and a 32-byte private key.
+Every VATSIM-approved client is assigned:
 
-There are two parties in an FSD connection: the client, and the server.
-When an FSD connection is established, the client and the server each send some random data in the [Client Identification](/protocol#client-identification-di) and [Server Identification](/protocol#server-identification-di) packets, respectively.
+- a unique **unsigned 16-bit** client software ID, and  
+- a **32-character** private key string (hex or alphanumeric; treated as 32 raw bytes of ASCII).
 
-Using all of the above values, two distinguishable Auth States are constructed, one for the server, and one for the client.
+There are two parties: the client and the server.
+When an FSD connection is established, each side sends random data in:
+
+- [Server Identification](protocol.md#server-identification-di) (`$DI`) — server → client  
+- [Client Identification](protocol.md#client-identification-id) (`$ID`) — client → server  
+
+Using the client ID, private key, and those random values, each side constructs an **Auth State**.
 
 ## Auth State
-An Auth State can be described as such:
+
 ```go
 type AuthState struct {
-	clientID  uint16 // Assigned Client ID
-	initState string // Initial State
-	currState string // Current State
+	clientID  uint16 // assigned client software ID
+	initState string // 32-char hex of initial MD5 (16 bytes)
+	currState string // 32-char hex of current MD5 (16 bytes)
 }
 ```
 
-## Auth State Construction
+In openfsd the MD5 digests are stored as `[16]byte` and hex-encoded when mixed with challenges.
 
-To construct the initial Auth State, (once the [Client Identification](/protocol#client-identification-di) and [Server Identification](/protocol#server-identification-di) packets have been exchanged)
-the following operations are ran:
+## Auth State construction
 
-1. Set the Client ID using the static assigned value for our client. The same value is used for both the server and client states.
-2. Set the Current State to the client's assigned private key. The same value is used for both the server and client states.
-3. The server and the client each use the random data they _received_ from the _other_ side of the connection to each run their own round of the 'Obfuscation Scheme'. The random data is passed into the scheme as the "challenge" string.
-4. Set the Initial State **and** the Current State to the result of this 'Obfuscation Scheme' round.
+After `$DI` and `$ID` have been exchanged:
 
-## Obfuscation Scheme
+1. Set **Client ID** to the static software ID from `$ID` (same ID for both the server-side and client-side state machines for that connection).
+2. Set the working key buffer to the client’s **private key** (32 ASCII bytes).
+3. Each side runs one round of the obfuscation scheme using the **random data it received from the other side** as the challenge:
+   - Server uses the client’s `$ID` initial challenge.
+   - Client uses the server’s `$DI` initial challenge.
+4. Set **both** Initial State and Current State to the 16-byte MD5 result of that round (stored/used as 32-char hex when forming subsequent challenges).
 
-The 'Obfuscation Scheme' is described as follows:
+## Obfuscation scheme
 
-Inputs: AuthState, and a "challenge" string.<br>
-Output: 32-byte **hexadecimal-encoded** MD5 hash.
+**Inputs:** AuthState, challenge string (arbitrary length; typically hex).  
+**Output:** 16-byte MD5 digest (usually hex-encoded to 32 chars on the wire).
 
 ```go
 func (state *AuthState) ObfuscationScheme(challenge string) string {
-	
-	// Split the challenge into two halves
+	// Split the challenge into two halves (byte mid-point).
 	c1, c2 := challenge[:(len(challenge)/2)], challenge[(len(challenge)/2):]
 
-	// If the Client ID is an odd number, swap the two halves.
+	// If the Client ID is odd, swap the two halves.
 	if (state.clientID & 1) == 1 {
 		c1, c2 = c2, c1
 	}
 
-	// Split the current state into three parts
+	// Split the current state (32 ASCII hex chars) into three parts.
 	s1, s2, s3 := state.currState[0:12], state.currState[12:22], state.currState[22:32]
 
-	// Declare a temporary buffer
 	var h string
-	
-	// Interleave the above values
 	switch state.clientID % 3 {
 	case 0:
 		h = s1 + c1 + s2 + c2 + s3
@@ -65,41 +70,49 @@ func (state *AuthState) ObfuscationScheme(challenge string) string {
 		h = s3 + c1 + s1 + c2 + s2
 	}
 
-	// Generate an MD5 sum from the temporary buffer's value.
-	hash := md5.Sum([]byte(h.String()))
-	
-	// Return a 32-byte hexadecimal representation of the hash.
-	return hex.EncodeToString(hash[:])
+	sum := md5.Sum([]byte(h))
+	return hex.EncodeToString(sum[:]) // 32 hex chars
 }
 ```
 
+This matches openfsd `internal/auth/vatsim.go` (`runObfuscationRound`).
+
 ## Interrogations
 
-Once the initial Auth States have been constructed, both sides of the connection are able to interrogate (or "challenge") the other using [Auth Challenge](/protocol#auth-challenge-zc) and [Auth Response](/protocol#auth-response-zr) packets.
+After initial states are constructed, either side may challenge the other with [Auth Challenge](protocol.md#auth-challenge-zc) (`$ZC`) / [Auth Response](protocol.md#auth-response-zr) (`$ZR`):
 
-The mechanism is as follows:
+1. `$ZC` carries a random challenge string (typically hex).
+2. The **receiver** feeds (current state, challenge) into one obfuscation round.
+3. The receiver sends the 32-char hex result in `$ZR`.
+4. **Both** sides that care about verification then advance state:
+   - Concatenate `initStateHex ‖ responseHex` → 64 ASCII bytes.
+   - `currState = MD5(that 64-byte buffer)` (stored as 16 bytes / 32 hex chars).
+5. The next challenge uses the updated current state.
 
-1. An [Auth Challenge](/protocol#auth-challenge-zc) contains a random hexadecimal-encoded bytearray.
-2. Along with the current Auth State, this challenge value is fed into a round of Obfuscation Scheme.
-3. Send the scheme's return value to the other side of the connection using an [Auth Response](/protocol#auth-response-zr) packet.
-4. Concatenate the return value of this round (a 32-byte hexadecimal-encoded byte array) onto the Initial State (initState + returnValue) resulting in a 64-byte hexadecimal encoded array.
-5. Generate an MD5 sum using this 64-byte value as input.
-6. Set the Current State to the _hexadecimal-representation_ of this hash sum. This value is used to compute the next round when the next [Auth Challenge](/protocol#auth-challenge-zc) packet is received.
+The side that **issued** the challenge must maintain a mirror of the peer’s Auth State to verify `$ZR` values. openfsd answers client `$ZC` with `$ZRSERVER:…` and updates state via `UpdateState`.
 
-Keep in mind: the receiver of the [Auth Response](/protocol#auth-response-zr) packet must maintain a "mirror" version of the other side of the connection's Auth State in order to verify their responses.
+## Known clients (software keys)
 
-## Known Clients
+These IDs/keys are present in openfsd’s allowlist (`internal/auth/vatsim.go`).  
+They are not secrets that protect user credentials (JWT does that); they only prove knowledge of a client-software key.
 
-A list of known clients is as follows:
+| Client ID | Private key (32 chars)                 | Client name   | Notes |
+|-----------|----------------------------------------|---------------|--------|
+| `8464`    | `945507c4c50222c34687e742729252e6`     | vSTARS        | In openfsd allowlist |
+| `10452`   | `0ad74157c7f449c216bfed04f3af9fb9`     | vERAM         | In openfsd allowlist |
+| `24515`   | `3424cbcebcca6fe95f973b350ff85cef`     | vatSys        | In openfsd allowlist |
+| `27095`   | `3518a62c421937ffa46ac3316957da43`     | Euroscope     | In openfsd allowlist |
+| `33456`   | `52d9343020e9c7d0c6b04b0cca20ad3b`     | swift         | In openfsd allowlist |
+| `35044`   | `fe28334fb753cf0e3d19942197b9ce3e`     | vPilot        | In openfsd allowlist |
+| `48312`   | `bc2eb1ef4d96709c683084055dd5e83f`     | TWRTrainer    | In openfsd allowlist |
+| `55538`   | `ImuL1WbbhVuD8d3MuKpWn2rrLZRa9iVP`     | xPilot        | Alphanumeric key |
+| `56862`   | `3518a62c421937ffa46ac3316957da43`     | VRC           | Same key material as Euroscope in this table |
+| `2`       | `079f83e7d0fb6a9d99114439b2ea28fb`     | SquawkBox     | **Historical**; not in openfsd allowlist |
 
-| Client ID | Private Key                        | Client Name |
-|-----------|------------------------------------|-------------|
-| `2`       | `079f83e7d0fb6a9d99114439b2ea28fb` | SquawkBox   |
-| `8464`    | `945507c4c50222c34687e742729252e6` | vSTARS      |
-| `10452`   | `0ad74157c7f449c216bfed04f3af9fb9` | vERAM       |
-| `24515`   | `3424cbcebcca6fe95f973b350ff85cef` | vatSys      |
-| `27095`   | `3518a62c421937ffa46ac3316957da43` | Euroscope   |
-| `33456`   | `52d9343020e9c7d0c6b04b0cca20ad3b` | swift       |
-| `35044`   | `fe28334fb753cf0e3d19942197b9ce3e` | vPilot      |
-| `55538`   | `ImuL1WbbhVuD8d3MuKpWn2rrLZRa9iVP` | xPilot      |
-| `56862`   | `3518a62c421937ffa46ac3316957da43` | VRC         |
+Unknown client IDs produce openfsd’s unauthorized-software / failed-auth path.
+
+## Relation to protocol revision
+
+Modern ATC clients commonly connect with protocol revision **100** on `#AA`.  
+Pilot clients that support VATSIM Velocity use **101** and participate in `$SF` / fast positions (`^`, `#SL`, `#ST`).  
+Auth challenge exchange is independent of that revision number but is part of the same post-handshake session.
