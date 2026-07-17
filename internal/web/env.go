@@ -13,7 +13,10 @@ type ServerConfig struct {
 	DatabaseSourceName string `env:"DATABASE_SOURCE_NAME, default=:memory:"` // Golang sql database source name
 	DatabaseMaxConns   int    `env:"DATABASE_MAX_CONNS, default=1"`          // Max number of database connections
 
-	FsdHttpServiceAddress string `env:"FSD_HTTP_SERVICE_ADDRESS, required"` // HTTP address to talk to the FSD http service
+	// FsdHttpServiceAddress is the base URL of the FSD internal service HTTP API.
+	// Default assumes colocated FSD in the same process (or host). Override when
+	// running -web against a remote FSD instance.
+	FsdHttpServiceAddress string `env:"FSD_HTTP_SERVICE_ADDRESS, default=http://127.0.0.1:13618"`
 
 	// CookieSecure controls the Secure attribute on session/CSRF cookies.
 	// Values: "true"/"false" force the flag; empty (default) derives from
