@@ -42,6 +42,93 @@ func forceHoldShort(t *testing.T, e *Engine, cs, name string) {
 	ac.Instruction = "Holding short of " + ac.HoldShortOf
 }
 
+// Issue 1: DepRunway must preserve the instructor-typed runway end (RwyB),
+// not collapse to RwyA via PlanTaxi-canonicalized "A/B" steps.
+func TestCommand_TaxiDepRunwayPreservesEnd(t *testing.T) {
+	e := loadKBTVEngine(t)
+	r := e.CommandLine("add v s p @GA9")
+	if !r.OK {
+		t.Fatal(r.Message)
+	}
+	cs := r.Added[0].Callsign
+	placeOnSurface(t, e, cs, "A")
+
+	// 15 is RwyB of 33/15 on KBTV.
+	r = e.Command(cs, "taxi B 15")
+	if !r.OK {
+		t.Fatalf("taxi B 15: %s", r.Message)
+	}
+	ac := e.mustGet(t, cs)
+	if ac.DepRunway != "15" {
+		t.Errorf("DepRunway = %q, want 15 (RwyB; not collapsed to 33)", ac.DepRunway)
+	}
+
+	// Typed RwyA still works.
+	placeOnSurface(t, e, cs, "A")
+	r = e.Command(cs, "taxi B 33")
+	if !r.OK {
+		t.Fatal(r.Message)
+	}
+	if e.mustGet(t, cs).DepRunway != "33" {
+		t.Errorf("DepRunway = %q, want 33", e.mustGet(t, cs).DepRunway)
+	}
+
+	// Combined designator defaults to RwyA.
+	placeOnSurface(t, e, cs, "A")
+	r = e.Command(cs, "taxi B 33/15")
+	if !r.OK {
+		t.Fatal(r.Message)
+	}
+	if e.mustGet(t, cs).DepRunway != "33" {
+		t.Errorf("DepRunway = %q, want 33 (combined → RwyA)", e.mustGet(t, cs).DepRunway)
+	}
+}
+
+// Issue 2: re-taxi to a non-runway destination must clear DepRunway.
+func TestCommand_TaxiClearsDepRunwayOnNonRunwayDest(t *testing.T) {
+	e := loadKBTVEngine(t)
+	r := e.CommandLine("add v s p @GA9")
+	if !r.OK {
+		t.Fatal(r.Message)
+	}
+	cs := r.Added[0].Callsign
+	r = e.Command(cs, "taxi J 33")
+	if !r.OK {
+		t.Fatal(r.Message)
+	}
+	if e.mustGet(t, cs).DepRunway != "33" {
+		t.Fatalf("setup DepRunway = %s", e.mustGet(t, cs).DepRunway)
+	}
+
+	// Taxiway-only re-route from J.
+	placeOnSurface(t, e, cs, "J")
+	r = e.Command(cs, "taxi D")
+	if !r.OK {
+		t.Fatalf("taxi D: %s", r.Message)
+	}
+	if e.mustGet(t, cs).DepRunway != "" {
+		t.Errorf("DepRunway = %q after taxiway-only dest, want empty", e.mustGet(t, cs).DepRunway)
+	}
+
+	// Re-establish dep, then taxi to parking clears.
+	placeOnSurface(t, e, cs, "J")
+	r = e.Command(cs, "taxi 33")
+	if !r.OK {
+		t.Fatal(r.Message)
+	}
+	if e.mustGet(t, cs).DepRunway != "33" {
+		t.Fatal("expected dep 33")
+	}
+	placeOnSurface(t, e, cs, "J")
+	r = e.Command(cs, "taxi @GA9")
+	if !r.OK {
+		t.Fatalf("taxi @GA9: %s", r.Message)
+	}
+	if e.mustGet(t, cs).DepRunway != "" {
+		t.Errorf("DepRunway = %q after parking taxi, want empty", e.mustGet(t, cs).DepRunway)
+	}
+}
+
 func TestCommand_TaxiHappyPath(t *testing.T) {
 	e := loadKBTVEngine(t)
 	r := e.CommandLine("add v s p @GA9")
@@ -364,6 +451,55 @@ func TestCommand_Cross(t *testing.T) {
 	r = e.Command(cs, "cross")
 	if r.OK {
 		t.Fatal("cross needs arg")
+	}
+}
+
+// cto from hold-short of dep runway (no pos) → StatusTakeoff.
+func TestCommand_CTOFromHoldShortOfDep(t *testing.T) {
+	e := loadKBTVEngine(t)
+	r := e.CommandLine("add v s p @GA9")
+	cs := r.Added[0].Callsign
+	r = e.Command(cs, "taxi J 33")
+	if !r.OK {
+		t.Fatal(r.Message)
+	}
+	forceHoldShort(t, e, cs, "33")
+	r = e.Command(cs, "cto")
+	if !r.OK {
+		t.Fatalf("cto from HS: %s", r.Message)
+	}
+	ac := e.mustGet(t, cs)
+	if ac.Status != StatusTakeoff {
+		t.Errorf("status = %s, want Takeoff", ac.Status)
+	}
+	if !ac.ClearedTakeoff {
+		t.Error("ClearedTakeoff")
+	}
+	if ac.HoldShortOf != "" {
+		t.Errorf("HoldShortOf should clear, got %s", ac.HoldShortOf)
+	}
+}
+
+// pos after early cto cancels takeoff clearance (LUAW).
+func TestCommand_PosClearsPriorCTO(t *testing.T) {
+	e := loadKBTVEngine(t)
+	r := e.CommandLine("add v s p @GA9")
+	cs := r.Added[0].Callsign
+	_ = e.Command(cs, "taxi J 33")
+	r = e.Command(cs, "cto 100")
+	if !r.OK || !e.mustGet(t, cs).ClearedTakeoff {
+		t.Fatalf("cto: %+v", r)
+	}
+	r = e.Command(cs, "pos")
+	if !r.OK {
+		t.Fatal(r.Message)
+	}
+	ac := e.mustGet(t, cs)
+	if ac.ClearedTakeoff {
+		t.Error("pos must cancel prior takeoff clearance")
+	}
+	if ac.Status != StatusHoldingInPosition || !ac.PositionHold {
+		t.Errorf("after pos: status=%s posHold=%v", ac.Status, ac.PositionHold)
 	}
 }
 

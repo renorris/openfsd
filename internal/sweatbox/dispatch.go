@@ -120,15 +120,11 @@ func (e *Engine) cmdPosLocked(target string) CommandResult {
 	}
 	ac.Status = StatusHoldingInPosition
 	ac.PositionHold = true
+	// LUAW cancels a prior takeoff clearance; instructor must re-issue cto.
 	ac.ClearedTakeoff = false
 	ac.PatternTraffic = ""
-	// Holding short of dep runway → lining up on that runway.
-	if ac.HoldShortOf != "" && ac.DepRunway != "" && e.sameSurfaceNameLocked(ac.HoldShortOf, ac.DepRunway) {
-		ac.HoldShortOf = ""
-	} else if ac.HoldShortOf != "" {
-		// Line up still clears active hold-short wait (pos is the runway entry).
-		ac.HoldShortOf = ""
-	}
+	// Line-up clears any active hold-short wait (runway entry).
+	ac.HoldShortOf = ""
 	if ac.DepRunway != "" {
 		ac.Instruction = "Position and hold runway " + ac.DepRunway
 	} else {
@@ -192,16 +188,10 @@ func (e *Engine) cmdTaxiLocked(target string, args []string) CommandResult {
 	ac.DepHeading = 0
 	ac.PatternTraffic = ""
 
-	// Destination runway from last surface step (not parking).
-	if plan.Parking == "" && len(plan.Steps) > 0 {
-		last := plan.Steps[len(plan.Steps)-1]
-		if end := e.runwayEndLabelLocked(last); end != "" {
-			ac.DepRunway = end
-		}
-	} else if plan.Parking != "" {
-		// Taxi to parking: not a departure.
-		ac.DepRunway = ""
-	}
+	// DepRunway from the instructor's last route token (preserves RwyB ends).
+	// PlanTaxi canonicalizes runway steps to "A/B", so plan.Steps loses the end.
+	// Non-runway / parking destinations clear any stale DepRunway.
+	ac.DepRunway = e.depRunwayFromTaxiArgsLocked(steps, plan.Parking)
 
 	ac.Status = StatusTaxiing
 	ac.Instruction = formatTaxiInstruction(plan)
@@ -234,8 +224,36 @@ func formatTaxiInstruction(plan TaxiPlan) string {
 	return b.String()
 }
 
+// depRunwayFromTaxiArgsLocked returns the departure runway end designator for a
+// successful taxi plan, derived from the instructor's raw step tokens (not the
+// PlanTaxi-canonicalized Steps). Empty when the destination is parking, a
+// taxiway-only route, or not a runway — callers assign this directly so stale
+// DepRunway values are cleared on re-taxi.
+func (e *Engine) depRunwayFromTaxiArgsLocked(rawSteps []string, parking string) string {
+	if parking != "" {
+		return ""
+	}
+	// Last non-empty raw step; skip trailing parking tokens (@name or bare parking).
+	for i := len(rawSteps) - 1; i >= 0; i-- {
+		tok := strings.TrimSpace(rawSteps[i])
+		if tok == "" {
+			continue
+		}
+		if strings.HasPrefix(tok, "@") {
+			return ""
+		}
+		if e.graph != nil {
+			if s := e.graph.Surface(tok); s != nil && s.Kind == SurfaceParking {
+				return ""
+			}
+		}
+		return e.runwayEndLabelLocked(tok)
+	}
+	return ""
+}
+
 // runwayEndLabelLocked returns a preferred end designator for a runway surface
-// name (e.g. "33/15" → "33", "19" → "19"). Empty if not a runway.
+// name (e.g. "15" → "15", "33/15" → "33"). Empty if not a runway.
 func (e *Engine) runwayEndLabelLocked(name string) string {
 	if e.graph == nil {
 		return ""
@@ -389,22 +407,12 @@ func (e *Engine) cmdCrossLocked(target string, args []string) CommandResult {
 	if ac.HoldShortOf != "" && e.sameSurfaceNameLocked(ac.HoldShortOf, name) {
 		ac.HoldShortOf = ""
 	}
-	// Resume taxi if we were stopped.
+	// Resume taxi if we were stopped for hold-short or present-position hold.
 	switch ac.Status {
 	case StatusHoldingShort, StatusHolding:
-		if ac.hasTaxiPath() {
-			ac.Status = StatusTaxiing
-		} else {
-			ac.Status = StatusTaxiing
-		}
-	case StatusParked, StatusLanded:
-		// Cross while only planning (pre-taxi) is unusual; leave status.
+		ac.Status = StatusTaxiing
 	}
 	ac.Instruction = "Cross " + name
-	if ac.Status == StatusTaxiing && ac.hasTaxiPath() {
-		// Prefer full taxi instruction with remaining holds after the cross note
-		// settles; Tick will show progressive status. Keep "Cross X" as last instruction.
-	}
 	return CommandResult{OK: true}
 }
 
