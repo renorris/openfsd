@@ -56,7 +56,7 @@ go build -o openfsd ./cmd/openfsd
 |----------|---------|-------|
 | `DATABASE_DRIVER` | `sqlite` | `sqlite` or `postgres` |
 | `DATABASE_SOURCE_NAME` | `:memory:` | Shared by both services |
-| `DATABASE_AUTO_MIGRATE` | `false` | FSD applies migrations on startup |
+| `DATABASE_AUTO_MIGRATE` | `true` | FSD applies migrations on startup |
 | `FSD_LISTEN_ADDRS` | `:6809` | FSD TCP listen address(es) |
 | `SERVICE_HTTP_LISTEN_ADDR` | `:13618` | Internal FSD admin HTTP |
 | `FSD_HTTP_SERVICE_ADDRESS` | `http://127.0.0.1:13618` | Web → FSD service HTTP |
