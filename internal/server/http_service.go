@@ -51,6 +51,12 @@ func (s *Server) setupRoutes() (e *gin.Engine) {
 	e.GET("/online_users", s.handleGetOnlineUsers)
 	e.POST("/kick_user", s.handleKickUser)
 
+	// Sweatbox control plane — registered only when SWEATBOX_ENABLED (s.sweatbox != nil).
+	// Disabled servers expose no /sweatbox/* surface (404).
+	if s.sweatbox != nil {
+		s.registerSweatboxRoutes(e)
+	}
+
 	return
 }
 

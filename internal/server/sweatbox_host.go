@@ -137,19 +137,55 @@ func (h *SweatboxHost) tickOnce(dt time.Duration) {
 	}
 }
 
+// AirportLoadResult is the structured outcome of loading .apt text (HTTP / tests).
+type AirportLoadResult struct {
+	ICAO     string   `json:"icao"`
+	Surfaces int      `json:"surfaces"`
+	Errors   []string `json:"errors"`
+}
+
 // LoadAirport parses .apt text and installs it on the engine.
+// Does not remove existing aircraft; use LoadAirportReplace for that flow.
 func (h *SweatboxHost) LoadAirport(text []byte) error {
-	if h == nil {
-		return errSweatboxDisabled
+	res, err := h.LoadAirportResult(text, false)
+	if err != nil {
+		return err
 	}
-	apt, errs := sweatbox.ParseAPT(string(text))
-	if apt.ICAO == "" {
-		if len(errs) > 0 {
-			return fmt.Errorf("sweatbox: invalid airport: %s", errs[0])
+	if res.ICAO == "" {
+		if len(res.Errors) > 0 {
+			return fmt.Errorf("sweatbox: invalid airport: %s", res.Errors[0])
 		}
 		return errors.New("sweatbox: invalid airport")
 	}
-	return h.eng.LoadAirport(&apt)
+	return nil
+}
+
+// LoadAirportResult parses .apt text and installs it. When replace is true and
+// aircraft are present, RemoveAll runs first so the airport can be swapped.
+// Soft parse issues are returned in Errors; hard failures return a non-nil error.
+func (h *SweatboxHost) LoadAirportResult(text []byte, replace bool) (AirportLoadResult, error) {
+	if h == nil {
+		return AirportLoadResult{}, errSweatboxDisabled
+	}
+	apt, errs := sweatbox.ParseAPT(string(text))
+	res := AirportLoadResult{
+		ICAO:     apt.ICAO,
+		Surfaces: len(apt.Surfaces),
+		Errors:   errs,
+	}
+	if apt.ICAO == "" {
+		if len(errs) == 0 {
+			res.Errors = []string{"ICAO code missing"}
+		}
+		return res, errors.New("sweatbox: invalid airport")
+	}
+	if replace && h.eng.Count() > 0 {
+		h.RemoveAll()
+	}
+	if err := h.eng.LoadAirport(&apt); err != nil {
+		return res, err
+	}
+	return res, nil
 }
 
 // LoadScenario parses .air text, loads into the engine (best-effort), and
@@ -185,10 +221,16 @@ func (h *SweatboxHost) LoadScenario(text []byte) (loaded int, errs []error) {
 // ApplyCommand runs an instructor text command on the engine, then couples
 // Added/Deleted callsigns to the registry and syncs wire-visible session fields.
 func (h *SweatboxHost) ApplyCommand(line string) sweatbox.CommandResult {
+	return h.ApplyCommandSelected("", line)
+}
+
+// ApplyCommandSelected is ApplyCommand with a UI-selected callsign for
+// aircraft-scoped verbs that omit an embedded callsign (e.g. "fp B738 …").
+func (h *SweatboxHost) ApplyCommandSelected(selectedCS, line string) sweatbox.CommandResult {
 	if h == nil {
 		return sweatbox.CommandResult{OK: false, Message: errSweatboxDisabled.Error()}
 	}
-	result := h.eng.CommandLine(line)
+	result := h.eng.Command(selectedCS, line)
 	if !result.OK {
 		return result
 	}
@@ -213,7 +255,14 @@ func (h *SweatboxHost) ApplyCommand(line string) sweatbox.CommandResult {
 
 	// fp/vp (and other mutations): refresh session atomics from engine.
 	if len(result.Deleted) == 0 && len(result.Added) == 0 {
-		if cs, broadcastFP := commandWireSync(line); cs != "" {
+		cs, broadcastFP := commandWireSync(line)
+		if cs == "" {
+			cs = strings.ToUpper(strings.TrimSpace(selectedCS))
+			if cs != "" {
+				broadcastFP = commandBroadcastFP(line)
+			}
+		}
+		if cs != "" {
 			if snap, ok := h.eng.Get(cs); ok {
 				h.syncSessionWire(cs, snap, broadcastFP)
 			}
@@ -222,14 +271,33 @@ func (h *SweatboxHost) ApplyCommand(line string) sweatbox.CommandResult {
 	return result
 }
 
+// Pause freezes simulation motion (elapsed stops accumulating on tick).
+func (h *SweatboxHost) Pause() {
+	if h == nil {
+		return
+	}
+	h.eng.Pause()
+}
+
+// Unpause resumes simulation motion.
+func (h *SweatboxHost) Unpause() {
+	if h == nil {
+		return
+	}
+	h.eng.Unpause()
+}
+
+// Ops returns session statistics for HTTP / instructor UI.
+func (h *SweatboxHost) Ops() sweatbox.OpsStats {
+	if h == nil {
+		return sweatbox.OpsStats{}
+	}
+	return h.eng.Ops()
+}
+
 // commandWireSync extracts a target callsign and whether to rebroadcast $FP.
 func commandWireSync(line string) (callsign string, broadcastFP bool) {
-	fields := strings.Fields(strings.Map(func(r rune) rune {
-		if r == ',' {
-			return ' '
-		}
-		return r
-	}, strings.TrimSpace(line)))
+	fields := commandFields(line)
 	if len(fields) == 0 {
 		return "", false
 	}
@@ -256,6 +324,30 @@ func commandWireSync(line string) (callsign string, broadcastFP bool) {
 	default:
 		return "", false
 	}
+}
+
+// commandBroadcastFP reports whether a verb-first line (selected callsign form)
+// should rebroadcast $FP.
+func commandBroadcastFP(line string) bool {
+	fields := commandFields(line)
+	if len(fields) == 0 {
+		return false
+	}
+	switch strings.ToLower(fields[0]) {
+	case "fp", "vp", "remarks":
+		return true
+	default:
+		return false
+	}
+}
+
+func commandFields(line string) []string {
+	return strings.Fields(strings.Map(func(r rune) rune {
+		if r == ',' {
+			return ' '
+		}
+		return r
+	}, strings.TrimSpace(line)))
 }
 
 // Remove tears down a synthetic by callsign (map lookup, else registry Find).
