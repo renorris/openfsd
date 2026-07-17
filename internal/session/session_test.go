@@ -3,6 +3,8 @@ package session
 import (
 	"context"
 	"errors"
+	"net"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -19,6 +21,31 @@ func TestNew_ZeroCoords(t *testing.T) {
 	if s.Callsign != "N123" {
 		t.Fatalf("Callsign = %q, want N123", s.Callsign)
 	}
+	if s.Synthetic {
+		t.Fatal("Synthetic must default false for normal clients")
+	}
+}
+
+func TestRemoteIP_NilSafe(t *testing.T) {
+	if got := (*Session)(nil).RemoteIP(); got != "" {
+		t.Fatalf("nil session RemoteIP = %q, want \"\"", got)
+	}
+	s := New(context.Background(), nil, nil, LoginData{Callsign: "SYN"})
+	s.Synthetic = true
+	if got := s.RemoteIP(); got != "" {
+		t.Fatalf("nil Conn RemoteIP = %q, want \"\"", got)
+	}
+
+	// net.Pipe yields a real Conn; RemoteIP must not panic.
+	c1, c2 := net.Pipe()
+	defer c1.Close()
+	defer c2.Close()
+	s2 := New(context.Background(), c1, nil, LoginData{Callsign: "REAL"})
+	ip := s2.RemoteIP()
+	if ip == "" {
+		t.Fatal("expected non-empty RemoteIP from net.Pipe Conn")
+	}
+	_ = strings.TrimSpace(ip) // ensure host string is usable
 }
 
 func TestLatLon_SetLatLon(t *testing.T) {

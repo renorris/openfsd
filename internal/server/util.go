@@ -225,9 +225,14 @@ type atcRangeSearcher interface {
 // broadcastRanged broadcasts a packet to all clients in range.
 // Uses SendPosition (non-blocking, latest-wins) so a slow peer cannot stall
 // the sender's position path under dense fan-out.
+// Skips Synthetic recipients (sweatbox); direct registry.Send still reaches them
+// and relies on SenderWorker drain.
 func broadcastRanged(reg Registry, client *session.Session, packet []byte) {
 	packetStr := string(packet)
 	reg.Search(client, func(recipient *session.Session) bool {
+		if recipient.Synthetic {
+			return true
+		}
 		_ = recipient.SendPosition(packetStr)
 		return true
 	})
@@ -235,9 +240,13 @@ func broadcastRanged(reg Registry, client *session.Session, packet []byte) {
 
 // broadcastRangedVelocity broadcasts a packet to all clients in range
 // supporting the Vatsim2022 (101) protocol revision.
+// Skips Synthetic recipients (sweatbox).
 func broadcastRangedVelocity(reg Registry, client *session.Session, packet []byte) {
 	packetStr := string(packet)
 	reg.Search(client, func(recipient *session.Session) bool {
+		if recipient.Synthetic {
+			return true
+		}
 		if recipient.ProtoRevision != 101 {
 			return true
 		}
@@ -246,10 +255,14 @@ func broadcastRangedVelocity(reg Registry, client *session.Session, packet []byt
 	})
 }
 
-// broadcastRangedAtcOnly broadcasts a packet to all ATC clients in range
+// broadcastRangedAtcOnly broadcasts a packet to all ATC clients in range.
+// Skips Synthetic recipients (sweatbox; belt-and-suspenders with IsAtc filter).
 func broadcastRangedAtcOnly(reg Registry, client *session.Session, packet []byte) {
 	packetStr := string(packet)
 	fn := func(recipient *session.Session) bool {
+		if recipient.Synthetic {
+			return true
+		}
 		if !recipient.IsAtc {
 			return true
 		}
@@ -258,6 +271,9 @@ func broadcastRangedAtcOnly(reg Registry, client *session.Session, packet []byte
 	}
 	if as, ok := reg.(atcRangeSearcher); ok {
 		as.SearchATC(client, func(recipient *session.Session) bool {
+			if recipient.Synthetic {
+				return true
+			}
 			_ = recipient.Send(packetStr)
 			return true
 		})
@@ -266,19 +282,27 @@ func broadcastRangedAtcOnly(reg Registry, client *session.Session, packet []byte
 	reg.Search(client, fn)
 }
 
-// broadcastAll broadcasts a packet to the entire server
+// broadcastAll broadcasts a packet to the entire server.
+// Skips Synthetic recipients (sweatbox).
 func broadcastAll(reg Registry, client *session.Session, packet []byte) {
 	packetStr := string(packet)
 	reg.All(client, func(recipient *session.Session) bool {
+		if recipient.Synthetic {
+			return true
+		}
 		recipient.Send(packetStr)
 		return true
 	})
 }
 
-// broadcastAllATC broadcasts a packet to all ATC on entire server
+// broadcastAllATC broadcasts a packet to all ATC on entire server.
+// Skips Synthetic recipients (sweatbox).
 func broadcastAllATC(reg Registry, client *session.Session, packet []byte) {
 	packetStr := string(packet)
 	reg.All(client, func(recipient *session.Session) bool {
+		if recipient.Synthetic {
+			return true
+		}
 		if !recipient.IsAtc {
 			return true
 		}
@@ -287,10 +311,14 @@ func broadcastAllATC(reg Registry, client *session.Session, packet []byte) {
 	})
 }
 
-// broadcastAllSupervisors broadcasts a packet to all supervisors on the server
+// broadcastAllSupervisors broadcasts a packet to all supervisors on the server.
+// Skips Synthetic recipients (sweatbox).
 func broadcastAllSupervisors(reg Registry, client *session.Session, packet []byte) {
 	packetStr := string(packet)
 	reg.All(client, func(recipient *session.Session) bool {
+		if recipient.Synthetic {
+			return true
+		}
 		if recipient.NetworkRating < NetworkRatingSupervisor {
 			return true
 		}

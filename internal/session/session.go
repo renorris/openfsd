@@ -73,6 +73,8 @@ type LatLon struct {
 // Immutable after login (set during login; safe to read concurrently afterward):
 //   - LoginData fields (Callsign, CID, RealName, NetworkRating, ProtoRevision, …)
 //   - MaxNetworkRating is fixed once authentication completes
+//   - Synthetic — set before Register for in-process (sweatbox) participants;
+//     never set on the TCP login path; concurrent readers OK
 //
 // Context / outbound path:
 //   - Ctx, Cancel — lifecycle; Cancel is safe from any goroutine
@@ -86,10 +88,15 @@ type LatLon struct {
 // before SenderWorker is started). Conn remains exported for RemoteAddr and
 // login-phase WriteError; do not use Conn.Write after SenderWorker starts.
 // Future CI may allowlist only SenderWorker + login-phase files for Conn.Write.
+//
+// Synthetic sessions typically have Conn == nil. Fan-out helpers skip them as
+// recipients; direct registry.Send still enqueues and relies on SenderWorker
+// drain (no network write when Conn is nil).
 type Session struct {
 	// Conn is the underlying network connection.
 	// Exported for RemoteAddr and login-phase protocol.WriteError only.
 	// Post-login packet writes MUST use Send, not Conn.Write.
+	// May be nil for synthetic / unit-test sessions; use RemoteIP() for nil-safe IP.
 	Conn     net.Conn
 	Scanner  *bufio.Scanner
 	Ctx      context.Context
@@ -118,6 +125,13 @@ type Session struct {
 
 	Auth            Auth // Optional; set by server when client auth is used
 	SendFastEnabled bool
+
+	// Synthetic marks an in-process participant (e.g. sweatbox) that registers
+	// in the postoffice without a real TCP client. False for normal clients.
+	// Set before Register; immutable afterward. Concurrent readers OK.
+	// Server fan-out helpers skip Synthetic recipients; direct Send still works
+	// and is drained by SenderWorker (drop when Conn is nil).
+	Synthetic bool
 
 	// sendEnqueueObs is an optional test/stress hook invoked after a successful
 	// enqueue on sendChan (not under any postoffice lock). nil is a no-op.
@@ -283,4 +297,22 @@ func (s *Session) DequeueOutbound() (packet string, ok bool) {
 	default:
 	}
 	return
+}
+
+// RemoteIP returns the remote host IP for this session.
+// Nil-safe: returns "" when Conn or RemoteAddr is nil (unit tests / synthetic).
+// Host is taken from net.SplitHostPort when possible; otherwise the raw addr string.
+func (s *Session) RemoteIP() string {
+	if s == nil || s.Conn == nil {
+		return ""
+	}
+	addr := s.Conn.RemoteAddr()
+	if addr == nil {
+		return ""
+	}
+	host, _, err := net.SplitHostPort(addr.String())
+	if err != nil {
+		return addr.String()
+	}
+	return host
 }

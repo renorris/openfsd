@@ -184,6 +184,197 @@ func TestBroadcastRanged_SlowPeerDoesNotStall(t *testing.T) {
 	}
 }
 
+// TestBroadcastHelpers_SkipSynthetic ensures every fan-out helper omits
+// Synthetic recipients while still delivering to human peers.
+// Direct registry.Send is intentionally not skipped (SenderWorker drain).
+func TestBroadcastHelpers_SkipSynthetic(t *testing.T) {
+	const marker = "SYNTHSKIP"
+	pos := [2]float64{34, -118}
+	vr := 100 * 1852.0
+
+	// humanATC qualifies for ATC-only and supervisor fan-out.
+	newHumanATC := func() *session.Session {
+		return session.New(context.Background(), nil, nil, session.LoginData{
+			Callsign:      "HUMAN",
+			IsAtc:         true,
+			NetworkRating: protocol.NetworkRatingSupervisor,
+			ProtoRevision: 101,
+		})
+	}
+	newSynth := func(cs string, isAtc bool, rating protocol.NetworkRating, proto int) *session.Session {
+		s := session.New(context.Background(), nil, nil, session.LoginData{
+			Callsign:      cs,
+			IsAtc:         isAtc,
+			NetworkRating: rating,
+			ProtoRevision: proto,
+		})
+		s.Synthetic = true
+		return s
+	}
+
+	type helperCase struct {
+		name   string
+		setup  func(t *testing.T) (reg *postoffice.PostOffice, src, human, synth *session.Session)
+		invoke func(reg *postoffice.PostOffice, src *session.Session)
+	}
+
+	cases := []helperCase{
+		{
+			name: "broadcastRanged",
+			setup: func(t *testing.T) (*postoffice.PostOffice, *session.Session, *session.Session, *session.Session) {
+				reg := postoffice.New()
+				src := session.New(context.Background(), nil, nil, session.LoginData{Callsign: "SRC", ProtoRevision: 101})
+				human := newHumanATC()
+				synth := newSynth("SYN", false, protocol.NetworkRatingObserver, 101)
+				for _, s := range []*session.Session{src, human, synth} {
+					if err := reg.Register(s); err != nil {
+						t.Fatal(err)
+					}
+					reg.UpdatePosition(s, pos, vr)
+				}
+				return reg, src, human, synth
+			},
+			invoke: func(reg *postoffice.PostOffice, src *session.Session) {
+				broadcastRanged(reg, src, []byte(marker+"-ranged\r\n"))
+			},
+		},
+		{
+			name: "broadcastRangedVelocity",
+			setup: func(t *testing.T) (*postoffice.PostOffice, *session.Session, *session.Session, *session.Session) {
+				reg := postoffice.New()
+				src := session.New(context.Background(), nil, nil, session.LoginData{Callsign: "SRC", ProtoRevision: 101})
+				human := newHumanATC()
+				// Synth matches velocity filter (proto 101) so skip is what excludes it.
+				synth := newSynth("SYN", false, protocol.NetworkRatingObserver, 101)
+				for _, s := range []*session.Session{src, human, synth} {
+					if err := reg.Register(s); err != nil {
+						t.Fatal(err)
+					}
+					reg.UpdatePosition(s, pos, vr)
+				}
+				return reg, src, human, synth
+			},
+			invoke: func(reg *postoffice.PostOffice, src *session.Session) {
+				broadcastRangedVelocity(reg, src, []byte(marker+"-vel\r\n"))
+			},
+		},
+		{
+			name: "broadcastRangedAtcOnly",
+			setup: func(t *testing.T) (*postoffice.PostOffice, *session.Session, *session.Session, *session.Session) {
+				reg := postoffice.New()
+				src := session.New(context.Background(), nil, nil, session.LoginData{Callsign: "SRC", ProtoRevision: 101})
+				human := newHumanATC()
+				// Synthetic ATC would pass IsAtc; Synthetic flag must still skip.
+				synth := newSynth("SYN", true, protocol.NetworkRatingController1, 101)
+				for _, s := range []*session.Session{src, human, synth} {
+					if err := reg.Register(s); err != nil {
+						t.Fatal(err)
+					}
+					reg.UpdatePosition(s, pos, vr)
+				}
+				return reg, src, human, synth
+			},
+			invoke: func(reg *postoffice.PostOffice, src *session.Session) {
+				broadcastRangedAtcOnly(reg, src, []byte(marker+"-atc\r\n"))
+			},
+		},
+		{
+			name: "broadcastAll",
+			setup: func(t *testing.T) (*postoffice.PostOffice, *session.Session, *session.Session, *session.Session) {
+				reg := postoffice.New()
+				src := session.New(context.Background(), nil, nil, session.LoginData{Callsign: "SRC"})
+				human := newHumanATC()
+				synth := newSynth("SYN", false, protocol.NetworkRatingObserver, 100)
+				for _, s := range []*session.Session{src, human, synth} {
+					if err := reg.Register(s); err != nil {
+						t.Fatal(err)
+					}
+				}
+				return reg, src, human, synth
+			},
+			invoke: func(reg *postoffice.PostOffice, src *session.Session) {
+				broadcastAll(reg, src, []byte(marker+"-all\r\n"))
+			},
+		},
+		{
+			name: "broadcastAllATC",
+			setup: func(t *testing.T) (*postoffice.PostOffice, *session.Session, *session.Session, *session.Session) {
+				reg := postoffice.New()
+				src := session.New(context.Background(), nil, nil, session.LoginData{Callsign: "SRC"})
+				human := newHumanATC()
+				synth := newSynth("SYN", true, protocol.NetworkRatingController1, 100)
+				for _, s := range []*session.Session{src, human, synth} {
+					if err := reg.Register(s); err != nil {
+						t.Fatal(err)
+					}
+				}
+				return reg, src, human, synth
+			},
+			invoke: func(reg *postoffice.PostOffice, src *session.Session) {
+				broadcastAllATC(reg, src, []byte(marker+"-allatc\r\n"))
+			},
+		},
+		{
+			name: "broadcastAllSupervisors",
+			setup: func(t *testing.T) (*postoffice.PostOffice, *session.Session, *session.Session, *session.Session) {
+				reg := postoffice.New()
+				src := session.New(context.Background(), nil, nil, session.LoginData{Callsign: "SRC"})
+				human := newHumanATC()
+				// Synthetic supervisor-rated would pass rating filter without Synthetic skip.
+				synth := newSynth("SYN", true, protocol.NetworkRatingSupervisor, 100)
+				for _, s := range []*session.Session{src, human, synth} {
+					if err := reg.Register(s); err != nil {
+						t.Fatal(err)
+					}
+				}
+				return reg, src, human, synth
+			},
+			invoke: func(reg *postoffice.PostOffice, src *session.Session) {
+				broadcastAllSupervisors(reg, src, []byte(marker+"-sup\r\n"))
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reg, src, human, synth := tc.setup(t)
+			tc.invoke(reg, src)
+
+			humanOut := drain(human)
+			if !hasOutboundContaining(humanOut, marker) {
+				t.Fatalf("human recipient missed fan-out: %v", humanOut)
+			}
+			synthOut := drain(synth)
+			if hasOutboundContaining(synthOut, marker) {
+				t.Fatalf("synthetic recipient must be skipped: %v", synthOut)
+			}
+			// Source must not self-receive via registry Search/All.
+			if hasOutboundContaining(drain(src), marker) {
+				t.Fatalf("source should not receive its own fan-out: unexpected enqueue")
+			}
+		})
+	}
+}
+
+// TestSendDirect_DoesNotSkipSynthetic documents that direct registry.Send
+// still enqueues to Synthetic sessions (drain via SenderWorker in later PRs).
+func TestSendDirect_DoesNotSkipSynthetic(t *testing.T) {
+	reg := postoffice.New()
+	src := session.New(context.Background(), nil, nil, session.LoginData{Callsign: "SRC"})
+	synth := session.New(context.Background(), nil, nil, session.LoginData{Callsign: "SYN"})
+	synth.Synthetic = true
+	for _, s := range []*session.Session{src, synth} {
+		if err := reg.Register(s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sendDirectOrErr(reg, src, []byte("SYN"), []byte("direct-to-synth\r\n"))
+	out := drain(synth)
+	if !hasOutboundContaining(out, "direct-to-synth") {
+		t.Fatalf("direct Send must still reach synthetic: %v", out)
+	}
+}
+
 // TestBroadcastRangedVelocity_FiltersProto filters non-101 peers.
 func TestBroadcastRangedVelocity_FiltersProto(t *testing.T) {
 	reg := postoffice.New()
