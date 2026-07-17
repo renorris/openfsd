@@ -10,8 +10,10 @@ import (
 type Config struct {
 	FsdListenAddrs []string `env:"FSD_LISTEN_ADDRS, default=:6809"` // FSD listen addresses
 
-	DatabaseDriver      string `env:"DATABASE_DRIVER, default=sqlite"`        // Golang sql database driver name
-	DatabaseSourceName  string `env:"DATABASE_SOURCE_NAME, default=:memory:"` // Golang sql database source name
+	// DatabaseDriver is accepted for backward compatibility only.
+	// openfsd is SQLite-only; any non-empty value other than "sqlite" is rejected at startup.
+	DatabaseDriver      string `env:"DATABASE_DRIVER, default=sqlite"`
+	DatabaseSourceName  string `env:"DATABASE_SOURCE_NAME, default=:memory:"` // SQLite DSN (path or :memory:)
 	DatabaseAutoMigrate bool   `env:"DATABASE_AUTO_MIGRATE, default=true"`    // Whether to automatically run database migrations on startup
 	DatabaseMaxConns    int    `env:"DATABASE_MAX_CONNS, default=1"`          // Max number of database connections
 

@@ -9,8 +9,10 @@ import (
 type ServerConfig struct {
 	ListenAddr string `env:"LISTEN_ADDR, default=:8000"` // HTTP listen address
 
-	DatabaseDriver     string `env:"DATABASE_DRIVER, default=sqlite"`        // Golang sql database driver name
-	DatabaseSourceName string `env:"DATABASE_SOURCE_NAME, default=:memory:"` // Golang sql database source name
+	// DatabaseDriver is accepted for backward compatibility only.
+	// openfsd is SQLite-only; any non-empty value other than "sqlite" is rejected at startup.
+	DatabaseDriver     string `env:"DATABASE_DRIVER, default=sqlite"`
+	DatabaseSourceName string `env:"DATABASE_SOURCE_NAME, default=:memory:"` // SQLite DSN (path or :memory:)
 	DatabaseMaxConns   int    `env:"DATABASE_MAX_CONNS, default=1"`          // Max number of database connections
 
 	// FsdHttpServiceAddress is the base URL of the FSD internal service HTTP API.

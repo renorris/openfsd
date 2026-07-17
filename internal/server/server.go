@@ -86,10 +86,14 @@ func NewDefault(ctx context.Context) (*Server, error) {
 		return nil, err
 	}
 
-	slog.Info(fmt.Sprintf("using %s", config.DatabaseDriver))
+	if err := db.RequireSQLiteDriver(config.DatabaseDriver); err != nil {
+		return nil, err
+	}
+
+	slog.Info("using sqlite")
 
 	slog.Debug("connecting to SQL")
-	sqlDb, err := sql.Open(config.DatabaseDriver, config.DatabaseSourceName)
+	sqlDb, err := sql.Open("sqlite", config.DatabaseSourceName)
 	if err != nil {
 		return nil, err
 	}
@@ -265,9 +269,7 @@ var (
 	_ Registry    = (*postoffice.PostOffice)(nil)
 	_ MetarQueue  = (*metar.Service)(nil)
 	_ UserStore   = (*db.SQLiteUserRepository)(nil)
-	_ UserStore   = (*db.PostgresUserRepository)(nil)
 	_ UserStore   = db.UserRepository(nil)
 	_ ConfigStore = (*db.SQLiteConfigRepository)(nil)
-	_ ConfigStore = (*db.PostgresConfigRepository)(nil)
 	_ ConfigStore = db.ConfigRepository(nil)
 )

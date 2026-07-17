@@ -69,6 +69,14 @@ func TestNewRepositoriesUnsupportedDriver(t *testing.T) {
 	require.Contains(t, err.Error(), "unsupported database")
 }
 
+func TestRequireSQLiteDriver(t *testing.T) {
+	require.NoError(t, RequireSQLiteDriver(""))
+	require.NoError(t, RequireSQLiteDriver("sqlite"))
+	require.NoError(t, RequireSQLiteDriver("SQLite"))
+	require.Error(t, RequireSQLiteDriver("postgres"))
+	require.Error(t, RequireSQLiteDriver("pgx"))
+}
+
 func TestGetWelcomeMessageAndInitDefault(t *testing.T) {
 	sqlDB, err := sql.Open("sqlite", "file:welcomemsg_"+strings.ReplaceAll(t.Name(), "/", "_")+"?mode=memory&cache=shared")
 	require.NoError(t, err)

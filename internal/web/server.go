@@ -26,10 +26,14 @@ func NewDefaultServer(ctx context.Context) (server *Server, err error) {
 		return
 	}
 
-	slog.Info(fmt.Sprintf("using %s", cfg.DatabaseDriver))
+	if err = db.RequireSQLiteDriver(cfg.DatabaseDriver); err != nil {
+		return
+	}
+
+	slog.Info("using sqlite")
 
 	slog.Debug("connecting to SQL")
-	sqlDb, err := sql.Open(cfg.DatabaseDriver, cfg.DatabaseSourceName)
+	sqlDb, err := sql.Open("sqlite", cfg.DatabaseSourceName)
 	if err != nil {
 		return
 	}

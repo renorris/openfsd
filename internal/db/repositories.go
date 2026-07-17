@@ -3,41 +3,56 @@ package db
 import (
 	"database/sql"
 	"fmt"
-	"github.com/lib/pq"
+	"strings"
+
 	"modernc.org/sqlite"
 )
 
-// Repositories bundles all repository interfaces
+// Repositories bundles all repository interfaces.
 type Repositories struct {
 	UserRepo   UserRepository
 	ConfigRepo ConfigRepository
 }
 
-// NewUserRepository creates a UserRepository based on the database driver
+// RequireSQLiteDriver rejects non-sqlite DATABASE_DRIVER values so operators
+// migrating from older openfsd releases get a clear error instead of a cryptic
+// sql.Open failure. Empty and "sqlite" are accepted.
+func RequireSQLiteDriver(driver string) error {
+	d := strings.TrimSpace(strings.ToLower(driver))
+	if d == "" || d == "sqlite" {
+		return nil
+	}
+	return fmt.Errorf(
+		"DATABASE_DRIVER=%q is not supported: openfsd is SQLite-only; "+
+			"use openfsd-migrate-to-sqlite to convert a PostgreSQL database "+
+			"(see wiki/Migrating-from-PostgreSQL.md)",
+		driver,
+	)
+}
+
+// NewUserRepository creates a UserRepository for the given database.
+// Only SQLite (modernc.org/sqlite) is supported.
 func NewUserRepository(db *sql.DB) (UserRepository, error) {
 	switch db.Driver().(type) {
-	case *pq.Driver:
-		return &PostgresUserRepository{db: db}, nil
 	case *sqlite.Driver:
 		return &SQLiteUserRepository{db: db}, nil
 	default:
-		return nil, fmt.Errorf("unsupported database")
+		return nil, fmt.Errorf("unsupported database: only sqlite is supported")
 	}
 }
 
-// NewConfigRepository creates a ConfigRepository based on the database driver
+// NewConfigRepository creates a ConfigRepository for the given database.
+// Only SQLite (modernc.org/sqlite) is supported.
 func NewConfigRepository(db *sql.DB) (ConfigRepository, error) {
 	switch db.Driver().(type) {
-	case *pq.Driver:
-		return &PostgresConfigRepository{db: db}, nil
 	case *sqlite.Driver:
 		return &SQLiteConfigRepository{db: db}, nil
 	default:
-		return nil, fmt.Errorf("unsupported database")
+		return nil, fmt.Errorf("unsupported database: only sqlite is supported")
 	}
 }
 
-// NewRepositories creates a Repositories bundle with implementations for the given database
+// NewRepositories creates a Repositories bundle with implementations for the given database.
 func NewRepositories(db *sql.DB) (repositories *Repositories, err error) {
 	repositories = &Repositories{}
 	if repositories.UserRepo, err = NewUserRepository(db); err != nil {

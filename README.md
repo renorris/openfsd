@@ -14,7 +14,7 @@ As of May 2025, FSD is still used to facilitate over 140,000 active members conn
 
 - Multiplayer flight simulation with VATSIM protocol compatibility
 - Web-based management for users, settings, and connections
-- SQLite and PostgreSQL for persistent storage
+- SQLite for persistent storage (single file; easy backups)
 - **Single binary** — FSD and web share one process and one database; enable services with CLI flags
 
 ## Package layout
@@ -54,8 +54,8 @@ go build -o openfsd ./cmd/openfsd
 
 | Variable | Default | Notes |
 |----------|---------|-------|
-| `DATABASE_DRIVER` | `sqlite` | `sqlite` or `postgres` |
-| `DATABASE_SOURCE_NAME` | `:memory:` | Shared by both services |
+| `DATABASE_SOURCE_NAME` | `:memory:` | SQLite path or `:memory:`; shared by both services |
+| `DATABASE_DRIVER` | `sqlite` | Compatibility only; must be `sqlite` or unset (Postgres removed) |
 | `DATABASE_AUTO_MIGRATE` | `true` | FSD applies migrations on startup |
 | `FSD_LISTEN_ADDRS` | `:6809` | FSD TCP listen address(es) |
 | `SERVICE_HTTP_LISTEN_ADDR` | `:13618` | Internal FSD admin HTTP |
@@ -67,9 +67,11 @@ Colocated mode (default) uses the shared DB and in-process service HTTP. For `-w
 
 ## Quick start (Docker)
 
-Preferred for operators. See the [Deployment Wiki](https://github.com/renorris/openfsd/wiki/Deployment).
+Preferred for operators. See the [Deployment Wiki](https://github.com/renorris/openfsd/wiki/Deployment) (source: [`wiki/`](wiki/)).
 
 Images: **`ghcr.io/renorris/openfsd`** (`:latest`, `:dev`, `sha-*`) published by CI on every push to `main` and `dev`.
+
+**Upgrading from PostgreSQL?** openfsd is SQLite-only. Use [`openfsd-migrate-to-sqlite`](cmd/openfsd-migrate-to-sqlite) and follow [Migrating from PostgreSQL](wiki/Migrating-from-PostgreSQL.md).
 
 ```bash
 git clone https://github.com/renorris/openfsd.git
