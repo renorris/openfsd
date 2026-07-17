@@ -471,8 +471,8 @@ func TestSnapshot_IncludesVectorTargets(t *testing.T) {
 	}
 }
 
-func TestCommand_VectorsDoNotMoveOnTick(t *testing.T) {
-	// Domain-only: Tick still only advances elapsed (PR 4 does kinematics).
+func TestCommand_VectorsMoveOnTick(t *testing.T) {
+	// PR 4: Tick consumes Desired* targets (kinematics).
 	e := loadKBTVEngine(t)
 	cs := addAirborne(t, e)
 	_ = e.CommandLine("un")
@@ -482,11 +482,19 @@ func TestCommand_VectorsDoNotMoveOnTick(t *testing.T) {
 	_ = e.Command(cs, "spd 300")
 	e.Tick(time.Second)
 	after := e.mustGet(t, cs)
-	if math.Abs(after.Lat-before.Lat) > 1e-12 || math.Abs(after.Lon-before.Lon) > 1e-12 {
-		t.Error("tick must not move aircraft in PR 3c")
+	// Position / heading / alt / speed should respond to vectors.
+	moved := math.Abs(after.Lat-before.Lat) > 1e-9 || math.Abs(after.Lon-before.Lon) > 1e-9
+	turned := math.Abs(headingDelta(after.Heading, before.Heading)) > 0.1
+	climbed := after.Alt > before.Alt+1
+	sped := after.Speed > before.Speed+1
+	if !moved && !turned {
+		t.Error("tick should turn/move under fh")
 	}
-	if math.Abs(after.Alt-before.Alt) > 1e-12 || math.Abs(after.Speed-before.Speed) > 1e-12 {
-		t.Error("tick must not change alt/speed in PR 3c")
+	if !climbed {
+		t.Error("tick should climb under cm")
+	}
+	if !sped {
+		t.Error("tick should accelerate under spd")
 	}
 	// Desired targets retained.
 	if !after.HasDesiredHeading || after.DesiredHeading != 10 {

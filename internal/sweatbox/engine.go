@@ -184,8 +184,10 @@ func (e *Engine) Elapsed() time.Duration {
 }
 
 // Tick advances simulation by dt when unpaused.
-// PR 3a: only elapsed time advances; kinematics land in PR 4.
-// Returns empty result copies for host apply (no shared state).
+// When paused (or dt ≤ 0): no motion and no elapsed accumulation.
+// Unpaused: advances elapsed, runs pure kinematics, returns value-copy
+// snapshots of aircraft that changed (plus Deletes for parked arrivals).
+// Never returns pointers into engine state; safe for host apply after unlock.
 func (e *Engine) Tick(dt time.Duration) TickResult {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -193,7 +195,7 @@ func (e *Engine) Tick(dt time.Duration) TickResult {
 		return TickResult{}
 	}
 	e.elapsed += dt
-	return TickResult{}
+	return e.expandTickLocked(dt.Seconds())
 }
 
 // TickResult is the set of host-facing mutations from one tick (value copies).

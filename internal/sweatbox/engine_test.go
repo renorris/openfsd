@@ -167,8 +167,9 @@ func TestPauseUnpauseTickElapsed(t *testing.T) {
 	e := NewEngine()
 	e.Unpause()
 	r := e.Tick(5 * time.Second)
+	// Empty engine: no aircraft updates/deletes.
 	if len(r.Updates) != 0 || len(r.Deletes) != 0 {
-		t.Errorf("skeleton tick should be empty: %+v", r)
+		t.Errorf("empty-engine tick should be empty: %+v", r)
 	}
 	if e.Elapsed() != 5*time.Second {
 		t.Errorf("elapsed = %v", e.Elapsed())
