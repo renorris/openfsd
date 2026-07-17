@@ -1,0 +1,20 @@
+;  0 - callsign
+;  1 - ac type
+;  2 - engine type (P, T, J, H)
+;  3 - fp type (V, I)
+;  4 - dep apt
+;  5 - arr apt
+;  6 - crz alt
+;  7 - route
+;  8 - remarks
+;  9 - squawk code
+; 10 - normal or standby (N or S)
+; 11 - lat
+; 12 - lon
+; 13 - alt
+; 14 - ground speed
+; 15 - hdg
+
+AAL123:B738/F:J:I:KBTV:KBOS:29000:BTV4 MPV LEB MHT:/v/charts:2200:S:44.469758:-73.154747:335:0:360
+USA456:B190/G:T:I:KBTV:KBOS:25000:DCT GPS:/v/vfr/charts:2201:S:44.468802:-73.154547:335:0:360
+N4729H:C172/A:P:V:KBTV:KLEB:7500:MPV LEB:/v/vfr:1200:S:44.463310:-73.152026:335:0:360

@@ -117,12 +117,13 @@ check_no_imports "internal/session" "${MODULE}/internal/session/..." \
 # internal/geo — stdlib only
 check_stdlib_only "internal/geo" "${MODULE}/internal/geo/..."
 
-# internal/web — must not import session, postoffice, metar
+# internal/web — must not import session, postoffice, metar, sweatbox
 # (server is allowed only for service-HTTP DTOs; keep that coupling minimal)
 check_no_imports "internal/web" "${MODULE}/internal/web/..." \
   "${MODULE}/internal/session" \
   "${MODULE}/internal/postoffice" \
-  "${MODULE}/internal/metar"
+  "${MODULE}/internal/metar" \
+  "${MODULE}/internal/sweatbox"
 
 # internal/db — must not import server, session, web, fsdclient
 check_no_imports "internal/db" "${MODULE}/internal/db/..." \
@@ -136,6 +137,19 @@ check_no_imports "internal/auth" "${MODULE}/internal/auth/..." \
   "${MODULE}/internal/server" \
   "${MODULE}/internal/session" \
   "${MODULE}/internal/web"
+
+# internal/sweatbox — pure sim; no orchestration / session / client packages
+# (may import internal/geo + stdlib only; protocol encode lives in server host)
+check_no_imports "internal/sweatbox" "${MODULE}/internal/sweatbox/..." \
+  "${MODULE}/internal/server" \
+  "${MODULE}/internal/web" \
+  "${MODULE}/internal/postoffice" \
+  "${MODULE}/internal/session" \
+  "${MODULE}/internal/db" \
+  "${MODULE}/internal/auth" \
+  "${MODULE}/internal/metar" \
+  "${MODULE}/pkg/fsdclient" \
+  "${MODULE}/pkg/protocol"
 
 if [[ "$failed" -ne 0 ]]; then
   echo

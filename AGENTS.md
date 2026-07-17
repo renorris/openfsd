@@ -17,6 +17,7 @@ Operational rules for agents and humans changing this repository. This file is t
 | `internal/session` | Per-connection state + send worker | Does not import postoffice/server |
 | `internal/postoffice` | Registry (map/tree of participants) | Depends on session ports, not server |
 | `internal/metar` | Worker pool + injectable HTTP | Side-effect boundary |
+| `internal/sweatbox` | Pure sim (apt/air parse, taxi, engine, kinematics) | **stdlib + `internal/geo` only**; no protocol/session/server |
 | `internal/server` | TCP accept, login, handlers, service HTTP | DI via `server.New` / `server.NewDefault` |
 | `internal/db` | Shared repositories + migrations | Used by FSD and web |
 | `internal/web` | Gin MPA + progressive enhancement + `/api/v1` | boring-web mandatory |
@@ -30,11 +31,13 @@ Operational rules for agents and humans changing this repository. This file is t
 
 ```
 cmd/openfsd       → internal/server, internal/web, …
-internal/server   → session, postoffice, protocol, auth, metar, db
+internal/server   → session, postoffice, protocol, auth, metar, db, sweatbox
 internal/postoffice → geo, session
 internal/metar    → protocol, session
+internal/sweatbox → geo
 internal/web      → auth, db, protocol
-                    (and server only for service-HTTP DTOs until those move)
+                    (and server only for service-HTTP DTOs until those move;
+                     never sweatbox — control plane is service HTTP)
 pkg/fsdclient     → protocol
 internal/auth     → protocol
 internal/session  → protocol
@@ -52,9 +55,10 @@ Enforce with `scripts/check-import-graph.sh`.
 | `pkg/fsdclient` | `internal/*` |
 | `internal/session` | `postoffice`, `server`, `web`, `metar` |
 | `internal/geo` | Any non-stdlib import |
-| `internal/web` | `session`, `postoffice`, `metar` |
+| `internal/web` | `session`, `postoffice`, `metar`, `sweatbox` |
 | `internal/db` | `server`, `session`, `web`, `fsdclient` |
 | `internal/auth` | `server`, `session`, `web` |
+| `internal/sweatbox` | `server`, `web`, `postoffice`, `session`, `db`, `auth`, `metar`, `fsdclient`, `protocol` |
 
 Stdlib heuristic: first path element contains no `.` (e.g. `fmt`, `net/http`). Third-party is never allowed in `pkg/protocol` or `internal/geo`.
 
@@ -144,6 +148,7 @@ Enforced by `scripts/check-coverage.sh` (CI).
 | `internal/geo` | ≥98% | **Hard** |
 | `internal/auth` | ≥95% | **Hard** |
 | `internal/postoffice` | ≥90% | **Hard** |
+| `internal/sweatbox` | ≥95% | **Hard** (target; may land in coverage script with later PR) |
 | `internal/web` | ≥80% | Soft (report only) |
 | Overall aspirational | 90% | Soft (report only) |
 | `cmd/*` | — | Excluded from measurement |
