@@ -188,15 +188,17 @@ icao=KBTV
 44.2 -73.2
 `
 	_, errs := ParseAPT(text)
-	// G1: 0 points, G2: 2 points — both wrong
-	found := 0
+	var noWP, extraWP int
 	for _, e := range errs {
-		if strings.Contains(e, "Parking area") {
-			found++
+		if strings.Contains(e, "has no waypoint defined") {
+			noWP++
+		}
+		if strings.Contains(e, "Extra waypoint found in parking") {
+			extraWP++
 		}
 	}
-	if found != 2 {
-		t.Fatalf("want 2 parking errors, got %v", errs)
+	if noWP != 1 || extraWP != 1 {
+		t.Fatalf("want 1 missing + 1 extra parking error, got %v", errs)
 	}
 }
 
@@ -247,18 +249,23 @@ icao=KBTV
 [HOLD HS1]
 44.5 -73.5
 [HOLD HS2]
+[HOLD HS3]
+44.0 -73.0
+44.1 -73.1
 [TAXIWAY 1BAD]
 [HOLD bad-name]
 `
 	apt, errs := ParseAPT(text)
-	// A has 1 point → taxi error; HS2 no point → hold error; bad names → unknown
-	var taxiErr, holdErr, unknown int
+	// A has 1 point → taxi error; HS2 no point → hold error; HS3 extra → hold extra; bad names → unknown
+	var taxiErr, holdNone, holdExtra, unknown int
 	for _, e := range errs {
 		switch {
 		case strings.Contains(e, "Taxiway A"):
 			taxiErr++
-		case strings.Contains(e, "Hold HS2"):
-			holdErr++
+		case strings.Contains(e, "Hold HS2 has no waypoint"):
+			holdNone++
+		case strings.Contains(e, "Extra waypoint found in hold section HS3"):
+			holdExtra++
 		case strings.Contains(e, "Unknown line"):
 			unknown++
 		}
@@ -266,8 +273,11 @@ icao=KBTV
 	if taxiErr != 1 {
 		t.Errorf("taxi err count %d: %v", taxiErr, errs)
 	}
-	if holdErr != 1 {
-		t.Errorf("hold err count %d: %v", holdErr, errs)
+	if holdNone != 1 {
+		t.Errorf("hold missing err count %d: %v", holdNone, errs)
+	}
+	if holdExtra != 1 {
+		t.Errorf("hold extra err count %d: %v", holdExtra, errs)
 	}
 	if unknown < 2 {
 		t.Errorf("want ≥2 unknown (bad names), got %d: %v", unknown, errs)
@@ -313,6 +323,120 @@ icao=KBTV
 	}
 	if dups != 4 {
 		t.Fatalf("want 4 duplicate errors, got %d: %v", dups, errs)
+	}
+}
+
+func TestParseAPT_TaxiHoldSharedNamespace(t *testing.T) {
+	// TWRTrainer: taxiway and hold share one name space.
+	text := `
+icao=KBTV
+[TAXIWAY A]
+44.0 -73.0
+44.1 -73.1
+[HOLD A]
+44.5 -73.5
+[HOLD B]
+44.6 -73.6
+[TAXIWAY B]
+44.0 -73.0
+44.1 -73.1
+`
+	_, errs := ParseAPT(text)
+	var dups int
+	for _, e := range errs {
+		if strings.Contains(e, "Duplicate taxiway or hold") {
+			dups++
+		}
+	}
+	if dups != 2 {
+		t.Fatalf("want 2 shared-namespace dups (A and B), got %d: %v", dups, errs)
+	}
+}
+
+func TestParseAPT_RegistrationAndAirlineLists(t *testing.T) {
+	tests := []struct {
+		name    string
+		text    string
+		wantErr string
+	}{
+		{
+			name:    "registration too long",
+			text:    "icao=KBTV\nregistration=N123\n",
+			wantErr: "Invalid registration prefix",
+		},
+		{
+			name:    "registration empty",
+			text:    "icao=KBTV\nregistration=\n",
+			wantErr: "Invalid registration prefix",
+		},
+		{
+			name:    "jet airline too long",
+			text:    "icao=KBTV\njet airlines=TOOLONGPREFIX,AAL\n",
+			wantErr: "Invalid list of jet airlines",
+		},
+		{
+			name:    "jet airline single letter",
+			text:    "icao=KBTV\njet airlines=A,AAL\n",
+			wantErr: "Invalid list of jet airlines",
+		},
+		{
+			name:    "turboprop empty segment mid-list",
+			text:    "icao=KBTV\nturboprop airlines=EGF,,USA\n",
+			wantErr: "Invalid list of turboprop airlines",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, errs := ParseAPT(tt.text)
+			found := false
+			for _, e := range errs {
+				if strings.Contains(e, tt.wantErr) {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("want err containing %q, got %v", tt.wantErr, errs)
+			}
+		})
+	}
+
+	// Valid cases: single letter, 2–3 char prefixes, trailing comma, empty list.
+	okText := `
+icao=KBTV
+registration=N
+jet airlines=AAL,ACA,ML,
+turboprop airlines=
+`
+	apt, errs := ParseAPT(okText)
+	if len(errs) != 0 {
+		t.Fatalf("valid headers: %v", errs)
+	}
+	if apt.Registration != "N" || apt.JetAirlines != "AAL,ACA,ML," {
+		t.Errorf("apt headers: reg=%q jet=%q", apt.Registration, apt.JetAirlines)
+	}
+}
+
+func TestParseAPT_InvalidTurnoff(t *testing.T) {
+	text := `
+icao=KBTV
+[RUNWAY 9/27]
+turnoff=sideways
+44.0 -73.0
+44.1 -73.1
+`
+	apt, errs := ParseAPT(text)
+	found := false
+	for _, e := range errs {
+		if strings.Contains(e, "Invalid turnoff direction") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("want invalid turnoff error: %v", errs)
+	}
+	r := apt.FindSurface("9")
+	if r == nil || !r.TurnoffLeft {
+		t.Errorf("invalid turnoff should leave default left: %+v", r)
 	}
 }
 
@@ -425,23 +549,23 @@ func TestFindSurface_NilAndMiss(t *testing.T) {
 func TestParseAPT_InvalidDisplacedThreshold(t *testing.T) {
 	// parseDisplacedThreshold returns false for bad format → unknown line if no match.
 	// With a runway current, malformed displaced that doesn't parse as displaced falls through.
-	text := `
-icao=KBTV
-[RUNWAY 1/19]
-displaced threshold=abc/def
-44.0 -73.0
-44.1 -73.1
-`
-	_, errs := ParseAPT(text)
-	// "displaced threshold=abc/def" fails parseDisplacedThreshold → unknown line
-	found := false
-	for _, e := range errs {
-		if strings.Contains(e, "Unknown line") {
-			found = true
+	// Integers only (TWRTrainer ^(\d+)/(\d+)$); floats rejected.
+	for _, bad := range []string{
+		"displaced threshold=abc/def",
+		"displaced threshold=100.5/200",
+		"displaced threshold=-1/0",
+	} {
+		text := "icao=KBTV\n[RUNWAY 1/19]\n" + bad + "\n44.0 -73.0\n44.1 -73.1\n"
+		_, errs := ParseAPT(text)
+		found := false
+		for _, e := range errs {
+			if strings.Contains(e, "Unknown line") {
+				found = true
+			}
 		}
-	}
-	if !found {
-		t.Fatalf("want unknown line for bad displaced: %v", errs)
+		if !found {
+			t.Fatalf("want unknown line for %q: %v", bad, errs)
+		}
 	}
 }
 
@@ -572,5 +696,19 @@ func TestHelperEdgeCases(t *testing.T) {
 	}
 	if hasDecimalPoint("-") {
 		t.Error("bare minus")
+	}
+
+	// registration / airline list helpers
+	if !isValidRegistration("N") || isValidRegistration("N1") || isValidRegistration("") {
+		t.Error("registration validator")
+	}
+	if !isValidAirlineList("") || !isValidAirlineList("AAL") || !isValidAirlineList("AAL,ACA,") {
+		t.Error("valid airline lists rejected")
+	}
+	if isValidAirlineList("TOOLONG") || isValidAirlineList("A") || isValidAirlineList("AAL,,B") {
+		t.Error("invalid airline lists accepted")
+	}
+	if !isDigits("0") || !isDigits("100") || isDigits("") || isDigits("1.0") || isDigits("-1") {
+		t.Error("isDigits")
 	}
 }

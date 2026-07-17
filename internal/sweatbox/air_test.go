@@ -220,3 +220,25 @@ func TestParseAIR_ExtraFieldsIgnored(t *testing.T) {
 		t.Fatalf("rows: %+v", rows)
 	}
 }
+
+func TestParseAIR_InvalidSquawk(t *testing.T) {
+	mk := func(cs, sqk string) string {
+		return cs + ":B738:J:I:KBTV:KBOS:10000:DCT::" + sqk + ":N:44.0:-73.0:335:0:90\n"
+	}
+	for _, sqk := range []string{"", "12", "123", "12345", "12A0", "ABCD", "  "} {
+		t.Run("bad_"+sqk, func(t *testing.T) {
+			rows, errs := ParseAIR(mk("AAL1", sqk))
+			if len(rows) != 0 {
+				t.Fatalf("want no rows for squawk %q, got %+v", sqk, rows)
+			}
+			if len(errs) != 1 || !strings.Contains(errs[0], "Invalid squawk code") {
+				t.Fatalf("errs: %v", errs)
+			}
+		})
+	}
+	// Valid four-digit codes still load.
+	rows, errs := ParseAIR(mk("AAL1", "1200") + mk("AAL2", "7700"))
+	if len(errs) != 0 || len(rows) != 2 {
+		t.Fatalf("valid squawks: rows=%d errs=%v", len(rows), errs)
+	}
+}

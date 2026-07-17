@@ -17,8 +17,8 @@ func ParseAIR(text string) ([]Aircraft, []string) {
 	lines := strings.Split(text, "\n")
 	for i, raw := range lines {
 		lineno := i + 1
+		// TrimSpace also strips trailing \r from CRLF lines.
 		line := strings.TrimSpace(raw)
-		line = strings.TrimSuffix(line, "\r")
 		if line == "" || strings.HasPrefix(line, ";") {
 			continue
 		}
@@ -57,6 +57,12 @@ func ParseAIR(text string) ([]Aircraft, []string) {
 			continue
 		}
 
+		sqk := strings.TrimSpace(f[9])
+		if !isSquawk(sqk) {
+			errs = append(errs, fmt.Sprintf("Invalid squawk code on line %d", lineno))
+			continue
+		}
+
 		cruiseAlt, err := strconv.ParseFloat(strings.TrimSpace(f[6]), 64)
 		if err != nil {
 			errs = append(errs, fmt.Sprintf("Invalid numeric field on line %d", lineno))
@@ -82,7 +88,7 @@ func ParseAIR(text string) ([]Aircraft, []string) {
 			CruiseAlt: int(cruiseAlt),
 			Route:     f[7],
 			Remarks:   f[8],
-			Squawk:    strings.TrimSpace(f[9]),
+			Squawk:    sqk,
 			XPDRMode:  mode,
 			Lat:       lat,
 			Lon:       lon,
@@ -94,4 +100,18 @@ func ParseAIR(text string) ([]Aircraft, []string) {
 		rows = append(rows, rec)
 	}
 	return rows, errs
+}
+
+// isSquawk reports whether s is exactly four ASCII digits (TWRTrainer ^\d{4}$).
+// Octal-digit-only policy is deferred; any 0-9 is accepted.
+func isSquawk(s string) bool {
+	if len(s) != 4 {
+		return false
+	}
+	for i := 0; i < 4; i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
 }

@@ -96,6 +96,50 @@ check_stdlib_only() {
   fi
 }
 
+# Fail if any package under pattern has a non-stdlib import other than allowed prefixes.
+# Used for internal/sweatbox: stdlib + internal/geo only (AGENTS.md §1).
+check_imports_allowlist() {
+  local from_label="$1"
+  local pattern="$2"
+  shift 2
+  local allowed=("$@")
+
+  if ! pkgs_exist "$pattern"; then
+    echo "    skip $from_label (package missing)"
+    return 0
+  fi
+
+  local pkg hit=0
+  while IFS= read -r pkg; do
+    [[ -z "$pkg" ]] && continue
+    local imports
+    imports="$(go list -f '{{range .Imports}}{{.}}{{"\n"}}{{end}}' "$pkg" 2>/dev/null || true)"
+    local imp
+    for imp in $imports; do
+      if is_stdlib_import "$imp"; then
+        continue
+      fi
+      local ok=0
+      local a
+      for a in "${allowed[@]}"; do
+        if [[ "$imp" == "$a" || "$imp" == "$a"/* ]]; then
+          ok=1
+          break
+        fi
+      done
+      if [[ "$ok" -eq 0 ]]; then
+        echo "    FAIL: $pkg imports $imp (allowed non-stdlib: ${allowed[*]})"
+        hit=1
+        failed=1
+      fi
+    done
+  done < <(go list "$pattern" 2>/dev/null || true)
+
+  if [[ "$hit" -eq 0 ]]; then
+    echo "    OK $from_label (stdlib + allowlist under $pattern)"
+  fi
+}
+
 echo "==> Import graph: forbidden edges (AGENTS.md §2)"
 echo "    module: $MODULE"
 echo "    note: checks direct imports of every package matched by each pattern"
@@ -138,18 +182,10 @@ check_no_imports "internal/auth" "${MODULE}/internal/auth/..." \
   "${MODULE}/internal/session" \
   "${MODULE}/internal/web"
 
-# internal/sweatbox — pure sim; no orchestration / session / client packages
-# (may import internal/geo + stdlib only; protocol encode lives in server host)
-check_no_imports "internal/sweatbox" "${MODULE}/internal/sweatbox/..." \
-  "${MODULE}/internal/server" \
-  "${MODULE}/internal/web" \
-  "${MODULE}/internal/postoffice" \
-  "${MODULE}/internal/session" \
-  "${MODULE}/internal/db" \
-  "${MODULE}/internal/auth" \
-  "${MODULE}/internal/metar" \
-  "${MODULE}/pkg/fsdclient" \
-  "${MODULE}/pkg/protocol"
+# internal/sweatbox — pure sim: stdlib + internal/geo only (AGENTS.md §1)
+# protocol encode lives in server host; no third-party / other internal packages
+check_imports_allowlist "internal/sweatbox" "${MODULE}/internal/sweatbox/..." \
+  "${MODULE}/internal/geo"
 
 if [[ "$failed" -ne 0 ]]; then
   echo

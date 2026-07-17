@@ -14,6 +14,10 @@ const (
 	defaultRegistration   = "N"
 )
 
+// pathDupKey is the shared taxiway/hold name namespace used for duplicate detection
+// (TWRTrainer treats taxiways and holds as one definition space).
+const pathDupKey = "PATH"
+
 // ParseAPT parses TWRTrainer-compatible .apt text.
 // The returned Airport is populated with whatever could be read; errs lists
 // validation and format issues (non-fatal — callers decide hard-fail policy).
@@ -27,15 +31,15 @@ func ParseAPT(text string) (Airport, []string) {
 	var errs []string
 	var cur *Surface
 
-	// Track surface keys for duplicate detection: "KIND:NAME".
+	// Track surface keys for duplicate detection.
+	// Parking/runway: "KIND:NAME". Taxiway and hold share "PATH:NAME".
 	seen := make(map[string]int) // key → first line number
 
 	lines := strings.Split(text, "\n")
 	for i, raw := range lines {
 		lineno := i + 1
+		// TrimSpace also strips trailing \r from CRLF lines.
 		line := strings.TrimSpace(raw)
-		// Strip CR from CRLF.
-		line = strings.TrimSuffix(line, "\r")
 		if line == "" || strings.HasPrefix(line, ";") {
 			continue
 		}
@@ -104,26 +108,45 @@ func ParseAPT(text string) (Airport, []string) {
 			continue
 		}
 		if strings.HasPrefix(low, "jet airlines=") {
-			// Preserve original case of prefixes after '=' (sample is uppercase).
 			idx := strings.Index(line, "=")
-			apt.JetAirlines = strings.TrimSpace(line[idx+1:])
+			val := strings.TrimSpace(line[idx+1:])
+			apt.JetAirlines = val
+			if !isValidAirlineList(val) {
+				errs = append(errs, fmt.Sprintf("Invalid list of jet airlines on line %d", lineno))
+			}
 			continue
 		}
 		if strings.HasPrefix(low, "turboprop airlines=") {
 			idx := strings.Index(line, "=")
-			apt.TurboAirlines = strings.TrimSpace(line[idx+1:])
+			val := strings.TrimSpace(line[idx+1:])
+			apt.TurboAirlines = val
+			if !isValidAirlineList(val) {
+				errs = append(errs, fmt.Sprintf("Invalid list of turboprop airlines on line %d", lineno))
+			}
 			continue
 		}
 		if strings.HasPrefix(low, "registration=") {
 			idx := strings.Index(line, "=")
-			apt.Registration = strings.TrimSpace(line[idx+1:])
+			val := strings.TrimSpace(line[idx+1:])
+			apt.Registration = val
+			if !isValidRegistration(val) {
+				errs = append(errs, fmt.Sprintf("Invalid registration prefix on line %d", lineno))
+			}
 			continue
 		}
 
 		// Runway-only options (must appear after a RUNWAY section header).
 		if strings.HasPrefix(low, "turnoff=") && cur != nil && cur.Kind == SurfaceRunway {
 			val := strings.ToLower(strings.TrimSpace(line[len("turnoff="):]))
-			cur.TurnoffLeft = val == "left"
+			switch val {
+			case "left":
+				cur.TurnoffLeft = true
+			case "right":
+				cur.TurnoffLeft = false
+			default:
+				// Leave prior/default value; report error (TWRTrainer: Invalid turnoff direction).
+				errs = append(errs, fmt.Sprintf("Invalid turnoff direction found on line %d", lineno))
+			}
 			continue
 		}
 		if da, db, ok := parseDisplacedThreshold(line); ok {
@@ -180,9 +203,9 @@ func ParseAPT(text string) (Airport, []string) {
 				continue
 			}
 			s := Surface{Kind: SurfaceTaxiway, Name: strings.ToUpper(name)}
-			key := SurfaceTaxiway + ":" + s.Name
+			key := pathDupKey + ":" + s.Name
 			if first, dup := seen[key]; dup {
-				errs = append(errs, fmt.Sprintf("Duplicate taxiway %s (first on line %d, again on line %d)", s.Name, first, lineno))
+				errs = append(errs, fmt.Sprintf("Duplicate taxiway or hold point definition %s (first on line %d, again on line %d)", s.Name, first, lineno))
 			} else {
 				seen[key] = lineno
 			}
@@ -197,9 +220,9 @@ func ParseAPT(text string) (Airport, []string) {
 				continue
 			}
 			s := Surface{Kind: SurfaceHold, Name: strings.ToUpper(name)}
-			key := SurfaceHold + ":" + s.Name
+			key := pathDupKey + ":" + s.Name
 			if first, dup := seen[key]; dup {
-				errs = append(errs, fmt.Sprintf("Duplicate hold %s (first on line %d, again on line %d)", s.Name, first, lineno))
+				errs = append(errs, fmt.Sprintf("Duplicate taxiway or hold point definition %s (first on line %d, again on line %d)", s.Name, first, lineno))
 			} else {
 				seen[key] = lineno
 			}
@@ -225,16 +248,22 @@ func ParseAPT(text string) (Airport, []string) {
 	for _, s := range apt.Surfaces {
 		switch s.Kind {
 		case SurfaceParking:
-			if len(s.Points) != 1 {
+			switch {
+			case len(s.Points) == 0:
 				errs = append(errs, fmt.Sprintf("Parking area %s has no waypoint defined.", s.Name))
+			case len(s.Points) > 1:
+				errs = append(errs, fmt.Sprintf("Extra waypoint found in parking section %s.", s.Name))
 			}
 		case SurfaceRunway:
 			if len(s.Points) < 2 {
 				errs = append(errs, fmt.Sprintf("Runway %s does not have at least two waypoints defined.", s.Name))
 			}
 		case SurfaceHold:
-			if len(s.Points) != 1 {
+			switch {
+			case len(s.Points) == 0:
 				errs = append(errs, fmt.Sprintf("Hold %s has no waypoint defined.", s.Name))
+			case len(s.Points) > 1:
+				errs = append(errs, fmt.Sprintf("Extra waypoint found in hold section %s.", s.Name))
 			}
 		case SurfaceTaxiway:
 			if len(s.Points) < 2 {
@@ -255,15 +284,15 @@ func parseFloatField(line string) (float64, error) {
 	return strconv.ParseFloat(strings.TrimSpace(line[idx+1:]), 64)
 }
 
-// parseDisplacedThreshold matches "displaced threshold=a/b".
+// parseDisplacedThreshold matches TWRTrainer
+// ^displaced threshold=(\d+)/(\d+)$ (non-negative integer feet only).
 func parseDisplacedThreshold(line string) (float64, float64, bool) {
 	low := strings.ToLower(line)
 	const prefix = "displaced threshold="
 	if !strings.HasPrefix(low, prefix) {
 		return 0, 0, false
 	}
-	rest := strings.TrimSpace(line[len(prefix):])
-	// Allow original-case prefix length: find '=' then rest.
+	rest := ""
 	if i := strings.Index(line, "="); i >= 0 {
 		rest = strings.TrimSpace(line[i+1:])
 	}
@@ -271,15 +300,63 @@ func parseDisplacedThreshold(line string) (float64, float64, bool) {
 	if len(parts) != 2 {
 		return 0, 0, false
 	}
-	a, err1 := strconv.ParseFloat(strings.TrimSpace(parts[0]), 64)
-	b, err2 := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64)
-	if err1 != nil || err2 != nil {
+	aStr := strings.TrimSpace(parts[0])
+	bStr := strings.TrimSpace(parts[1])
+	if !isDigits(aStr) || !isDigits(bStr) {
 		return 0, 0, false
 	}
+	// isDigits guarantees ParseFloat succeeds for digit-only strings.
+	a, _ := strconv.ParseFloat(aStr, 64)
+	b, _ := strconv.ParseFloat(bStr, 64)
 	return a, b, true
 }
 
+// isDigits reports whether s is a non-empty sequence of ASCII digits [0-9].
+func isDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// isValidRegistration matches TWRTrainer registration=(\w)$ — single word character.
+func isValidRegistration(s string) bool {
+	return len(s) == 1 && isWordName(s)
+}
+
+// isValidAirlineList matches TWRTrainer jet/turboprop airline lists:
+// empty (unset) or one-or-more 2–3 character \w prefixes separated by commas
+// (trailing comma allowed).
+func isValidAirlineList(s string) bool {
+	if s == "" {
+		return true
+	}
+	parts := strings.Split(s, ",")
+	for i, p := range parts {
+		if p == "" {
+			// Only a trailing empty segment from a final comma is allowed.
+			if i == len(parts)-1 {
+				continue
+			}
+			return false
+		}
+		if len(p) < 2 || len(p) > 3 || !isWordName(p) {
+			return false
+		}
+	}
+	return true
+}
+
 // matchSection matches "[KIND name]" case-insensitively and returns the name.
+//
+// Intentional permissiveness: TWRTrainer section regexes use a single space
+// after the kind keyword; we use strings.Fields so multiple spaces still match.
+// Real airport samples use single spaces; multi-space is accepted for robustness.
 func matchSection(line, kind string) (name string, ok bool) {
 	if len(line) < 3 || line[0] != '[' || line[len(line)-1] != ']' {
 		return "", false
@@ -296,6 +373,7 @@ func matchSection(line, kind string) (name string, ok bool) {
 }
 
 // matchRunway matches [RUNWAY a/b] with TWRTrainer runway designators.
+// See matchSection for multi-space permissiveness.
 func matchRunway(line string) (a, b string, ok bool) {
 	if len(line) < 3 || line[0] != '[' || line[len(line)-1] != ']' {
 		return "", "", false
@@ -389,7 +467,11 @@ func isTaxiHoldName(s string) bool {
 	return true
 }
 
-// parsePoint matches ^(\-?\d+\.\d+) (\-?\d+\.\d+)$ — decimal point required.
+// parsePoint matches lat/lon decimal degrees with a required decimal point on each.
+//
+// Intentional permissiveness: TWRTrainer uses a single space between lat and lon
+// (^(-?\d+\.\d+) (-?\d+\.\d+)$); we use strings.Fields so multiple spaces still
+// match. Real airport samples use single spaces.
 func parsePoint(line string) (lat, lon float64, ok bool) {
 	parts := strings.Fields(line)
 	if len(parts) != 2 {
