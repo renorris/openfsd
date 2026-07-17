@@ -718,10 +718,14 @@ func TestE2E_Sweatbox_TaxiMotion(t *testing.T) {
 
 // TestE2E_Sweatbox_LateJoinATC: ATC joining after synthetics exist eventually sees @
 // (no historical #AP — same as human late-join semantics).
+//
+// Order matters for durability: register synthetic while paused, late ATC logs
+// on + geo, arm WaitFor for @, then taxi+unpause. Unpausing before the observer
+// is online burns the finite taxi broadcast window against dial ReadTimeout.
 func TestE2E_Sweatbox_LateJoinATC(t *testing.T) {
 	ts := server.StartTestServer(t)
 
-	// Existing synthetics first.
+	// Existing synthetics first (engine stays paused — no @ after initial register).
 	loadKBTVAirport(t, ts)
 	res := sweatboxCommand(t, ts, "add v s p @GA9")
 	if !res.OK {
@@ -734,44 +738,57 @@ func TestE2E_Sweatbox_LateJoinATC(t *testing.T) {
 	cs := st.Aircraft[0].Callsign
 	_ = waitOnlinePilot(t, ts, cs, sweatboxDefaultCID)
 
-	// Command taxi + unpause so subsequent ticks rebroadcast @ for late joiners.
-	res = sweatboxCommand(t, ts, cs+" taxi J 33")
-	if !res.OK {
-		t.Fatalf("taxi: %+v", res)
-	}
-	sweatboxUnpause(t, ts)
-
-	// Late ATC joins after #AP window.
+	// Late ATC joins after #AP window (synthetic already online).
 	atc := dial(t, ts)
 	const atcCS = "LATE_TWR"
 	loginATC(t, atc, atcCS, ts.ATCCID, ts.ATCPassword, protocol.NetworkRatingController1)
 	waitMOTD(t, atc, atcCS)
 	sendATCGeo(t, ts, atc, atcCS, protocol.NetworkRatingController1)
 
-	// Must eventually see @; must not require historical #AP (document: no #AP replay).
-	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+	// Arm collector before motion so every taxi tick @ is observed.
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
+	var wg sync.WaitGroup
+	wg.Add(1)
 	var sawAP, sawPos bool
-	for {
-		r, err := atc.Next(ctx)
-		if err != nil {
-			break
+	var collectErr error
+	go func() {
+		defer wg.Done()
+		for {
+			if sawPos {
+				return
+			}
+			r, err := atc.Next(ctx)
+			if err != nil {
+				collectErr = err
+				return
+			}
+			if r.Type == protocol.PacketTypeAddPilot && bytes.Contains(r.Raw, []byte(cs)) {
+				sawAP = true
+			}
+			if r.Type == protocol.PacketTypePilotPosition && bytes.Contains(r.Raw, []byte(cs)) {
+				sawPos = true
+				return
+			}
 		}
-		if r.Type == protocol.PacketTypeAddPilot && bytes.Contains(r.Raw, []byte(cs)) {
-			sawAP = true
-		}
-		if r.Type == protocol.PacketTypePilotPosition && bytes.Contains(r.Raw, []byte(cs)) {
-			sawPos = true
-			break
-		}
+	}()
+
+	// Now start motion so subsequent ticks rebroadcast @ for the late joiner.
+	res = sweatboxCommand(t, ts, cs+" taxi J 33")
+	if !res.OK {
+		cancel()
+		wg.Wait()
+		t.Fatalf("taxi: %+v", res)
 	}
+	sweatboxUnpause(t, ts)
+
+	wg.Wait()
 	if !sawPos {
-		t.Fatalf("late ATC never received @ for %s (sawAP=%v recv=%v)",
-			cs, sawAP, atc.Recorder().Received())
+		t.Fatalf("late ATC never received @ for %s: ap=%v err=%v (recv=%v)",
+			cs, sawAP, collectErr, atc.Recorder().Received())
 	}
-	// Historical #AP is not guaranteed; if it appeared it would be unexpected but not fatal.
-	// Document assertion: visibility is via subsequent @ only.
+	// Historical #AP is not required (no replay of add). Soft log only.
 	if sawAP {
-		t.Logf("note: late ATC also saw #AP for %s (not required; ticks may re-add only on new register)", cs)
+		t.Logf("note: late ATC also saw #AP for %s (not required)", cs)
 	}
 }
