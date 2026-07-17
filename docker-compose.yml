@@ -1,31 +1,25 @@
 services:
-  fsd:
-    image: ghcr.io/renorris/openfsd:fsd-latest
+  openfsd:
+    image: ghcr.io/renorris/openfsd:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
     restart: unless-stopped
-    container_name: openfsd_fsd
-    hostname: openfsd_fsd
-    expose:
-      - "13618/tcp" # Internal HTTP REST API service. The webserver talks to this in order to obtain FSD state info.
+    container_name: openfsd
+    hostname: openfsd
     ports:
-      - "6809:6809/tcp"
+      - "6809:6809/tcp"   # FSD protocol
+      - "8000:8000/tcp"   # Web UI + /api/v1
     environment:
       DATABASE_SOURCE_NAME: /db/openfsd.db?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)
-      DATABASE_AUTO_MIGRATE: true
+      DATABASE_AUTO_MIGRATE: "true"
+      # Colocated: web uses in-process FSD service HTTP (default 127.0.0.1:13618).
+      # FSD_HTTP_SERVICE_ADDRESS is only needed when running -web against a remote FSD.
     volumes:
       - sqlite:/db
-
-  fsdweb:
-    image: ghcr.io/renorris/openfsd:web-latest
-    restart: unless-stopped
-    container_name: openfsd_web
-    hostname: openfsd_web
-    ports:
-      - "8000:8000/tcp"
-    environment:
-      DATABASE_SOURCE_NAME: /db/openfsd.db?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)
-      FSD_HTTP_SERVICE_ADDRESS: "http://openfsd_fsd:13618"
-    volumes:
-      - sqlite:/db
+    # Default CMD runs both services. Examples:
+    #   command: ["/openfsd", "-fsd"]          # FSD only
+    #   command: ["/openfsd", "-web"]          # web only (set FSD_HTTP_SERVICE_ADDRESS)
 
 networks:
   openfsd:
