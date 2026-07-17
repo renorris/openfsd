@@ -24,6 +24,7 @@ var pageTemplateKeys = []string{
 	"dashboard",
 	"usereditor",
 	"configeditor",
+	"sweatbox",
 }
 
 // parsePageTemplates loads each page template once from the embed FS.

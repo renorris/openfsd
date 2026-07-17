@@ -1,0 +1,185 @@
+{{ define "title" }}Sweatbox{{ end }}
+
+{{ define "body" }}
+<main class="container mt-4" style="max-width: 960px">
+    <h1 class="h4 mb-3">Sweatbox instructor</h1>
+    <p class="text-muted small">
+        Server-rendered control plane for the integrated sweatbox simulator.
+        JavaScript is not required. Refresh the page to update aircraft state.
+    </p>
+
+    {{ if .FlashSuccess }}
+    <div class="alert alert-success" role="status">{{ .FlashSuccess }}</div>
+    {{ end }}
+    {{ if .FlashError }}
+    <div class="alert alert-danger" role="alert">{{ .FlashError }}</div>
+    {{ end }}
+
+    {{ if .Disabled }}
+    <div class="alert alert-warning" role="status">
+        <strong>Sweatbox disabled.</strong>
+        {{ .StatusMsg }}
+    </div>
+    {{ else if .Unavailable }}
+    <div class="alert alert-warning" role="status">
+        <strong>Unavailable.</strong>
+        {{ .StatusMsg }}
+    </div>
+    {{ else if .Available }}
+
+    <section class="mb-4" aria-labelledby="sweatbox-status-heading">
+        <h2 id="sweatbox-status-heading" class="h5">Status</h2>
+        <dl class="row mb-0 small">
+            <dt class="col-sm-3">Airport</dt>
+            <dd class="col-sm-9">{{ if .ICAO }}{{ .ICAO }}{{ else }}—{{ end }}</dd>
+            <dt class="col-sm-3">Paused</dt>
+            <dd class="col-sm-9">{{ if .Paused }}yes{{ else }}no{{ end }}</dd>
+            <dt class="col-sm-3">Elapsed</dt>
+            <dd class="col-sm-9">{{ .Elapsed }}</dd>
+            <dt class="col-sm-3">Arrivals / departures</dt>
+            <dd class="col-sm-9">{{ .ArrCount }} / {{ .DepCount }}</dd>
+        </dl>
+        {{ if .StatusMsg }}
+        <p class="text-muted small mt-2 mb-0">{{ .StatusMsg }}</p>
+        {{ end }}
+
+        <div class="d-flex flex-wrap gap-2 mt-3">
+            <form method="post" action="/sweatbox/pause" class="d-inline m-0">
+                <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
+                <button type="submit" class="btn btn-sm btn-outline-secondary"{{ if .Paused }} disabled{{ end }}>Pause</button>
+            </form>
+            <form method="post" action="/sweatbox/unpause" class="d-inline m-0">
+                <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
+                <button type="submit" class="btn btn-sm btn-outline-secondary"{{ if not .Paused }} disabled{{ end }}>Unpause</button>
+            </form>
+            <a class="btn btn-sm btn-outline-primary" href="/sweatbox">Refresh</a>
+        </div>
+    </section>
+
+    <section class="mb-4" aria-labelledby="sweatbox-aircraft-heading">
+        <h2 id="sweatbox-aircraft-heading" class="h5">Aircraft</h2>
+        {{ if .Aircraft }}
+        <div class="table-responsive">
+            <table class="table table-sm table-striped align-middle">
+                <thead>
+                <tr>
+                    <th scope="col">Callsign</th>
+                    <th scope="col">Type</th>
+                    <th scope="col">Rules</th>
+                    <th scope="col">Squawk</th>
+                    <th scope="col">Hdg</th>
+                    <th scope="col">Alt</th>
+                    <th scope="col">Spd</th>
+                    <th scope="col">Status</th>
+                    <th scope="col">Instruction</th>
+                    <th scope="col"><span class="visually-hidden">Actions</span></th>
+                </tr>
+                </thead>
+                <tbody>
+                {{ range .Aircraft }}
+                <tr>
+                    <td>{{ .Callsign }}</td>
+                    <td>{{ .Type }}</td>
+                    <td>{{ .Rules }}</td>
+                    <td>{{ .Squawk }}</td>
+                    <td>{{ .Heading }}</td>
+                    <td>{{ .Alt }}</td>
+                    <td>{{ .Speed }}</td>
+                    <td>{{ .Status }}</td>
+                    <td>{{ .Instruction }}</td>
+                    <td>
+                        <form method="post" action="/sweatbox/delete" class="d-inline m-0">
+                            <input type="hidden" name="csrf_token" value="{{ $.CSRFToken }}">
+                            <input type="hidden" name="callsign" value="{{ .Callsign }}">
+                            <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+                        </form>
+                    </td>
+                </tr>
+                {{ end }}
+                </tbody>
+            </table>
+        </div>
+        {{ else }}
+        <p class="text-muted small">No sweatbox aircraft. Load a scenario or use the command box (<code>add …</code>).</p>
+        {{ end }}
+
+        <form method="post" action="/sweatbox/delete-all" class="mt-2">
+            <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
+            <div class="form-check mb-2">
+                <input class="form-check-input" type="checkbox" name="confirm" value="on" id="confirm-delete-all" required>
+                <label class="form-check-label" for="confirm-delete-all">Confirm delete all aircraft</label>
+            </div>
+            <button type="submit" class="btn btn-sm btn-danger">Delete all</button>
+        </form>
+    </section>
+
+    <section class="mb-4" aria-labelledby="sweatbox-command-heading">
+        <h2 id="sweatbox-command-heading" class="h5">Command</h2>
+        <form method="post" action="/sweatbox/command">
+            <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
+            <div class="mb-2">
+                <label for="sbx-callsign" class="form-label">Selected callsign (optional)</label>
+                <input type="text" class="form-control form-control-sm" id="sbx-callsign" name="callsign"
+                       value="" autocomplete="off" spellcheck="false" placeholder="e.g. AAL123">
+                <div class="form-text">Used for aircraft-scoped verbs when the command line does not include a callsign.</div>
+            </div>
+            <div class="mb-2">
+                <label for="sbx-command" class="form-label">Command</label>
+                <input type="text" class="form-control" id="sbx-command" name="command" required
+                       value="{{ .Command }}" autocomplete="off" spellcheck="false"
+                       placeholder="add AAL1 B738 J I KBTV KBOS …  or  p / un / ops / del AAL1">
+            </div>
+            <button type="submit" class="btn btn-primary">Run command</button>
+        </form>
+    </section>
+
+    <div class="row g-3 mb-4">
+        <div class="col-md-6">
+            <section class="card h-100" aria-labelledby="sweatbox-airport-heading">
+                <div class="card-body">
+                    <h2 id="sweatbox-airport-heading" class="h5 card-title">Load airport (.apt)</h2>
+                    <form method="post" action="/sweatbox/airport" enctype="multipart/form-data">
+                        <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
+                        <div class="mb-2">
+                            <label for="sbx-apt-file" class="form-label">Upload file</label>
+                            <input type="file" class="form-control form-control-sm" id="sbx-apt-file" name="file" accept=".apt,text/plain">
+                        </div>
+                        <div class="mb-2">
+                            <label for="sbx-apt-text" class="form-label">Or paste .apt text</label>
+                            <textarea class="form-control form-control-sm" id="sbx-apt-text" name="apt_text" rows="6"
+                                      placeholder="icao=KBTV&#10;…">{{ .AptText }}</textarea>
+                        </div>
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="checkbox" name="replace" value="on" id="sbx-apt-replace">
+                            <label class="form-check-label" for="sbx-apt-replace">Replace existing airport (clears aircraft)</label>
+                        </div>
+                        <button type="submit" class="btn btn-outline-primary">Load airport</button>
+                    </form>
+                </div>
+            </section>
+        </div>
+        <div class="col-md-6">
+            <section class="card h-100" aria-labelledby="sweatbox-scenario-heading">
+                <div class="card-body">
+                    <h2 id="sweatbox-scenario-heading" class="h5 card-title">Load scenario (.air)</h2>
+                    <form method="post" action="/sweatbox/scenario" enctype="multipart/form-data">
+                        <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
+                        <div class="mb-2">
+                            <label for="sbx-air-file" class="form-label">Upload file</label>
+                            <input type="file" class="form-control form-control-sm" id="sbx-air-file" name="file" accept=".air,text/plain">
+                        </div>
+                        <div class="mb-2">
+                            <label for="sbx-air-text" class="form-label">Or paste .air text</label>
+                            <textarea class="form-control form-control-sm" id="sbx-air-text" name="air_text" rows="6"
+                                      placeholder="AAL123:B738/F:J:I:…">{{ .AirText }}</textarea>
+                        </div>
+                        <button type="submit" class="btn btn-outline-primary">Load scenario</button>
+                    </form>
+                </div>
+            </section>
+        </div>
+    </div>
+
+    {{ end }}
+</main>
+{{ end }}

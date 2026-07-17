@@ -115,4 +115,14 @@ func (s *Server) setupFrontendRoutes(parent *gin.RouterGroup) {
 	admin.POST("/configeditor", s.handleFrontendConfigUpdate)
 	admin.POST("/configeditor/reset-secret", s.handleFrontendConfigResetSecret)
 	admin.POST("/configeditor/create-token", s.handleFrontendConfigCreateToken)
+
+	// Sweatbox instructor UI: server-rendered forms; proxies FSD /sweatbox/* service HTTP.
+	admin.GET("/sweatbox", s.handleFrontendSweatbox)
+	admin.POST("/sweatbox/airport", s.handleFrontendSweatboxAirport)
+	admin.POST("/sweatbox/scenario", s.handleFrontendSweatboxScenario)
+	admin.POST("/sweatbox/command", s.handleFrontendSweatboxCommand)
+	admin.POST("/sweatbox/pause", s.handleFrontendSweatboxPause)
+	admin.POST("/sweatbox/unpause", s.handleFrontendSweatboxUnpause)
+	admin.POST("/sweatbox/delete", s.handleFrontendSweatboxDelete)
+	admin.POST("/sweatbox/delete-all", s.handleFrontendSweatboxDeleteAll)
 }

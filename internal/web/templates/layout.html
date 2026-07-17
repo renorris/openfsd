@@ -36,6 +36,7 @@
             {{ end }}
             {{ if .User.CanEditConfig }}
             <a class="btn btn-sm btn-outline-dark" href="/configeditor">Config</a>
+            <a class="btn btn-sm btn-outline-dark" href="/sweatbox">Sweatbox</a>
             {{ end }}
             <form method="post" action="/logout" class="d-inline m-0">
                 <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">

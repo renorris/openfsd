@@ -110,6 +110,45 @@ type configEditorPage struct {
 	TokenExpiry  string
 }
 
+// sweatboxAircraftRow is one aircraft line in the instructor table (no-JS).
+type sweatboxAircraftRow struct {
+	Callsign    string
+	Type        string
+	Rules       string
+	Squawk      string
+	Heading     string
+	Alt         string
+	Speed       string
+	Status      string
+	Instruction string
+}
+
+// sweatboxPage is the Administrator instructor MPA model.
+type sweatboxPage struct {
+	basePage
+	FlashSuccess string
+	FlashError   string
+
+	// Availability of the FSD sweatbox control plane.
+	Available   bool // state snapshot fetched OK
+	Disabled    bool // FSD returned 404 (SWEATBOX_ENABLED off / no routes)
+	Unavailable bool // FSD HTTP unreachable or unexpected error
+	StatusMsg   string
+
+	// Live snapshot fields
+	ICAO     string
+	Paused   bool
+	Elapsed  string
+	ArrCount int
+	DepCount int
+	Aircraft []sweatboxAircraftRow
+
+	// Sticky form values (re-render on soft failure)
+	Command string
+	AptText string
+	AirText string
+}
+
 func pageUserFromClaims(claims *auth.CustomClaims) *pageUser {
 	if claims == nil {
 		return nil
