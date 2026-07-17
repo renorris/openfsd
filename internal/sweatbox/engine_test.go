@@ -430,6 +430,14 @@ func TestCommand_AddValidation(t *testing.T) {
 		{"add i l j -270 10", false, "Missing parameters"}, // bearing needs alt
 		{"add i l j 33 abc", false, "Missing parameters"},
 		{"add i l j 33 10 EXTRA JUNK", false, "Missing parameters"},
+		// Non-finite geometry args (Issue 1)
+		{"add i l j 33 NaN", false, "Missing parameters"},
+		{"add i l j 33 +Inf", false, "Missing parameters"},
+		{"add i l j 33 -Inf", false, "Missing parameters"},
+		{"add v s p -270 10 NaN", false, "Missing parameters"},
+		{"add v s p -NaN 10 2500", false, "Missing parameters"},
+		{"add v s p -270 Inf 2500", false, "Missing parameters"},
+		{"add v s p -+Inf 10 2500", false, "Missing parameters"},
 	}
 	for _, tc := range cases {
 		r := e.CommandLine(tc.line)
@@ -466,6 +474,90 @@ func TestCommand_AddMaxAircraft(t *testing.T) {
 	r := e.CommandLine("add v s p @C")
 	if r.OK || !contains(r.Message, "Maximum") {
 		t.Fatalf("max: %+v", r)
+	}
+}
+
+// Issue 5: SetMaxAircraft reduced below current count keeps existing AC
+// and rejects further adds until under the new cap.
+func TestSetMaxAircraft_BelowCurrentCount(t *testing.T) {
+	e := loadKBTVEngine(t)
+	var css []string
+	for i := 0; i < 3; i++ {
+		r := e.CommandLine("add v s p @GA1")
+		if !r.OK {
+			t.Fatalf("add %d: %s", i, r.Message)
+		}
+		css = append(css, r.Added[0].Callsign)
+	}
+	if e.Count() != 3 {
+		t.Fatalf("count = %d", e.Count())
+	}
+	e.SetMaxAircraft(1)
+	if e.Settings().MaxAircraft != 1 {
+		t.Fatalf("max = %d", e.Settings().MaxAircraft)
+	}
+	if e.Count() != 3 {
+		t.Fatalf("existing aircraft must be kept: count=%d", e.Count())
+	}
+	r := e.CommandLine("add v s p @GA2")
+	if r.OK || !contains(r.Message, "Maximum") {
+		t.Fatalf("add while over cap: %+v", r)
+	}
+	// Free slots until under cap, then add succeeds.
+	if !e.Delete(css[0]) || !e.Delete(css[1]) {
+		t.Fatal("delete")
+	}
+	if e.Count() != 1 {
+		t.Fatalf("count after del = %d", e.Count())
+	}
+	r = e.CommandLine("add v s p @GA2")
+	if r.OK {
+		t.Fatal("still at cap (1); further add should fail")
+	}
+	e.Delete(css[2])
+	r = e.CommandLine("add v s p @GA2")
+	if !r.OK {
+		t.Fatalf("add under cap: %s", r.Message)
+	}
+	if e.Count() != 1 {
+		t.Fatalf("count = %d", e.Count())
+	}
+}
+
+func (e *Engine) mustGet(t *testing.T, cs string) AircraftSnapshot {
+	t.Helper()
+	ac, ok := e.Get(cs)
+	if !ok {
+		t.Fatalf("missing %s", cs)
+	}
+	return ac
+}
+
+func TestCommand_AddCombinedRunwayName(t *testing.T) {
+	// Issue 3: combined designator "33/15" should place on RwyA approach.
+	e := loadKBTVEngine(t)
+	r := e.CommandLine("add i l j 33/15 8")
+	if !r.OK {
+		t.Fatalf("add combined: %s", r.Message)
+	}
+	ac := r.Added[0]
+	if ac.Status != StatusOnApproach {
+		t.Errorf("status = %s", ac.Status)
+	}
+	if ac.LandingRunway != "33" {
+		t.Errorf("LandingRunway = %s, want 33 (RwyA)", ac.LandingRunway)
+	}
+	// Same geometry as end designator "33".
+	r2 := e.CommandLine("add i l j 33 8")
+	if !r2.OK {
+		t.Fatal(r2.Message)
+	}
+	ac2 := r2.Added[0]
+	if math.Abs(ac.Lat-ac2.Lat) > 1e-6 || math.Abs(ac.Lon-ac2.Lon) > 1e-6 {
+		t.Errorf("combined vs end mismatch: (%v,%v) vs (%v,%v)", ac.Lat, ac.Lon, ac2.Lat, ac2.Lon)
+	}
+	if math.Abs(ac.Heading-ac2.Heading) > 1e-6 {
+		t.Errorf("hdg %v vs %v", ac.Heading, ac2.Heading)
 	}
 }
 
@@ -511,6 +603,7 @@ func TestCommand_DelPosSqId(t *testing.T) {
 		t.Errorf("sqi: %+v", ac)
 	}
 
+	// ss must clear Ident after id/sqi (Issue 2).
 	r = e.Command(cs, "ss")
 	if !r.OK {
 		t.Fatal(r.Message)
@@ -518,6 +611,9 @@ func TestCommand_DelPosSqId(t *testing.T) {
 	ac, _ = e.Get(cs)
 	if ac.XPDRMode != XPDRModeStandby {
 		t.Errorf("mode = %s", ac.XPDRMode)
+	}
+	if ac.Ident {
+		t.Error("ss should clear Ident")
 	}
 	r = e.Command(cs, "sn")
 	if !r.OK {
@@ -528,10 +624,6 @@ func TestCommand_DelPosSqId(t *testing.T) {
 		t.Errorf("mode = %s", ac.XPDRMode)
 	}
 
-	// Clear ident then set via id.
-	e.mu.Lock()
-	e.aircraft[cs].Ident = false
-	e.mu.Unlock()
 	r = e.Command(cs, "id")
 	if !r.OK {
 		t.Fatal(r.Message)
@@ -539,6 +631,11 @@ func TestCommand_DelPosSqId(t *testing.T) {
 	ac, _ = e.Get(cs)
 	if !ac.Ident {
 		t.Error("ident not set")
+	}
+	// ss after id clears ident again
+	r = e.Command(cs, "ss")
+	if !r.OK || e.mustGet(t, cs).Ident {
+		t.Fatalf("ss after id: ok=%v ident=%v", r.OK, e.mustGet(t, cs).Ident)
 	}
 
 	// Bad squawk.

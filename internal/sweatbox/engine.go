@@ -460,13 +460,18 @@ func initialBearingDeg(lat1, lon1, lat2, lon2 float64) float64 {
 }
 
 // runwayThreshold returns the threshold point and landing heading for a runway
-// end designator (e.g. "19" or "33"). Landing heading is along the runway
-// centerline from the threshold toward the far end.
+// end designator (e.g. "19" or "33"). Combined names ("19/1") default to RwyA.
+// Landing heading is along the runway centerline from the threshold toward the
+// far end.
 func runwayThreshold(s *Surface, end string) (threshold Point, hdg float64, ok bool) {
 	if s == nil || s.Kind != SurfaceRunway || len(s.Points) < 2 {
 		return Point{}, 0, false
 	}
 	end = strings.ToUpper(strings.TrimSpace(end))
+	// Combined "A/B" (or full surface Name) → approach end A by default.
+	if end == s.Name || end == s.RwyA+"/"+s.RwyB {
+		end = s.RwyA
+	}
 	// Points are ordered RwyA → RwyB in .apt files.
 	var thr, far Point
 	var dispFt float64

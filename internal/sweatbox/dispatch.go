@@ -2,6 +2,7 @@ package sweatbox
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 )
@@ -129,6 +130,10 @@ func (e *Engine) cmdXPDRLocked(target, mode string) CommandResult {
 		return CommandResult{OK: false, Message: errMsg}
 	}
 	ac.XPDRMode = mode
+	// Standby and ident are contradictory on the wire; clear flash on ss.
+	if mode == XPDRModeStandby {
+		ac.Ident = false
+	}
 	return CommandResult{OK: true}
 }
 
@@ -177,19 +182,9 @@ func (e *Engine) cmdAddLocked(args []string) CommandResult {
 
 	switch rules {
 	case RulesVFR, RulesIFR, RulesDVFR, RulesSVFR:
-		// ok — also accept lowercase already uppercased
+		// ok (args already upper-cased)
 	default:
-		// accept single-letter v/i/d/s
-		if len(rules) == 1 {
-			switch rules {
-			case "V", "I", "D", "S":
-				// ok
-			default:
-				return CommandResult{OK: false, Message: addUsage}
-			}
-		} else {
-			return CommandResult{OK: false, Message: addUsage}
-		}
+		return CommandResult{OK: false, Message: addUsage}
 	}
 	switch weight {
 	case WeightSmall, WeightSmallP, WeightLarge, WeightHeavy:
@@ -231,14 +226,10 @@ func (e *Engine) cmdAddLocked(args []string) CommandResult {
 		if len(args) < 6 {
 			return CommandResult{OK: false, Message: addUsage}
 		}
-		bearingStr := loc[1:]
-		bearing, err := strconv.ParseFloat(bearingStr, 64)
-		if err != nil {
-			return CommandResult{OK: false, Message: addUsage}
-		}
-		distNM, err1 := strconv.ParseFloat(args[4], 64)
-		alt, err2 := strconv.ParseFloat(args[5], 64)
-		if err1 != nil || err2 != nil || distNM < 0 {
+		bearing, ok1 := parseFiniteFloat(loc[1:])
+		distNM, ok2 := parseFiniteFloat(args[4])
+		alt, ok3 := parseFiniteFloat(args[5])
+		if !ok1 || !ok2 || !ok3 || distNM < 0 {
 			return CommandResult{OK: false, Message: addUsage}
 		}
 		typeTok, errMsg := optionalType(args[6:])
@@ -254,8 +245,8 @@ func (e *Engine) cmdAddLocked(args []string) CommandResult {
 			return CommandResult{OK: false, Message: addUsage}
 		}
 		rwy := strings.ToUpper(loc)
-		distNM, err := strconv.ParseFloat(args[4], 64)
-		if err != nil || distNM < 0 {
+		distNM, ok := parseFiniteFloat(args[4])
+		if !ok || distNM < 0 {
 			return CommandResult{OK: false, Message: addUsage}
 		}
 		typeTok, errMsg := optionalType(args[5:])
@@ -284,6 +275,15 @@ func (e *Engine) cmdAddLocked(args []string) CommandResult {
 
 	e.aircraft[ac.Callsign] = ac
 	return CommandResult{OK: true, Added: []AircraftSnapshot{ac.snapshot()}}
+}
+
+// parseFiniteFloat parses a float that must be finite (rejects NaN/±Inf).
+func parseFiniteFloat(s string) (float64, bool) {
+	v, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
+	if err != nil || math.IsNaN(v) || math.IsInf(v, 0) {
+		return 0, false
+	}
+	return v, true
 }
 
 func optionalType(args []string) (string, string) {
@@ -367,6 +367,11 @@ func (e *Engine) placeOnApproachLocked(ac *SimAircraft, rwy string, distNM float
 	if !ok {
 		return "Runway/taxiway not found in airport file."
 	}
+	// Record the resolved end designator (combined "33/15" → RwyA).
+	landEnd := rwy
+	if rwy == s.Name || rwy == s.RwyA+"/"+s.RwyB {
+		landEnd = s.RwyA
+	}
 	// Place along final: opposite of landing heading from threshold.
 	finalBearing := normalizeHeading(hdg + 180)
 	lat, lon := destinationPoint(thr.Lat, thr.Lon, finalBearing, distNM*metersPerNM)
@@ -376,7 +381,7 @@ func (e *Engine) placeOnApproachLocked(ac *SimAircraft, rwy string, distNM float
 	ac.Heading = hdg
 	ac.Speed = defaultApproachSpeed(ac.Engine)
 	ac.Status = StatusOnApproach
-	ac.LandingRunway = rwy
-	ac.Instruction = "Approach runway " + rwy
+	ac.LandingRunway = landEnd
+	ac.Instruction = "Approach runway " + landEnd
 	return ""
 }
