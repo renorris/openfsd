@@ -8,6 +8,7 @@ on:
     - cron: "0 6 * * 1"
   workflow_dispatch:
 
+# GITHUB_TOKEN scopes for this workflow. The docker job elevates further.
 permissions:
   contents: read
 
@@ -29,10 +30,16 @@ jobs:
   docker:
     # Build and publish the single openfsd image on every push to main/dev.
     # PRs only build (no push) to verify the Dockerfile stays green.
+    #
+    # If push fails with permission_denied: write_package, grant this repo
+    # Write under the package's "Manage Actions access":
+    #   https://github.com/users/renorris/packages/container/openfsd/settings
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
+      # GHA cache (type=gha) needs actions write.
+      actions: write
     steps:
       - uses: actions/checkout@v4
 
@@ -45,7 +52,9 @@ jobs:
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          # Prefer optional PAT (write:packages) when an existing GHCR package
+          # lacks Actions write access; else job GITHUB_TOKEN (packages: write).
+          password: ${{ secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Docker metadata
         id: meta
@@ -72,6 +81,9 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # Ensure image is attributable to this repo (helps package linking).
+          provenance: false
+          sbom: false
 
   stress:
     # Optional: scheduled or manual. Never fails on absolute latency thresholds.

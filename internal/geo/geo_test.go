@@ -170,6 +170,20 @@ func TestQuantizeCenter(t *testing.T) {
 	}
 }
 
+func TestQuantizeDeg_NonPositiveQuantumPassthrough(t *testing.T) {
+	// quantumDeg <= 0 must return v unchanged (no divide-by-zero / Inf).
+	for _, q := range []float64{0, -0.001, -1} {
+		got := QuantizeDeg(12.345, q)
+		if got != 12.345 {
+			t.Fatalf("QuantizeDeg(12.345, %v) = %v, want 12.345", q, got)
+		}
+	}
+	// Positive quantum still quantizes.
+	if got := QuantizeDeg(1.2345, 0.01); !approxEqual(got, 1.23, 1e-12) {
+		t.Fatalf("QuantizeDeg positive quantum = %v, want 1.23", got)
+	}
+}
+
 func BenchmarkDistance(b *testing.B) {
 	const numPairs = 1024 * 64
 	lats1 := make([]float64, numPairs)
