@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/renorris/openfsd/internal/postoffice"
 	"github.com/renorris/openfsd/internal/session"
@@ -133,6 +134,144 @@ func TestBroadcastHelpers(t *testing.T) {
 	_ = drain(a)
 	_ = drain(b)
 	_ = drain(c)
+}
+
+// TestBroadcastRanged_SlowPeerDoesNotStall is the UX contract for position storms:
+// a recipient with a full outbound buffer must not block fan-out to healthy peers.
+func TestBroadcastRanged_SlowPeerDoesNotStall(t *testing.T) {
+	reg := postoffice.New()
+	src := session.New(context.Background(), nil, nil, session.LoginData{
+		Callsign: "SRC", ProtoRevision: 101,
+	})
+	slow := session.New(context.Background(), nil, nil, session.LoginData{
+		Callsign: "SLOW", ProtoRevision: 101,
+	})
+	fast := session.New(context.Background(), nil, nil, session.LoginData{
+		Callsign: "FAST", ProtoRevision: 101,
+	})
+	for _, s := range []*session.Session{src, slow, fast} {
+		if err := reg.Register(s); err != nil {
+			t.Fatal(err)
+		}
+		reg.UpdatePosition(s, [2]float64{34, -118}, 100*1852)
+	}
+	// Saturate slow peer (sendChanCap is 32).
+	for i := 0; i < 32; i++ {
+		if err := slow.Send("old"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	pkt := []byte("@S:SRC:1200:1:34.0:-118.0:5000:250:0:0\r\n")
+	done := make(chan struct{})
+	go func() {
+		broadcastRanged(reg, src, pkt)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("broadcastRanged blocked on slow peer — SendPosition contract broken")
+	}
+
+	fastOut := drain(fast)
+	if !hasOutboundContaining(fastOut, "@S:SRC") {
+		t.Fatalf("FAST peer missed position fan-out: %v", fastOut)
+	}
+	slowOut := drain(slow)
+	if !hasOutboundContaining(slowOut, "@S:SRC") {
+		t.Fatalf("SLOW peer should still get latest-wins position: %v", slowOut)
+	}
+}
+
+// TestBroadcastRangedVelocity_FiltersProto filters non-101 peers.
+func TestBroadcastRangedVelocity_FiltersProto(t *testing.T) {
+	reg := postoffice.New()
+	src := session.New(context.Background(), nil, nil, session.LoginData{
+		Callsign: "SRC", ProtoRevision: 101,
+	})
+	v101 := session.New(context.Background(), nil, nil, session.LoginData{
+		Callsign: "V101", ProtoRevision: 101,
+	})
+	v100 := session.New(context.Background(), nil, nil, session.LoginData{
+		Callsign: "V100", ProtoRevision: 100,
+	})
+	for _, s := range []*session.Session{src, v101, v100} {
+		if err := reg.Register(s); err != nil {
+			t.Fatal(err)
+		}
+		reg.UpdatePosition(s, [2]float64{34, -118}, 100*1852)
+	}
+
+	broadcastRangedVelocity(reg, src, []byte("^SRC:34:-118:0:0:0:0:0:0:0:0:0:0\r\n"))
+	if !hasOutboundContaining(drain(v101), "^SRC") {
+		t.Fatal("proto-101 peer should receive velocity position")
+	}
+	if hasOutboundContaining(drain(v100), "^SRC") {
+		t.Fatal("proto-100 peer must not receive velocity position")
+	}
+}
+
+func TestSplitFieldsN(t *testing.T) {
+	tests := []struct {
+		name string
+		pkt  string
+		n    int
+		ok   bool
+		want []string
+	}{
+		{
+			name: "full pilot position",
+			pkt:  "@S:N100:1200:1:34.0:-118.0:5000:250:4261294148:0\r\n",
+			n:    9,
+			ok:   true,
+			want: []string{"@S", "N100", "1200", "1", "34.0", "-118.0", "5000", "250", "4261294148"},
+		},
+		{
+			name: "no trailing CRLF",
+			pkt:  "a:b:c",
+			n:    3,
+			ok:   true,
+			want: []string{"a", "b", "c"},
+		},
+		{
+			name: "CR mid-packet ends body",
+			pkt:  "a:b:c\r\nextra",
+			n:    3,
+			ok:   true,
+			want: []string{"a", "b", "c"},
+		},
+		{
+			name: "too few fields",
+			pkt:  "a:b",
+			n:    3,
+			ok:   false,
+		},
+		{
+			name: "empty fields preserved",
+			pkt:  "a::c\r\n",
+			n:    3,
+			ok:   true,
+			want: []string{"a", "", "c"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dst := make([][]byte, tt.n)
+			ok := splitFieldsN([]byte(tt.pkt), dst)
+			if ok != tt.ok {
+				t.Fatalf("ok=%v want %v", ok, tt.ok)
+			}
+			if !tt.ok {
+				return
+			}
+			for i := 0; i < tt.n; i++ {
+				if string(dst[i]) != tt.want[i] {
+					t.Fatalf("field[%d]=%q want %q (all=%q)", i, dst[i], tt.want[i], dst)
+				}
+			}
+		})
+	}
 }
 
 func TestFlightplanBuilders(t *testing.T) {

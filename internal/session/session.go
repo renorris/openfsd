@@ -210,8 +210,14 @@ func (s *Session) Send(packet string) error {
 //  3. if still full, drop the new packet (prefer keeping queued traffic moving)
 //
 // Returns nil on drop (soft loss is acceptable for position streams). Returns
-// ctx error only when the session is shutting down.
+// ctx error when the session is shutting down (checked before enqueue so a
+// canceled session does not accept further position traffic).
 func (s *Session) SendPosition(packet string) error {
+	// Prefer a fast shutdown path so fan-out does not keep feeding dead peers.
+	if err := s.Ctx.Err(); err != nil {
+		return err
+	}
+
 	select {
 	case s.sendChan <- packet:
 		s.fireEnqueueObs()
@@ -225,6 +231,11 @@ func (s *Session) SendPosition(packet string) error {
 	select {
 	case <-s.sendChan:
 	default:
+	}
+
+	// Re-check after the drop window; session may have canceled mid-call.
+	if err := s.Ctx.Err(); err != nil {
+		return err
 	}
 
 	select {

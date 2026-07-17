@@ -9,10 +9,10 @@
 //   - Register: map lock → unlock, then optional tree lock → unlock
 //   - Release:  optional tree lock → unlock, then map lock → unlock
 //   - UpdatePosition: rewrites session coords outside locks; tree rewrite
-//     under tree lock only when the live set exceeds linearSearchThreshold
+//     under tree lock only when treeReady
 //   - Find / Send / Snapshot / All: map RLock only (or lock-free live snapshot)
-//   - Search: lock-free linear scan for N ≤ linearSearchThreshold; otherwise
-//     tree RLock only (callbacks run after unlock)
+//   - Search: lock-free linear scan unless treeReady; otherwise tree RLock
+//     only (callbacks run after unlock)
 //
 // # Session.Send rule
 //
@@ -43,12 +43,16 @@ var (
 	ErrCallsignDoesNotExist = errors.New("callsign does not exist")
 )
 
-// linearSearchThreshold is the live-set size at or below which Search and
-// UpdatePosition avoid the R-tree entirely. Concurrent position storms at
-// dense events (hundreds–low thousands) are dominated by tree RWMutex
-// convoy; an O(N) AABB scan over an atomic snapshot is lock-free and faster
-// under that load. Above the threshold the R-tree path is used.
-const linearSearchThreshold = 2048
+// defaultLinearSearchThreshold is the production live-set size at or below
+// which Search and UpdatePosition avoid the R-tree entirely. Concurrent
+// position storms at dense events (hundreds–low thousands) are dominated by
+// tree RWMutex convoy; an O(N) AABB scan over an atomic snapshot is lock-free
+// and faster under that load. Above the threshold the R-tree path is used.
+const defaultLinearSearchThreshold = 2048
+
+// linearSearchThreshold is the live-set size at or below which Search stays on
+// the lock-free linear path. Overridable in tests via setLinearSearchThreshold.
+var linearSearchThreshold = defaultLinearSearchThreshold
 
 // foundPool recycles recipient slices used by Search.
 var foundPool = sync.Pool{
@@ -85,6 +89,14 @@ type PostOffice struct {
 	// atcLive is an immutable snapshot of ATC sessions only (for ATC-only fan-out).
 	atcLive atomic.Pointer[[]*session.Session]
 
+	// treeReady is true only after a consistent R-tree has been built for the
+	// large-N regime. Search uses the tree exclusively when this is set; while
+	// false it falls back to the lock-free linear snapshot (always correct).
+	// This closes the race where liveLen has crossed the threshold but the
+	// tree is still empty/partial during rebuild, and prevents concurrent
+	// Register from Inserting into a tree that rebuildTree would overwrite.
+	treeReady atomic.Bool
+
 	tree     rtree.RTreeG[*session.Session] // Geospatial rtree (large-N path)
 	treeLock sync.RWMutex
 }
@@ -98,21 +110,6 @@ func New() *PostOffice {
 	p.live.Store(&empty)
 	p.atcLive.Store(&empty)
 	return p
-}
-
-// rebuildSnapshotsLocked rebuilds live/atc snapshots from the map.
-// Prefer snapshotAppendLocked / snapshotRemoveLocked on the hot Register/Release paths.
-func (p *PostOffice) rebuildSnapshotsLocked() {
-	all := make([]*session.Session, 0, len(p.clientMap))
-	atc := make([]*session.Session, 0, 8)
-	for _, s := range p.clientMap {
-		all = append(all, s)
-		if s.IsAtc {
-			atc = append(atc, s)
-		}
-	}
-	p.live.Store(&all)
-	p.atcLive.Store(&atc)
 }
 
 // snapshotAppendLocked COW-appends s to live (and atcLive if ATC). Caller holds map lock.
@@ -201,51 +198,56 @@ func (p *PostOffice) Register(s *session.Session) error {
 	p.clientMap[s.Callsign] = s
 	p.snapshotAppendLocked(s)
 	n := len(p.clientMap)
-	// Copy live snapshot for possible full tree rebuild after unlock.
-	var all []*session.Session
-	if n == linearSearchThreshold+1 {
+	p.clientMapLock.Unlock()
+
+	if n <= linearSearchThreshold {
+		return nil
+	}
+
+	// Large-N: serialize all tree mutations under treeLock so a threshold-
+	// crossing rebuild cannot race with concurrent Insert/Delete.
+	p.treeLock.Lock()
+	defer p.treeLock.Unlock()
+
+	if !p.treeReady.Load() {
+		// First large-N registration (or recovery after dropping below the
+		// threshold): rebuild from the current live snapshot so concurrent
+		// Registers that finished the map phase before we took treeLock are
+		// included exactly once.
 		live := p.live.Load()
+		var all []*session.Session
 		if live != nil {
 			all = append([]*session.Session(nil), (*live)...)
 		}
-	}
-	p.clientMapLock.Unlock()
-
-	if n < linearSearchThreshold+1 {
-		return nil
-	}
-	if n == linearSearchThreshold+1 {
-		// Crossed into large-N mode: build tree from the full set.
-		p.rebuildTree(all)
+		p.rebuildTreeLocked(all)
+		p.treeReady.Store(true)
 		return nil
 	}
 
-	// Already in large-N mode: insert this session only.
+	// Tree is already authoritative. Upsert this session (Delete+Insert) so a
+	// concurrent rebuild that already included us cannot leave a duplicate.
 	clientMin, clientMax := indexBox(s.LatLon(), s.VisRange.Load())
-	p.treeLock.Lock()
+	p.tree.Delete(clientMin, clientMax, s)
 	p.tree.Insert(clientMin, clientMax, s)
-	p.treeLock.Unlock()
 	return nil
 }
 
-// rebuildTree replaces the R-tree with a full rebuild (caller not holding locks).
-func (p *PostOffice) rebuildTree(all []*session.Session) {
+// rebuildTreeLocked replaces the R-tree with a full rebuild.
+// Caller must hold treeLock.
+func (p *PostOffice) rebuildTreeLocked(all []*session.Session) {
 	var fresh rtree.RTreeG[*session.Session]
 	for _, s := range all {
 		min, max := indexBox(s.LatLon(), s.VisRange.Load())
 		fresh.Insert(min, max, s)
 	}
-	p.treeLock.Lock()
 	p.tree = fresh
-	p.treeLock.Unlock()
 }
 
 // Release removes a Session from the registry.
 //
 // Lock order: tree then map (separate critical sections).
 func (p *PostOffice) Release(s *session.Session) {
-	nBefore := p.liveLen()
-	if nBefore > linearSearchThreshold {
+	if p.treeReady.Load() {
 		clientMin, clientMax := indexBox(s.LatLon(), s.VisRange.Load())
 		p.treeLock.Lock()
 		p.tree.Delete(clientMin, clientMax, s)
@@ -255,13 +257,19 @@ func (p *PostOffice) Release(s *session.Session) {
 	p.clientMapLock.Lock()
 	delete(p.clientMap, s.Callsign)
 	p.snapshotRemoveLocked(s)
+	n := len(p.clientMap)
 	p.clientMapLock.Unlock()
+
+	// Drop back to lock-free linear Search once at or below the threshold.
+	// The tree may retain stale nodes; they are ignored while treeReady is false.
+	if n <= linearSearchThreshold {
+		p.treeReady.Store(false)
+	}
 }
 
 // UpdatePosition updates the geospatial position of a Session.
 // The session's lat/lon and visRange are rewritten (atomics / SetLatLon).
-// Tree rewrites are skipped entirely while the live set is small enough for
-// lock-free linear Search.
+// Tree rewrites run only while treeReady (large-N mode with a consistent tree).
 func (p *PostOffice) UpdatePosition(s *session.Session, newCenter [2]float64, newVisRange float64) {
 	oldCenter := s.LatLon()
 	oldRange := s.VisRange.Load()
@@ -271,10 +279,11 @@ func (p *PostOffice) UpdatePosition(s *session.Session, newCenter [2]float64, ne
 	s.SetLatLon(newCenter[0], newCenter[1])
 	s.VisRange.Store(newVisRange)
 
-	// Large-N only: avoid redundant tree rewrites when quantized box is unchanged.
-	if p.liveLen() <= linearSearchThreshold {
+	// Linear / transitional mode: coords are authoritative; Search does not use the tree.
+	if !p.treeReady.Load() {
 		return
 	}
+	// Avoid redundant tree rewrites when quantized box is unchanged.
 	if oldMin == newMin && oldMax == newMax {
 		return
 	}
@@ -301,10 +310,10 @@ func (p *PostOffice) Search(s *session.Session, callback func(recipient *session
 	foundPtr := acquireFound()
 	defer releaseFound(foundPtr)
 
-	if p.liveLen() <= linearSearchThreshold {
-		p.searchLinear(s, foundPtr)
-	} else {
+	if p.treeReady.Load() {
 		p.searchTree(s, foundPtr)
+	} else {
+		p.searchLinear(s, foundPtr)
 	}
 
 	// Closest-velocity and callbacks outside any postoffice lock.
@@ -339,9 +348,7 @@ func (p *PostOffice) SearchATC(s *session.Session, callback func(recipient *sess
 	foundPtr := acquireFound()
 	defer releaseFound(foundPtr)
 
-	if p.liveLen() <= linearSearchThreshold {
-		p.searchLinearATC(s, foundPtr)
-	} else {
+	if p.treeReady.Load() {
 		p.searchTree(s, foundPtr)
 		// Filter to ATC only (tree path does not separate ATC).
 		dst := (*foundPtr)[:0]
@@ -351,6 +358,8 @@ func (p *PostOffice) SearchATC(s *session.Session, callback func(recipient *sess
 			}
 		}
 		*foundPtr = dst
+	} else {
+		p.searchLinearATC(s, foundPtr)
 	}
 
 	for _, recipient := range *foundPtr {

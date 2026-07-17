@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -144,5 +145,114 @@ func TestSendPosition_LatestWinsWhenFull(t *testing.T) {
 	}
 	if !sawFresh {
 		t.Fatal("expected fresh position to be enqueued after latest-wins drop")
+	}
+}
+
+func TestSendPosition_EmptyBuffer(t *testing.T) {
+	s := New(context.Background(), nil, nil, LoginData{Callsign: "N1"})
+	if err := s.SendPosition("p1\r\n"); err != nil {
+		t.Fatalf("SendPosition: %v", err)
+	}
+	pkt, ok := s.DequeueOutbound()
+	if !ok || pkt != "p1\r\n" {
+		t.Fatalf("DequeueOutbound = (%q, %v)", pkt, ok)
+	}
+}
+
+func TestSendPosition_CancelReturnsError(t *testing.T) {
+	s := New(context.Background(), nil, nil, LoginData{Callsign: "N1"})
+	s.Cancel()
+	err := s.SendPosition("x\r\n")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("SendPosition after cancel: %v, want context.Canceled", err)
+	}
+}
+
+func TestSendPosition_SuccessiveLatestWins(t *testing.T) {
+	s := New(context.Background(), nil, nil, LoginData{Callsign: "N1"})
+	// Fill with padding.
+	for i := 0; i < sendChanCap; i++ {
+		if err := s.Send("pad"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Multiple position updates while full: each drops oldest and enqueues.
+	for i := 0; i < 5; i++ {
+		pkt := "pos" + string(rune('A'+i)) + "\r\n"
+		if err := s.SendPosition(pkt); err != nil {
+			t.Fatalf("SendPosition #%d: %v", i, err)
+		}
+	}
+	// The most recent position must be present after drain.
+	var last string
+	var sawE bool
+	for {
+		pkt, ok := s.DequeueOutbound()
+		if !ok {
+			break
+		}
+		last = pkt
+		if pkt == "posE\r\n" {
+			sawE = true
+		}
+	}
+	if !sawE {
+		t.Fatalf("expected final position posE in queue; last=%q", last)
+	}
+}
+
+func TestSendPosition_ConcurrentProducers(t *testing.T) {
+	// Concurrent SendPosition must not block, panic, or leave the session unusable.
+	s := New(context.Background(), nil, nil, LoginData{Callsign: "N1"})
+	const producers = 16
+	const per = 64
+	var wg sync.WaitGroup
+	for p := 0; p < producers; p++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			for i := 0; i < per; i++ {
+				_ = s.SendPosition("x\r\n")
+			}
+		}(p)
+	}
+	wg.Wait()
+
+	// Session still accepts traffic after the storm.
+	if err := s.SendPosition("final\r\n"); err != nil {
+		t.Fatalf("post-storm SendPosition: %v", err)
+	}
+	// Drain whatever remains; must not hang.
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case <-deadline:
+			t.Fatal("drain hung")
+		default:
+		}
+		if _, ok := s.DequeueOutbound(); !ok {
+			break
+		}
+	}
+}
+
+func TestSendPosition_DoesNotBlockWhenFull(t *testing.T) {
+	s := New(context.Background(), nil, nil, LoginData{Callsign: "N1"})
+	for i := 0; i < sendChanCap; i++ {
+		if err := s.Send("old"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- s.SendPosition("fresh\r\n")
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("SendPosition: %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("SendPosition blocked on full channel")
 	}
 }

@@ -64,8 +64,9 @@ func BenchmarkBroadcastRanged(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				src := clients[i%n]
+				// Match production broadcastRanged: non-blocking SendPosition.
 				p.Search(src, func(recipient *session.Session) bool {
-					_ = recipient.Send(pkt)
+					_ = recipient.SendPosition(pkt)
 					// Keep channel from filling (buffer 32).
 					_, _ = recipient.DequeueOutbound()
 					return true
