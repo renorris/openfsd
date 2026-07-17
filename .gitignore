@@ -1,9 +1,15 @@
 .DS_Store
 .idea
 .vscode
-*.db
 **tmp**
 build-and-push.sh
+
+# Local SQLite databases and WAL/SHM sidecars (never commit operator data)
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
 
 # Local worklogs / personal trackers (not committed)
 *.local.md

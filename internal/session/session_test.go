@@ -118,3 +118,31 @@ func TestSend_UnblockedByCancel(t *testing.T) {
 		t.Fatal("Send did not unblock after Cancel")
 	}
 }
+
+func TestSendPosition_LatestWinsWhenFull(t *testing.T) {
+	s := New(context.Background(), nil, nil, LoginData{Callsign: "N1"})
+	// Fill the buffer with ordinary sends.
+	for i := 0; i < sendChanCap; i++ {
+		if err := s.Send("old"); err != nil {
+			t.Fatalf("fill: %v", err)
+		}
+	}
+	// Must not block: drops oldest and enqueues fresh position.
+	if err := s.SendPosition("fresh\r\n"); err != nil {
+		t.Fatalf("SendPosition: %v", err)
+	}
+	// Drain: first may be "old" or after drop; last successful position should appear.
+	var sawFresh bool
+	for {
+		pkt, ok := s.DequeueOutbound()
+		if !ok {
+			break
+		}
+		if pkt == "fresh\r\n" {
+			sawFresh = true
+		}
+	}
+	if !sawFresh {
+		t.Fatal("expected fresh position to be enqueued after latest-wins drop")
+	}
+}

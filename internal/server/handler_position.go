@@ -46,34 +46,48 @@ func (s *Server) handleATCPosition(client *session.Session, packet []byte) {
 	client.LastUpdated.Store(s.clock.Now())
 }
 
-// handlePilotPosition handles logic for 0.2hz `@` pilot position updates
+// handlePilotPosition handles logic for 0.2hz `@` pilot position updates.
+//
+// Wire format: @MODE:CALLSIGN:XPDR:RATING:LAT:LON:ALT:GS:PBH:CORR...
+// Fields are scanned once (amortized) instead of repeated getField walks.
 func (s *Server) handlePilotPosition(client *session.Session, packet []byte) {
-	lat, lon, ok := parseLatLon(packet, 4, 5)
-	if !ok {
+	// Need fields 2,4,5,6,7,8 — walk once up to index 8.
+	var fields [9][]byte
+	if !splitFieldsN(packet, fields[:]) {
+		client.SendError(SyntaxError, "Invalid position packet")
+		return
+	}
+
+	lat, err := strconv.ParseFloat(string(fields[4]), 64)
+	if err != nil {
+		client.SendError(SyntaxError, "Invalid latitude/longitude")
+		return
+	}
+	lon, err := strconv.ParseFloat(string(fields[5]), 64)
+	if err != nil {
 		client.SendError(SyntaxError, "Invalid latitude/longitude")
 		return
 	}
 
 	const pilotVisRange = 50.0 * 1852.0 // 50 nautical miles
 
-	// Update registry position
+	// Update registry position then fan-out (hot path).
 	s.registry.UpdatePosition(client, [2]float64{lat, lon}, pilotVisRange)
-
-	// Broadcast position update
 	broadcastRanged(s.registry, client, packet)
 
-	// Update state
-	client.Transponder.Store(string(getField(packet, 2)))
+	// Update state from the same field split.
+	client.Transponder.Store(string(fields[2]))
 
-	groundspeed, _ := strconv.Atoi(string(getField(packet, 7)))
-	client.Groundspeed.Store(int32(groundspeed))
-
-	altitude, _ := strconv.Atoi(string(getField(packet, 6)))
-	client.Altitude.Store(int32(altitude))
-
-	pbhUint, _ := strconv.ParseUint(string(getField(packet, 8)), 10, 32)
-	_, _, heading := pitchBankHeading(uint32(pbhUint))
-	client.Heading.Store(int32(heading))
+	if groundspeed, err := strconv.Atoi(string(fields[7])); err == nil {
+		client.Groundspeed.Store(int32(groundspeed))
+	}
+	if altitude, err := strconv.Atoi(string(fields[6])); err == nil {
+		client.Altitude.Store(int32(altitude))
+	}
+	if pbhUint, err := strconv.ParseUint(string(fields[8]), 10, 32); err == nil {
+		_, _, heading := pitchBankHeading(uint32(pbhUint))
+		client.Heading.Store(int32(heading))
+	}
 
 	client.LastUpdated.Store(s.clock.Now())
 
@@ -97,4 +111,39 @@ func (s *Server) handlePilotPosition(client *session.Session, packet []byte) {
 func (s *Server) handleFastPilotPosition(client *session.Session, packet []byte) {
 	// Broadcast position update
 	broadcastRangedVelocity(s.registry, client, packet)
+}
+
+// splitFieldsN fills dst[i] with field i of a colon-delimited FSD packet (without
+// requiring a trailing colon after the last needed field). Returns false if the
+// packet has fewer than len(dst) fields.
+func splitFieldsN(packet []byte, dst [][]byte) bool {
+	start := 0
+	field := 0
+	for i := 0; i < len(packet) && field < len(dst); i++ {
+		c := packet[i]
+		if c == ':' {
+			dst[field] = packet[start:i]
+			field++
+			start = i + 1
+			continue
+		}
+		// Treat CR/LF as end of packet body.
+		if c == '\r' || c == '\n' {
+			if field < len(dst) {
+				dst[field] = packet[start:i]
+				field++
+			}
+			return field >= len(dst)
+		}
+	}
+	if field < len(dst) && start <= len(packet) {
+		// Remainder after last colon (or whole packet if no colon).
+		end := len(packet)
+		for end > start && (packet[end-1] == '\r' || packet[end-1] == '\n') {
+			end--
+		}
+		dst[field] = packet[start:end]
+		field++
+	}
+	return field >= len(dst)
 }

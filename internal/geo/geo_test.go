@@ -139,6 +139,37 @@ func TestEarthRadius(t *testing.T) {
 	}
 }
 
+func TestDistanceSq_ApproxMatchesHaversineLocally(t *testing.T) {
+	// Within ~10 km, equirectangular should be within a few meters of haversine.
+	lat1, lon1 := 34.0, -118.0
+	lat2, lon2 := 34.05, -118.04
+	hav := Distance(lat1, lon1, lat2, lon2)
+	approx := ApproxDistance(lat1, lon1, lat2, lon2)
+	if !approxEqual(hav, approx, 5.0) {
+		t.Fatalf("local approx %v vs haversine %v", approx, hav)
+	}
+	if DistanceSq(lat1, lon1, lat2, lon2) <= 0 {
+		t.Fatal("DistanceSq should be positive")
+	}
+}
+
+func TestAABBOverlap(t *testing.T) {
+	if !AABBOverlap([2]float64{0, 0}, [2]float64{1, 1}, [2]float64{0.5, 0.5}, [2]float64{2, 2}) {
+		t.Fatal("expected overlap")
+	}
+	if AABBOverlap([2]float64{0, 0}, [2]float64{1, 1}, [2]float64{2, 2}, [2]float64{3, 3}) {
+		t.Fatal("expected no overlap")
+	}
+}
+
+func TestQuantizeCenter(t *testing.T) {
+	q := QuantizeCenter([2]float64{34.0004, -118.0006}, 0.001)
+	if q[0] != 34.0 || q[1] != -118.001 {
+		// -118.0006 / 0.001 = -118000.6 → round → -118001 → *0.001 = -118.001
+		t.Fatalf("QuantizeCenter = %v", q)
+	}
+}
+
 func BenchmarkDistance(b *testing.B) {
 	const numPairs = 1024 * 64
 	lats1 := make([]float64, numPairs)
@@ -174,5 +205,12 @@ func BenchmarkBoundingBox(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		c := centers[i%len(centers)]
 		_, _ = BoundingBox(c, 100000)
+	}
+}
+
+func BenchmarkDistanceSq(b *testing.B) {
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = DistanceSq(34.0, -118.0, 34.1, -118.1)
 	}
 }

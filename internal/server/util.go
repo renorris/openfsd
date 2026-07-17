@@ -217,11 +217,18 @@ func forwardClientQuery(reg Registry, client *session.Session, packet []byte) {
 	sendDirectOrErr(reg, client, recipient, packet)
 }
 
-// broadcastRanged broadcasts a packet to all clients in range
+// atcRangeSearcher is an optional Registry extension for ATC-only ranged fan-out.
+type atcRangeSearcher interface {
+	SearchATC(s *session.Session, fn func(*session.Session) bool)
+}
+
+// broadcastRanged broadcasts a packet to all clients in range.
+// Uses SendPosition (non-blocking, latest-wins) so a slow peer cannot stall
+// the sender's position path under dense fan-out.
 func broadcastRanged(reg Registry, client *session.Session, packet []byte) {
 	packetStr := string(packet)
 	reg.Search(client, func(recipient *session.Session) bool {
-		recipient.Send(packetStr)
+		_ = recipient.SendPosition(packetStr)
 		return true
 	})
 }
@@ -234,7 +241,7 @@ func broadcastRangedVelocity(reg Registry, client *session.Session, packet []byt
 		if recipient.ProtoRevision != 101 {
 			return true
 		}
-		recipient.Send(packetStr)
+		_ = recipient.SendPosition(packetStr)
 		return true
 	})
 }
@@ -242,13 +249,21 @@ func broadcastRangedVelocity(reg Registry, client *session.Session, packet []byt
 // broadcastRangedAtcOnly broadcasts a packet to all ATC clients in range
 func broadcastRangedAtcOnly(reg Registry, client *session.Session, packet []byte) {
 	packetStr := string(packet)
-	reg.Search(client, func(recipient *session.Session) bool {
+	fn := func(recipient *session.Session) bool {
 		if !recipient.IsAtc {
 			return true
 		}
-		recipient.Send(packetStr)
+		_ = recipient.Send(packetStr)
 		return true
-	})
+	}
+	if as, ok := reg.(atcRangeSearcher); ok {
+		as.SearchATC(client, func(recipient *session.Session) bool {
+			_ = recipient.Send(packetStr)
+			return true
+		})
+		return
+	}
+	reg.Search(client, fn)
 }
 
 // broadcastAll broadcasts a packet to the entire server

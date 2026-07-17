@@ -9,6 +9,7 @@ import (
 	"context"
 	"net"
 	"time"
+	"unsafe"
 
 	"github.com/renorris/openfsd/pkg/protocol"
 	"go.uber.org/atomic"
@@ -129,6 +130,10 @@ type Session struct {
 // under lock.
 type SendEnqueueObserver func(callsign string, enqueuedAt time.Time, queueDepth int)
 
+// sendChanCap is the outbound buffer depth. Position storms use SendPosition
+// (latest-wins) so a slow peer cannot stall the broadcaster.
+const sendChanCap = 32
+
 // New constructs a Session with a cancellable child context and outbound buffer.
 // conn may be nil in unit tests that only exercise Send/state.
 func New(ctx context.Context, conn net.Conn, scanner *bufio.Scanner, data LoginData) *Session {
@@ -138,7 +143,7 @@ func New(ctx context.Context, conn net.Conn, scanner *bufio.Scanner, data LoginD
 		Scanner:   scanner,
 		Ctx:       sessionCtx,
 		Cancel:    cancel,
-		sendChan:  make(chan string, 32),
+		sendChan:  make(chan string, sendChanCap),
 		LoginData: data,
 	}
 	s.SetLatLon(0, 0)
@@ -160,13 +165,22 @@ func (s *Session) SenderWorker() {
 			if s.Conn == nil {
 				continue
 			}
-			if _, err := s.Conn.Write([]byte(packet)); err != nil {
+			// string → []byte without allocation (packet is not mutated).
+			if _, err := s.Conn.Write(unsafeStringBytes(packet)); err != nil {
 				return
 			}
 		case <-s.Ctx.Done():
 			return
 		}
 	}
+}
+
+// unsafeStringBytes returns a []byte view of s. The slice must not be mutated.
+func unsafeStringBytes(s string) []byte {
+	if len(s) == 0 {
+		return nil
+	}
+	return unsafe.Slice(unsafe.StringData(s), len(s))
 }
 
 // SendError enqueues an FSD $ER packet via the outbound send channel.
@@ -180,13 +194,55 @@ func (s *Session) SendError(code int, message string) error {
 func (s *Session) Send(packet string) error {
 	select {
 	case s.sendChan <- packet:
-		if obs := s.sendEnqueueObs; obs != nil {
-			// queueDepth is approximate (len after enqueue); safe for stress only.
-			obs(s.Callsign, time.Now(), len(s.sendChan))
-		}
+		s.fireEnqueueObs()
 		return nil
 	case <-s.Ctx.Done():
 		return s.Ctx.Err()
+	}
+}
+
+// SendPosition enqueues a high-frequency position (or similar telemetry) packet
+// without blocking the broadcaster when the peer is slow.
+//
+// Latest-wins policy when the buffer is full:
+//  1. try non-blocking send
+//  2. if full, drop one oldest packet and retry once
+//  3. if still full, drop the new packet (prefer keeping queued traffic moving)
+//
+// Returns nil on drop (soft loss is acceptable for position streams). Returns
+// ctx error only when the session is shutting down.
+func (s *Session) SendPosition(packet string) error {
+	select {
+	case s.sendChan <- packet:
+		s.fireEnqueueObs()
+		return nil
+	case <-s.Ctx.Done():
+		return s.Ctx.Err()
+	default:
+	}
+
+	// Drop oldest to make room for the freshest position.
+	select {
+	case <-s.sendChan:
+	default:
+	}
+
+	select {
+	case s.sendChan <- packet:
+		s.fireEnqueueObs()
+		return nil
+	case <-s.Ctx.Done():
+		return s.Ctx.Err()
+	default:
+		// Still full (concurrent producers); drop this update.
+		return nil
+	}
+}
+
+func (s *Session) fireEnqueueObs() {
+	if obs := s.sendEnqueueObs; obs != nil {
+		// queueDepth is approximate (len after enqueue); safe for stress only.
+		obs(s.Callsign, time.Now(), len(s.sendChan))
 	}
 }
 

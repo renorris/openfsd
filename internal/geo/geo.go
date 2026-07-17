@@ -7,6 +7,10 @@ import "math"
 // EarthRadius is the approximate mean radius of Earth in meters.
 const EarthRadius = 6371000.0
 
+// MetersPerDegreeLat is the equirectangular meters-per-degree of latitude
+// at the mean Earth radius (πR/180).
+const MetersPerDegreeLat = (math.Pi * EarthRadius) / 180
+
 const degToRad = math.Pi / 180
 
 // Distance returns the great-circle distance in meters between two points
@@ -31,6 +35,24 @@ func Distance(lat1, lon1, lat2, lon2 float64) float64 {
 	return EarthRadius * c
 }
 
+// DistanceSq returns the squared equirectangular distance in meters² between
+// two points (degrees). Prefer this over Distance when only comparing or
+// thresholding ranges (avoids sqrt/trig of haversine). Accurate enough for
+// local FSD visibility and send-fast hysteresis (tens of NM).
+//
+// The projection is centered on lat1 (same convention as BoundingBox).
+func DistanceSq(lat1, lon1, lat2, lon2 float64) float64 {
+	dLat := (lat2 - lat1) * MetersPerDegreeLat
+	cosLat := math.Cos(lat1 * degToRad)
+	dLon := (lon2 - lon1) * MetersPerDegreeLat * cosLat
+	return dLat*dLat + dLon*dLon
+}
+
+// ApproxDistance returns equirectangular distance in meters (sqrt of DistanceSq).
+func ApproxDistance(lat1, lon1, lat2, lon2 float64) float64 {
+	return math.Sqrt(DistanceSq(lat1, lon1, lat2, lon2))
+}
+
 // BoundingBox returns an axis-aligned lat/lon bounding box (degrees) around
 // center for the given radius in meters. center is [lat, lon] in degrees;
 // radiusM is meters.
@@ -43,9 +65,8 @@ func Distance(lat1, lon1, lat2, lon2 float64) float64 {
 // filter only; this API intentionally does not clamp latitude or cap deltaLon.
 func BoundingBox(center [2]float64, radiusM float64) (min, max [2]float64) {
 	latRad := center[0] * degToRad
-	const metersPerDegreeLat = (math.Pi * EarthRadius) / 180
-	deltaLat := radiusM / metersPerDegreeLat
-	metersPerDegreeLon := metersPerDegreeLat * math.Cos(latRad)
+	deltaLat := radiusM / MetersPerDegreeLat
+	metersPerDegreeLon := MetersPerDegreeLat * math.Cos(latRad)
 	deltaLon := radiusM / metersPerDegreeLon
 
 	minLat := center[0] - deltaLat
@@ -56,4 +77,30 @@ func BoundingBox(center [2]float64, radiusM float64) (min, max [2]float64) {
 	min = [2]float64{minLat, minLon}
 	max = [2]float64{maxLat, maxLon}
 	return min, max
+}
+
+// AABBOverlap reports whether two axis-aligned boxes [min,max] inclusive overlap.
+func AABBOverlap(minA, maxA, minB, maxB [2]float64) bool {
+	return minA[0] <= maxB[0] && maxA[0] >= minB[0] &&
+		minA[1] <= maxB[1] && maxA[1] >= minB[1]
+}
+
+// QuantizeDeg quantizes a lat/lon degree value to a fixed grid.
+// quantumDeg is the cell size in degrees (e.g. 0.001° ≈ 111 m of latitude).
+func QuantizeDeg(v, quantumDeg float64) float64 {
+	if quantumDeg <= 0 {
+		return v
+	}
+	return math.Round(v/quantumDeg) * quantumDeg
+}
+
+// QuantizeCenter quantizes a [lat, lon] center for spatial-index keys so tiny
+// movements do not thrash Delete+Insert. Default quantum is ~100 m of latitude.
+const DefaultIndexQuantumDeg = 0.001 // ≈ 111 m
+
+func QuantizeCenter(center [2]float64, quantumDeg float64) [2]float64 {
+	return [2]float64{
+		QuantizeDeg(center[0], quantumDeg),
+		QuantizeDeg(center[1], quantumDeg),
+	}
 }

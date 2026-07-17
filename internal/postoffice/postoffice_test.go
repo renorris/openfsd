@@ -220,7 +220,7 @@ func TestSearch(t *testing.T) {
 }
 
 // TestSearch_ClosestVelocityDistance ensures proto-101 pilot pairs update
-// ClosestVelocityClientDistance via geo.Distance.
+// ClosestVelocityClientDistance via equirectangular ApproxDistance (hot path).
 func TestSearch_ClosestVelocityDistance(t *testing.T) {
 	p := New()
 	client1 := newTestClient("v1", 0, 0, 500000)
@@ -244,7 +244,7 @@ func TestSearch_ClosestVelocityDistance(t *testing.T) {
 
 	p.Search(client1, func(recipient *session.Session) bool { return true })
 
-	want := geo.Distance(0, 0, 0.1, 0)
+	want := geo.ApproxDistance(0, 0, 0.1, 0)
 	if !approxEqual(client1.ClosestVelocityClientDistance, want) {
 		t.Fatalf("ClosestVelocityClientDistance = %v, want %v", client1.ClosestVelocityClientDistance, want)
 	}

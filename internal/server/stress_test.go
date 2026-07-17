@@ -34,8 +34,8 @@ import (
 	"github.com/renorris/openfsd/pkg/protocol"
 )
 
-// stressPilots is the default concurrent pilot count (design: M=100).
-const stressPilots = 100
+// stressPilots is the default concurrent pilot count (design: M=1000).
+const stressPilots = 1000
 
 // stressHz is the position update rate per pilot (design: 0.2 Hz).
 const stressHz = 0.2
@@ -84,18 +84,24 @@ func (r *stressRegistry) Search(s *session.Session, fn func(*session.Session) bo
 	if ok {
 		start = startI.(time.Time)
 	}
+	// Collect samples locally then merge once — a global mutex per recipient
+	// (≈N² locks under full mesh) dominated wall time and hid real fan-out cost.
+	var local []time.Duration
 	r.inner.Search(s, func(recipient *session.Session) bool {
-		// fn typically does recipient.Send — blocks until enqueue succeeds.
+		// fn typically does recipient.Send — returns after sendChan enqueue
+		// (SendPosition is non-blocking for position storms).
 		ret := fn(recipient)
 		if ok && !start.IsZero() {
-			elapsed := time.Since(start)
-			r.enqMu.Lock()
-			r.enqSamples = append(r.enqSamples, elapsed)
-			r.enqMu.Unlock()
+			local = append(local, time.Since(start))
 			r.enqCount.Add(1)
 		}
 		return ret
 	})
+	if len(local) > 0 {
+		r.enqMu.Lock()
+		r.enqSamples = append(r.enqSamples, local...)
+		r.enqMu.Unlock()
+	}
 }
 
 func (r *stressRegistry) markHandlerStart(callsign string, t time.Time) {
