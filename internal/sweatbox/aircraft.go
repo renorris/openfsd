@@ -56,12 +56,34 @@ type SimAircraft struct {
 	Status      string
 	Instruction string
 
-	// Ground / approach context (used by later taxi/pattern PRs).
+	// Ground / approach context.
 	CurrentSurface string
 	Parking        string
 	LandingRunway  string
 	DepRunway      string
 	PositionHold   bool
+
+	// Taxi path state (set by taxi/hold/res/cross; Tick consumes in PR 4).
+	// Waypoints are a value copy of PlanTaxi output; WPIndex is the next
+	// waypoint to fly toward (0 = start of path).
+	TaxiWaypoints []Point
+	TaxiWPIndex   int
+	TaxiHolds     []TaxiHold // remaining hold-shorts along the path
+	TaxiSteps     []string   // planned surface steps (canonical names)
+	TaxiParking   string     // destination parking (no "@"), or empty
+
+	// HoldShortOf is the surface name when StatusHoldingShort (or the next
+	// planned hold when still taxiing). Cleared by res/cross/new taxi.
+	HoldShortOf string
+
+	// Takeoff clearance / departure (set by cto family; Tick consumes in PR 4).
+	ClearedTakeoff bool
+	DepHeading     float64 // used when HasDepHeading
+	HasDepHeading  bool
+	// PatternTraffic is "L" or "R" after ctomlt/ctomrt; empty otherwise.
+	PatternTraffic string
+	// NoStop is set by nostop/nohold (don't stop when clear of runway).
+	NoStop bool
 }
 
 // snapshot returns a value copy suitable for host / HTTP (no shared pointers).
@@ -95,6 +117,46 @@ func (a *SimAircraft) snapshot() AircraftSnapshot {
 		LandingRunway:  a.LandingRunway,
 		DepRunway:      a.DepRunway,
 		PositionHold:   a.PositionHold,
+		HoldShortOf:    a.HoldShortOf,
+		ClearedTakeoff: a.ClearedTakeoff,
+		DepHeading:     a.DepHeading,
+		HasDepHeading:  a.HasDepHeading,
+		PatternTraffic: a.PatternTraffic,
+		NoStop:         a.NoStop,
+		TaxiWPIndex:    a.TaxiWPIndex,
+		TaxiParking:    a.TaxiParking,
+		TaxiSteps:      append([]string(nil), a.TaxiSteps...),
+	}
+}
+
+// surfaceForTaxi is the surface name PlanTaxi should use as "current".
+func (a *SimAircraft) surfaceForTaxi() string {
+	if a == nil {
+		return ""
+	}
+	if a.CurrentSurface != "" {
+		return a.CurrentSurface
+	}
+	return a.Parking
+}
+
+// hasTaxiPath reports whether a ground route is loaded for motion.
+func (a *SimAircraft) hasTaxiPath() bool {
+	return a != nil && len(a.TaxiWaypoints) > 0
+}
+
+// groundOK reports whether the aircraft is in a ground status eligible for
+// taxi / pos / hold-family commands (not airborne / approach / takeoff roll).
+func (a *SimAircraft) groundOK() bool {
+	if a == nil {
+		return false
+	}
+	switch a.Status {
+	case StatusParked, StatusTaxiing, StatusHoldingShort, StatusHoldingInPosition,
+		StatusLanded, StatusHolding:
+		return true
+	default:
+		return false
 	}
 }
 

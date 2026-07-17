@@ -57,6 +57,24 @@ func (e *Engine) Command(selectedCS, line string) CommandResult {
 		return e.cmdDelLocked(target)
 	case "pos":
 		return e.cmdPosLocked(target)
+	case "taxi":
+		return e.cmdTaxiLocked(target, args)
+	case "hold":
+		return e.cmdHoldLocked(target)
+	case "res":
+		return e.cmdResLocked(target)
+	case "cross":
+		return e.cmdCrossLocked(target, args)
+	case "cto":
+		return e.cmdCTOLocked(target, args, "")
+	case "ctoc":
+		return e.cmdCTOCLocked(target)
+	case "ctomlt":
+		return e.cmdCTOLocked(target, args, "L")
+	case "ctomrt":
+		return e.cmdCTOLocked(target, args, "R")
+	case "nostop":
+		return e.cmdNoStopLocked(target)
 	case "sq":
 		return e.cmdSquawkLocked(target, args, false)
 	case "sqi":
@@ -92,15 +110,430 @@ func (e *Engine) cmdPosLocked(target string) CommandResult {
 	if errMsg != "" {
 		return CommandResult{OK: false, Message: errMsg}
 	}
-	switch ac.Status {
-	case StatusParked, StatusTaxiing, StatusHoldingShort, StatusHoldingInPosition, StatusLanded:
-		// ok
-	default:
+	if !ac.groundOK() {
 		return CommandResult{OK: false, Message: "Not taxiing, parked, holding short, holding in position, or landed."}
+	}
+	// Already lined up: idempotent success (refresh instruction).
+	if ac.Status == StatusHoldingInPosition && ac.PositionHold {
+		ac.Instruction = "Position and hold"
+		return CommandResult{OK: true}
 	}
 	ac.Status = StatusHoldingInPosition
 	ac.PositionHold = true
-	ac.Instruction = "Position and hold"
+	ac.ClearedTakeoff = false
+	ac.PatternTraffic = ""
+	// Holding short of dep runway → lining up on that runway.
+	if ac.HoldShortOf != "" && ac.DepRunway != "" && e.sameSurfaceNameLocked(ac.HoldShortOf, ac.DepRunway) {
+		ac.HoldShortOf = ""
+	} else if ac.HoldShortOf != "" {
+		// Line up still clears active hold-short wait (pos is the runway entry).
+		ac.HoldShortOf = ""
+	}
+	if ac.DepRunway != "" {
+		ac.Instruction = "Position and hold runway " + ac.DepRunway
+	} else {
+		ac.Instruction = "Position and hold"
+	}
+	return CommandResult{OK: true}
+}
+
+// --- Ground movement (PR 3b) ------------------------------------------------
+
+// parseTaxiArgs splits "steps… [hs holds…]" into route steps and hold-shorts.
+func parseTaxiArgs(args []string) (steps, holds []string) {
+	hsIdx := -1
+	for i, a := range args {
+		if strings.EqualFold(a, "hs") {
+			hsIdx = i
+			break
+		}
+	}
+	if hsIdx < 0 {
+		return args, nil
+	}
+	steps = args[:hsIdx]
+	if hsIdx+1 < len(args) {
+		holds = args[hsIdx+1:]
+	}
+	return steps, holds
+}
+
+func (e *Engine) cmdTaxiLocked(target string, args []string) CommandResult {
+	ac, errMsg := e.requireAircraftLocked(target)
+	if errMsg != "" {
+		return CommandResult{OK: false, Message: errMsg}
+	}
+	if e.graph == nil {
+		return CommandResult{OK: false, Message: "No airport loaded."}
+	}
+	if !ac.groundOK() {
+		return CommandResult{OK: false, Message: "Not taxiing, parked or holding short."}
+	}
+	steps, holds := parseTaxiArgs(args)
+	if len(steps) == 0 {
+		return CommandResult{OK: false, Message: "Must specify at least one taxiway, runway or parking space to taxi to."}
+	}
+	plan, planErr := e.graph.PlanTaxi(ac.surfaceForTaxi(), steps, holds)
+	if planErr != "" {
+		return CommandResult{OK: false, Message: planErr}
+	}
+
+	// Apply plan → aircraft path state for Tick (PR 4).
+	ac.TaxiWaypoints = append([]Point(nil), plan.Waypoints...)
+	ac.TaxiWPIndex = 0
+	ac.TaxiHolds = append([]TaxiHold(nil), plan.HoldAt...)
+	ac.TaxiSteps = append([]string(nil), plan.Steps...)
+	ac.TaxiParking = plan.Parking
+	ac.HoldShortOf = ""
+	ac.PositionHold = false
+	// New taxi cancels takeoff clearance (re-issue cto after re-route).
+	ac.ClearedTakeoff = false
+	ac.HasDepHeading = false
+	ac.DepHeading = 0
+	ac.PatternTraffic = ""
+
+	// Destination runway from last surface step (not parking).
+	if plan.Parking == "" && len(plan.Steps) > 0 {
+		last := plan.Steps[len(plan.Steps)-1]
+		if end := e.runwayEndLabelLocked(last); end != "" {
+			ac.DepRunway = end
+		}
+	} else if plan.Parking != "" {
+		// Taxi to parking: not a departure.
+		ac.DepRunway = ""
+	}
+
+	ac.Status = StatusTaxiing
+	ac.Instruction = formatTaxiInstruction(plan)
+	// Leaving a parking spot: clear parked name once taxi starts (origin surface kept).
+	if ac.Parking != "" && plan.Parking == "" {
+		// Keep Parking empty while taxiing to runway; CurrentSurface still origin until Tick.
+		ac.Parking = ""
+	}
+	return CommandResult{OK: true}
+}
+
+func formatTaxiInstruction(plan TaxiPlan) string {
+	var b strings.Builder
+	b.WriteString("Taxi")
+	for _, s := range plan.Steps {
+		b.WriteByte(' ')
+		b.WriteString(s)
+	}
+	if plan.Parking != "" {
+		b.WriteString(" @")
+		b.WriteString(plan.Parking)
+	}
+	if len(plan.Holds) > 0 {
+		b.WriteString(" hs")
+		for _, h := range plan.Holds {
+			b.WriteByte(' ')
+			b.WriteString(h)
+		}
+	}
+	return b.String()
+}
+
+// runwayEndLabelLocked returns a preferred end designator for a runway surface
+// name (e.g. "33/15" → "33", "19" → "19"). Empty if not a runway.
+func (e *Engine) runwayEndLabelLocked(name string) string {
+	if e.graph == nil {
+		return ""
+	}
+	s := e.graph.Surface(name)
+	if s == nil || s.Kind != SurfaceRunway {
+		return ""
+	}
+	up := strings.ToUpper(strings.TrimSpace(name))
+	if up == s.RwyA || up == s.RwyB {
+		return up
+	}
+	// Combined name → RwyA as default dep end label.
+	if s.RwyA != "" {
+		return s.RwyA
+	}
+	return s.Name
+}
+
+func (e *Engine) sameSurfaceNameLocked(a, b string) bool {
+	if strings.EqualFold(a, b) {
+		return true
+	}
+	if e.graph == nil {
+		return false
+	}
+	return sameSurface(e.graph, a, b)
+}
+
+func (e *Engine) cmdHoldLocked(target string) CommandResult {
+	ac, errMsg := e.requireAircraftLocked(target)
+	if errMsg != "" {
+		return CommandResult{OK: false, Message: errMsg}
+	}
+	if ac.Status != StatusTaxiing {
+		return CommandResult{OK: false, Message: "Not taxiing."}
+	}
+	ac.Status = StatusHolding
+	ac.Instruction = "Hold position"
+	return CommandResult{OK: true}
+}
+
+func (e *Engine) cmdResLocked(target string) CommandResult {
+	ac, errMsg := e.requireAircraftLocked(target)
+	if errMsg != "" {
+		return CommandResult{OK: false, Message: errMsg}
+	}
+	switch ac.Status {
+	case StatusHolding:
+		// Resume after present-position hold.
+		if !ac.hasTaxiPath() {
+			return CommandResult{OK: false, Message: "Not taxiing or holding short."}
+		}
+		ac.Status = StatusTaxiing
+		ac.Instruction = formatTaxiInstruction(TaxiPlan{
+			Steps:   ac.TaxiSteps,
+			Holds:   holdNames(ac.TaxiHolds),
+			Parking: ac.TaxiParking,
+		})
+		return CommandResult{OK: true}
+
+	case StatusHoldingShort:
+		// Cannot resume into the departure runway without pos/cto.
+		if ac.DepRunway != "" && ac.HoldShortOf != "" &&
+			e.sameSurfaceNameLocked(ac.HoldShortOf, ac.DepRunway) &&
+			!ac.ClearedTakeoff && !ac.PositionHold {
+			return CommandResult{OK: false, Message: "Can't resume taxi while holding short of departure runway, use the \"pos\" command."}
+		}
+		// Cross/clear current hold-short and continue.
+		ac.removeHoldNamed(ac.HoldShortOf)
+		ac.HoldShortOf = ""
+		if ac.hasTaxiPath() {
+			ac.Status = StatusTaxiing
+			ac.Instruction = formatTaxiInstruction(TaxiPlan{
+				Steps:   ac.TaxiSteps,
+				Holds:   holdNames(ac.TaxiHolds),
+				Parking: ac.TaxiParking,
+			})
+		} else {
+			ac.Status = StatusTaxiing
+			ac.Instruction = "Taxi"
+		}
+		return CommandResult{OK: true}
+
+	case StatusTaxiing:
+		// Already moving — silent success.
+		return CommandResult{OK: true}
+
+	default:
+		return CommandResult{OK: false, Message: "Not taxiing or holding short."}
+	}
+}
+
+func holdNames(holds []TaxiHold) []string {
+	if len(holds) == 0 {
+		return nil
+	}
+	out := make([]string, len(holds))
+	for i, h := range holds {
+		out[i] = h.Name
+	}
+	return out
+}
+
+// removeHoldNamed drops hold-shorts whose Name equals name (case-insensitive).
+func (a *SimAircraft) removeHoldNamed(name string) {
+	if a == nil || name == "" || len(a.TaxiHolds) == 0 {
+		return
+	}
+	out := make([]TaxiHold, 0, len(a.TaxiHolds))
+	for _, h := range a.TaxiHolds {
+		if strings.EqualFold(h.Name, name) {
+			continue
+		}
+		out = append(out, h)
+	}
+	a.TaxiHolds = out
+}
+
+func (e *Engine) cmdCrossLocked(target string, args []string) CommandResult {
+	ac, errMsg := e.requireAircraftLocked(target)
+	if errMsg != "" {
+		return CommandResult{OK: false, Message: errMsg}
+	}
+	if len(args) < 1 {
+		return CommandResult{OK: false, Message: "Missing parameters. Example: \"cross 27\""}
+	}
+	name := strings.ToUpper(strings.TrimSpace(args[0]))
+	if name == "" {
+		return CommandResult{OK: false, Message: "Missing parameters. Example: \"cross 27\""}
+	}
+	// Must be holding short of it, or planning to (in TaxiHolds).
+	holding := ac.Status == StatusHoldingShort && ac.HoldShortOf != "" &&
+		e.sameSurfaceNameLocked(ac.HoldShortOf, name)
+	planning := e.holdPlannedLocked(ac, name)
+	if !holding && !planning {
+		return CommandResult{OK: false, Message: "Not holding short of that runway/taxiway, and not planning to."}
+	}
+	// Remove from plan and clear active hold.
+	ac.removeHoldNamed(name)
+	// Also remove graph-canonical aliases (e.g. "19" vs "19/1").
+	if e.graph != nil {
+		if s := e.graph.Surface(name); s != nil {
+			ac.removeHoldNamed(s.Name)
+			if s.Kind == SurfaceRunway {
+				ac.removeHoldNamed(s.RwyA)
+				ac.removeHoldNamed(s.RwyB)
+			}
+		}
+	}
+	if ac.HoldShortOf != "" && e.sameSurfaceNameLocked(ac.HoldShortOf, name) {
+		ac.HoldShortOf = ""
+	}
+	// Resume taxi if we were stopped.
+	switch ac.Status {
+	case StatusHoldingShort, StatusHolding:
+		if ac.hasTaxiPath() {
+			ac.Status = StatusTaxiing
+		} else {
+			ac.Status = StatusTaxiing
+		}
+	case StatusParked, StatusLanded:
+		// Cross while only planning (pre-taxi) is unusual; leave status.
+	}
+	ac.Instruction = "Cross " + name
+	if ac.Status == StatusTaxiing && ac.hasTaxiPath() {
+		// Prefer full taxi instruction with remaining holds after the cross note
+		// settles; Tick will show progressive status. Keep "Cross X" as last instruction.
+	}
+	return CommandResult{OK: true}
+}
+
+func (e *Engine) holdPlannedLocked(ac *SimAircraft, name string) bool {
+	if ac == nil || name == "" {
+		return false
+	}
+	for _, h := range ac.TaxiHolds {
+		if e.sameSurfaceNameLocked(h.Name, name) {
+			return true
+		}
+	}
+	return false
+}
+
+// cmdCTOLocked implements cto / ctomlt / ctomrt.
+// patternDir is "", "L", or "R".
+func (e *Engine) cmdCTOLocked(target string, args []string, patternDir string) CommandResult {
+	ac, errMsg := e.requireAircraftLocked(target)
+	if errMsg != "" {
+		return CommandResult{OK: false, Message: errMsg}
+	}
+	switch ac.Status {
+	case StatusTaxiing, StatusHoldingShort, StatusHoldingInPosition, StatusHolding:
+		// ok — "holding short, in position, or any time during taxi to the runway"
+	case StatusTakeoff:
+		// Re-issue / update heading while rolling.
+	default:
+		return CommandResult{OK: false, Message: "Not taxiing, holding short or in position."}
+	}
+
+	// Optional departure heading (plain cto only; ctomlt/ctomrt take no args).
+	if patternDir == "" && len(args) >= 1 {
+		hdg, ok := parseFiniteFloat(args[0])
+		if !ok {
+			return CommandResult{OK: false, Message: "Missing parameters. Example: \"cto 140\""}
+		}
+		ac.DepHeading = normalizeHeading(hdg)
+		ac.HasDepHeading = true
+	}
+
+	ac.ClearedTakeoff = true
+	ac.PositionHold = false
+	if patternDir != "" {
+		ac.PatternTraffic = patternDir
+	} else {
+		// Plain cto clears closed-traffic intent from a prior ctomlt/ctomrt.
+		ac.PatternTraffic = ""
+	}
+
+	// If already at the runway (in position or holding short of dep), enter takeoff state.
+	atRunway := ac.Status == StatusHoldingInPosition ||
+		(ac.Status == StatusHoldingShort && ac.DepRunway != "" &&
+			ac.HoldShortOf != "" && e.sameSurfaceNameLocked(ac.HoldShortOf, ac.DepRunway))
+	if atRunway {
+		ac.Status = StatusTakeoff
+		ac.HoldShortOf = ""
+	}
+
+	ac.Instruction = formatCTOInstruction(ac)
+	return CommandResult{OK: true}
+}
+
+func formatCTOInstruction(ac *SimAircraft) string {
+	var b strings.Builder
+	b.WriteString("Cleared for takeoff")
+	if ac.DepRunway != "" {
+		b.WriteString(" runway ")
+		b.WriteString(ac.DepRunway)
+	}
+	if ac.HasDepHeading {
+		b.WriteString(fmt.Sprintf(" heading %03.0f", ac.DepHeading))
+	}
+	switch ac.PatternTraffic {
+	case "L":
+		b.WriteString(", left traffic")
+	case "R":
+		b.WriteString(", right traffic")
+	}
+	return b.String()
+}
+
+func (e *Engine) cmdCTOCLocked(target string) CommandResult {
+	ac, errMsg := e.requireAircraftLocked(target)
+	if errMsg != "" {
+		return CommandResult{OK: false, Message: errMsg}
+	}
+	if !ac.ClearedTakeoff {
+		return CommandResult{OK: false, Message: "Not cleared for takeoff."}
+	}
+	ac.ClearedTakeoff = false
+	ac.HasDepHeading = false
+	ac.DepHeading = 0
+	ac.PatternTraffic = ""
+	// If takeoff roll not yet airborne, return to hold-short / position.
+	switch ac.Status {
+	case StatusTakeoff:
+		if ac.DepRunway != "" {
+			// Prefer holding short of the departure runway (safer cancel).
+			ac.Status = StatusHoldingShort
+			ac.HoldShortOf = ac.DepRunway
+			ac.PositionHold = false
+			ac.Instruction = "Holding short of " + ac.DepRunway
+		} else if ac.hasTaxiPath() {
+			ac.Status = StatusTaxiing
+			ac.Instruction = formatTaxiInstruction(TaxiPlan{
+				Steps:   ac.TaxiSteps,
+				Holds:   holdNames(ac.TaxiHolds),
+				Parking: ac.TaxiParking,
+			})
+		} else {
+			ac.Status = StatusHoldingInPosition
+			ac.PositionHold = true
+			ac.Instruction = "Position and hold"
+		}
+	default:
+		ac.Instruction = "Takeoff clearance cancelled"
+	}
+	return CommandResult{OK: true}
+}
+
+func (e *Engine) cmdNoStopLocked(target string) CommandResult {
+	ac, errMsg := e.requireAircraftLocked(target)
+	if errMsg != "" {
+		return CommandResult{OK: false, Message: errMsg}
+	}
+	// nostop applies mainly to arrivals on the roll / after landing, but
+	// allowing it on any aircraft is harmless (Tick honors when relevant).
+	ac.NoStop = true
 	return CommandResult{OK: true}
 }
 

@@ -65,12 +65,17 @@ func isGlobalVerb(tok string) bool {
 func isAircraftVerb(tok string) bool {
 	switch strings.ToLower(tok) {
 	case "del", "pos", "ph",
-		"sq", "sqi", "sn", "ss", "id":
+		"sq", "sqi", "sn", "ss", "id",
+		// Ground movement (PR 3b):
+		"taxi", "hold", "res", "cross",
+		"cto", "ctoc", "cancel", "can",
+		"ctomlt", "ctomrt",
+		"nostop", "nohold":
 		return true
-	// Reserved for later PRs so "CS, taxi …" still targets if typed early:
-	case "taxi", "hold", "res", "cross", "cto", "ctoc",
-		"fh", "fhn", "tr", "tl", "fph", "cm", "spd", "speed",
-		"fp", "vp", "remarks":
+	// Reserved for later PRs so "CS, verb …" still targets if typed early:
+	case "fh", "fhn", "tr", "tl", "fph", "cm", "spd", "speed", "slow", "sln",
+		"fp", "vp", "remarks",
+		"ctopp", "land", "hs":
 		return true
 	default:
 		return false
@@ -88,6 +93,10 @@ func normalizeVerb(tok string) string {
 		return "ops"
 	case "ph":
 		return "pos"
+	case "cancel", "can":
+		return "ctoc"
+	case "nohold":
+		return "nostop"
 	default:
 		return strings.ToLower(tok)
 	}

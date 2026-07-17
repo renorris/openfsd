@@ -35,6 +35,17 @@ type AircraftSnapshot struct {
 	LandingRunway  string
 	DepRunway      string
 	PositionHold   bool
+
+	// Ground clearance / taxi summary (path waypoints stay engine-internal).
+	HoldShortOf    string
+	ClearedTakeoff bool
+	DepHeading     float64
+	HasDepHeading  bool
+	PatternTraffic string // "", "L", or "R"
+	NoStop         bool
+	TaxiWPIndex    int
+	TaxiParking    string
+	TaxiSteps      []string
 }
 
 // EngineSnapshot is a point-in-time view of the pure engine (no sessions).
