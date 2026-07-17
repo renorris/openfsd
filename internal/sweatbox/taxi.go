@@ -7,6 +7,10 @@ import (
 	"github.com/renorris/openfsd/internal/geo"
 )
 
+// pathStitchEpsM is the only distance used when collapsing adjacent path samples
+// at leg joints. Intersection snap (~100 ft) must not drop real polyline vertices.
+const pathStitchEpsM = 1.0
+
 // TaxiPlan is a validated taxi route: ordered surface steps, hold-shorts, an
 // optional final parking, and an expanded waypoint polyline for the engine.
 //
@@ -23,6 +27,7 @@ type TaxiPlan struct {
 	// Waypoints is the ordered ground path (lat/lon) along surface polylines.
 	Waypoints []Point
 	// HoldAt lists hold-short positions resolved along the route.
+	// Every entry has WaypointIndex >= 0 (off-route holds are rejected).
 	HoldAt []TaxiHold
 }
 
@@ -32,8 +37,7 @@ type TaxiHold struct {
 	Name string
 	// Point is where the aircraft should stop.
 	Point Point
-	// WaypointIndex is the index into TaxiPlan.Waypoints of Point (−1 if the
-	// hold could not be placed on the expanded path but validation passed).
+	// WaypointIndex is the index into TaxiPlan.Waypoints of Point.
 	WaypointIndex int
 }
 
@@ -120,7 +124,7 @@ func (g *Graph) PlanTaxi(current string, steps, holds []string) (TaxiPlan, strin
 		}
 	}
 
-	// Normalize / validate holds.
+	// Normalize / validate holds (existence + kind only; on-route check after path).
 	normHolds := make([]string, 0, len(holds))
 	for _, raw := range holds {
 		tok := strings.TrimSpace(raw)
@@ -137,7 +141,6 @@ func (g *Graph) PlanTaxi(current string, steps, holds []string) (TaxiPlan, strin
 		}
 		if s.Kind == SurfaceRunway {
 			// Keep the designator the instructor typed when it is an end name.
-			// Prefer the token if it matches an end; else combined name.
 			up := strings.ToUpper(tok)
 			if up == s.RwyA || up == s.RwyB {
 				name = up
@@ -166,64 +169,44 @@ func (g *Graph) PlanTaxi(current string, steps, holds []string) (TaxiPlan, strin
 
 	// First step must intersect current taxiway/runway (when current is set).
 	if curName != "" {
-		first := firstRouteSurface(normSteps, parking, g)
-		if first == "" {
-			return zero, "First step of taxi route must intersect with current taxiway/runway."
-		}
-		if !g.Intersect(curName, first) && !sameSurface(g, curName, first) {
+		first := firstRouteSurface(normSteps, parking)
+		if first == "" || (!g.Intersect(curName, first) && !sameSurface(g, curName, first)) {
 			return zero, "First step of taxi route must intersect with current taxiway/runway."
 		}
 	}
 
 	// Consecutive surface steps must intersect.
-	routeSurfaces := make([]string, 0, len(normSteps)+1)
-	if curName != "" && (len(normSteps) == 0 || !sameSurface(g, curName, normSteps[0])) {
-		// Include current only for intersection chaining into first step;
-		// not as a plan step.
-	}
-	routeSurfaces = append(routeSurfaces, normSteps...)
-	for i := 1; i < len(routeSurfaces); i++ {
-		a, b := routeSurfaces[i-1], routeSurfaces[i]
+	for i := 1; i < len(normSteps); i++ {
+		a, b := normSteps[i-1], normSteps[i]
 		if !g.Intersect(a, b) {
 			return zero, fmt.Sprintf("%s and %s do not intersect.", displayName(a), displayName(b))
 		}
 	}
 
-	// When current is set and differs from first step, current must intersect first
-	// (already checked). Parking-only from an intersecting surface is ok.
-	if len(normSteps) >= 1 && curName != "" && !sameSurface(g, curName, normSteps[0]) {
-		if !g.Intersect(curName, normSteps[0]) {
-			return zero, "First step of taxi route must intersect with current taxiway/runway."
-		}
-	}
-
-	// Parking exit: last surface (or current) must be able to leave toward parking.
-	// We do not require a 100 ft snap between last surface and parking; TWRTrainer
-	// taxis to the closest waypoint on the last surface then direct to parking.
+	// Parking-only: need a current surface to leave from.
 	if parking != "" && len(normSteps) == 0 {
-		// Taxi direct from current surface to parking — current required.
-		if curName == "" {
-			return zero, "First step of taxi route must intersect with current taxiway/runway."
-		}
-		if g.Surface(curName) == nil {
+		if curName == "" || g.Surface(curName) == nil {
 			return zero, "First step of taxi route must intersect with current taxiway/runway."
 		}
 	}
 
-	plan := TaxiPlan{
-		Steps:   append([]string(nil), normSteps...),
-		Holds:   append([]string(nil), normHolds...),
-		Parking: parking,
+	wps := g.buildTaxiPath(curName, normSteps, parking)
+	wps, holdAt, errMsg := g.resolveHolds(normSteps, curName, normHolds, wps)
+	if errMsg != "" {
+		return zero, errMsg
 	}
 
-	wps, holdAt := g.buildTaxiPath(curName, normSteps, parking, normHolds)
-	plan.Waypoints = wps
-	plan.HoldAt = holdAt
-	return plan, ""
+	return TaxiPlan{
+		Steps:     append([]string(nil), normSteps...),
+		Holds:     append([]string(nil), normHolds...),
+		Parking:   parking,
+		Waypoints: wps,
+		HoldAt:    holdAt,
+	}, ""
 }
 
 // firstRouteSurface is the first taxiway/runway on the route, or parking name.
-func firstRouteSurface(normSteps []string, parking string, g *Graph) string {
+func firstRouteSurface(normSteps []string, parking string) string {
 	if len(normSteps) > 0 {
 		return normSteps[0]
 	}
@@ -243,15 +226,13 @@ func displayName(name string) string {
 	return strings.ToUpper(name)
 }
 
-// buildTaxiPath expands surface polylines into a waypoint list and places holds.
-func (g *Graph) buildTaxiPath(current string, steps []string, parking string, holds []string) ([]Point, []TaxiHold) {
+// buildTaxiPath expands surface polylines into a waypoint list.
+func (g *Graph) buildTaxiPath(current string, steps []string, parking string) []Point {
 	var wps []Point
 	if len(steps) == 0 && parking == "" {
-		return nil, nil
+		return nil
 	}
 
-	// Chain of surfaces we walk (excluding parking).
-	// When current differs from first step, entry is their intersection.
 	type leg struct {
 		surface string
 		from    Point
@@ -262,21 +243,21 @@ func (g *Graph) buildTaxiPath(current string, steps []string, parking string, ho
 
 	var legs []leg
 
-	// Determine starting surface and entry point.
-	startSurface := ""
+	// Entry onto first step from a different current surface (point on first step).
 	var entry Point
 	entrySet := false
 	if len(steps) > 0 {
-		startSurface = steps[0]
-		if current != "" && !sameSurface(g, current, startSurface) {
-			if p, _, _, ok := g.FindIntersection(current, startSurface); ok {
-				entry = p
+		if current != "" && !sameSurface(g, current, steps[0]) {
+			if p, _, idxB, ok := g.FindIntersection(current, steps[0]); ok {
+				sb := g.Surface(steps[0])
+				if sb != nil && idxB >= 0 && idxB < len(sb.Points) {
+					entry = sb.Points[idxB]
+				} else {
+					entry = p
+				}
 				entrySet = true
 			}
 		}
-	} else {
-		// Parking-only: walk on current toward parking.
-		startSurface = current
 	}
 
 	// Build legs between consecutive steps.
@@ -291,7 +272,6 @@ func (g *Graph) buildTaxiPath(current string, steps []string, parking string, ho
 		} else {
 			// From previous intersection (point on this surface).
 			if p, _, idxB, ok := g.FindIntersection(steps[i-1], sName); ok {
-				// Prefer the point on this surface (B).
 				sb := g.Surface(sName)
 				if sb != nil && idxB >= 0 && idxB < len(sb.Points) {
 					lg.from = sb.Points[idxB]
@@ -321,11 +301,8 @@ func (g *Graph) buildTaxiPath(current string, steps []string, parking string, ho
 				}
 			}
 		} else {
-			// Destination is this surface (typically a runway): to = entry onto it
-			// from previous, already as from; keep to unset so we still include from.
-			// For a multi-step route ending on a runway, the end point is the
-			// intersection of the previous surface and this runway — already "from".
-			// Single-step runway from another current: "from" is entry; path is [entry].
+			// Destination is this surface (typically a runway). Path ends at entry
+			// from the previous surface (or from current when single-step).
 			if !lg.fromSet && current != "" && !sameSurface(g, current, sName) {
 				if p, _, idxB, ok := g.FindIntersection(current, sName); ok {
 					sb := g.Surface(sName)
@@ -341,7 +318,7 @@ func (g *Graph) buildTaxiPath(current string, steps []string, parking string, ho
 		legs = append(legs, lg)
 	}
 
-	// Parking-only leg: from closest on current to parking point.
+	// Parking-only leg: leave current at closest waypoint toward parking.
 	if len(steps) == 0 && parking != "" && current != "" {
 		ps := g.Surface(parking)
 		lg := leg{surface: current}
@@ -356,7 +333,7 @@ func (g *Graph) buildTaxiPath(current string, steps []string, parking string, ho
 		legs = append(legs, lg)
 	}
 
-	// Expand legs into waypoints.
+	// Expand legs into waypoints (stitch with tiny epsilon only).
 	for _, lg := range legs {
 		s := g.Surface(lg.surface)
 		if s == nil || len(s.Points) == 0 {
@@ -364,16 +341,16 @@ func (g *Graph) buildTaxiPath(current string, steps []string, parking string, ho
 		}
 		switch {
 		case lg.fromSet && lg.toSet:
-			seg := walkPolyline(s, lg.from, lg.to, g.tolM)
-			wps = appendUniquePoints(wps, seg, g.tolM)
+			seg := walkPolyline(s, lg.from, lg.to)
+			wps = appendUniquePoints(wps, seg, pathStitchEpsM)
 		case lg.fromSet:
-			wps = appendUniquePoints(wps, []Point{lg.from}, g.tolM)
+			wps = appendUniquePoints(wps, []Point{lg.from}, pathStitchEpsM)
 		case lg.toSet:
-			wps = appendUniquePoints(wps, []Point{lg.to}, g.tolM)
+			wps = appendUniquePoints(wps, []Point{lg.to}, pathStitchEpsM)
 		}
 	}
 
-	// Append parking coordinate (always, even if within snap of last taxiway point).
+	// Append parking coordinate (always, even if near last taxiway point).
 	if parking != "" {
 		if ps := g.Surface(parking); ps != nil && len(ps.Points) > 0 {
 			p := ps.Points[0]
@@ -383,75 +360,208 @@ func (g *Graph) buildTaxiPath(current string, steps []string, parking string, ho
 		}
 	}
 
-	// Resolve hold-short positions against the route surfaces.
-	holdAt := g.resolveHolds(steps, current, holds, wps)
-	return wps, holdAt
+	return wps
 }
 
-// resolveHolds places each hold at the intersection of the hold target with a
-// route surface (first match in route order). Destination runway is not auto-
-// added here — the engine holds short of the final runway by status.
-func (g *Graph) resolveHolds(steps []string, current string, holds []string, wps []Point) []TaxiHold {
+// resolveHolds places each hold on the route path. Holds must map onto Waypoints
+// (within intersection snap). Off-route holds are rejected with an instructor string.
+// May insert HOLD vertices into wps when they lie on a route surface but were
+// outside the expanded turn-to-turn segment (e.g. already on first surface).
+//
+// Placement prefers the latest path position that intersects the hold target:
+// for each route step (reverse order), the step∩hold point is a candidate; when
+// the hold is the step itself (e.g. destination runway), the entry from the
+// previous surface (or current) is used. HOLD surfaces use their single point.
+func (g *Graph) resolveHolds(steps []string, current string, holds []string, wps []Point) ([]Point, []TaxiHold, string) {
 	if len(holds) == 0 {
-		return nil
+		return wps, nil, ""
 	}
-	// Surfaces along the taxi (current + steps) for intersection search.
-	chain := make([]string, 0, len(steps)+1)
-	if current != "" {
-		chain = append(chain, current)
-	}
-	chain = append(chain, steps...)
 
 	out := make([]TaxiHold, 0, len(holds))
 	for _, h := range holds {
 		hs := g.Surface(h)
-		var hp Point
-		found := false
+		var bestPoint Point
+		bestIdx := -1
+
 		if hs != nil && hs.Kind == SurfaceHold && len(hs.Points) == 1 {
-			hp = hs.Points[0]
-			found = true
-		} else {
-			// Intersection of hold target with any route surface.
-			for _, sName := range chain {
-				if sameSurface(g, sName, h) {
-					// Holding short of a surface we're taxiing on: use first
-					// intersection of that surface with a neighboring chain member.
-					continue
-				}
-				if p, _, _, ok := g.FindIntersection(sName, h); ok {
-					hp = p
-					found = true
-					break
-				}
+			hp := hs.Points[0]
+			// HOLD is on-route if it snaps to any route-step (or current) surface vertex.
+			if !g.holdNearRouteSurface(hp, steps, current) {
+				return wps, nil, fmt.Sprintf("%s is not on the taxi route.", displayName(h))
 			}
-			// If hold is the destination runway itself, use entry onto it.
-			if !found && len(steps) > 0 && sameSurface(g, steps[len(steps)-1], h) {
-				if len(steps) >= 2 {
-					if p, _, _, ok := g.FindIntersection(steps[len(steps)-2], steps[len(steps)-1]); ok {
-						hp = p
-						found = true
-					}
-				} else if current != "" {
-					if p, _, _, ok := g.FindIntersection(current, steps[0]); ok {
-						hp = p
-						found = true
-					}
+			idx := findWaypointIndex(wps, hp, g.tolM)
+			if idx < 0 {
+				// Inject so the engine sees the hold on the path (common when
+				// already on the first surface: expansion starts at the next turn).
+				wps, idx = insertWaypoint(wps, hp, pathStitchEpsM)
+			}
+			out = append(out, TaxiHold{Name: h, Point: wps[idx], WaypointIndex: idx})
+			continue
+		}
+
+		// Collect candidate intersections with route steps (reverse: prefer last crossing).
+		for i := len(steps) - 1; i >= 0; i-- {
+			sName := steps[i]
+			var cand Point
+			var ok bool
+			if sameSurface(g, sName, h) {
+				// Holding short of a surface that is itself a step (e.g. dest runway):
+				// stop at the entry onto that surface.
+				if i > 0 {
+					cand, ok = intersectionOnSurface(g, steps[i-1], sName)
+				} else if current != "" && !sameSurface(g, current, sName) {
+					cand, ok = intersectionOnSurface(g, current, sName)
+				} else {
+					// Already on the hold surface as first step — use first path point
+					// that lies on this surface.
+					cand, ok = firstPathPointOnSurface(g, wps, h)
+				}
+			} else {
+				cand, ok = intersectionOnSurface(g, sName, h)
+			}
+			if !ok {
+				continue
+			}
+			idx := findWaypointIndex(wps, cand, g.tolM)
+			if idx < 0 {
+				continue
+			}
+			// Keep the candidate furthest along the path.
+			if idx > bestIdx {
+				bestIdx = idx
+				bestPoint = wps[idx]
+			}
+		}
+
+		// Fallback: hold ∩ current only when no step candidate mapped onto the path
+		// (avoids Issue 1: A∩19 beating B∩19 when A is current but route leaves via B).
+		if bestIdx < 0 && current != "" && !sameSurface(g, current, h) {
+			if cand, ok := intersectionOnSurface(g, current, h); ok {
+				if idx := findWaypointIndex(wps, cand, g.tolM); idx >= 0 {
+					bestIdx = idx
+					bestPoint = wps[idx]
 				}
 			}
 		}
-		th := TaxiHold{Name: h, WaypointIndex: -1}
-		if found {
-			th.Point = hp
-			th.WaypointIndex = findWaypointIndex(wps, hp, g.tolM)
+
+		if bestIdx < 0 {
+			return wps, nil, fmt.Sprintf("%s is not on the taxi route.", displayName(h))
 		}
-		out = append(out, th)
+		out = append(out, TaxiHold{Name: h, Point: bestPoint, WaypointIndex: bestIdx})
 	}
-	return out
+	// Re-snap indices after possible HOLD insertions shifted the path.
+	for i := range out {
+		idx := findWaypointIndex(wps, out[i].Point, g.tolM)
+		if idx < 0 {
+			return wps, nil, fmt.Sprintf("%s is not on the taxi route.", displayName(out[i].Name))
+		}
+		out[i].WaypointIndex = idx
+		out[i].Point = wps[idx]
+	}
+	return wps, out, ""
 }
 
-// walkPolyline returns points along s from near "from" to near "to" (inclusive),
-// walking the shorter direction along the polyline when ambiguous.
-func walkPolyline(s *Surface, from, to Point, tolM float64) []Point {
+// holdNearRouteSurface reports whether p is within intersection snap of any
+// vertex on a route step (or current) surface.
+func (g *Graph) holdNearRouteSurface(p Point, steps []string, current string) bool {
+	if current != "" && g.PointIndexWithin(current, p) >= 0 {
+		return true
+	}
+	for _, sName := range steps {
+		if g.PointIndexWithin(sName, p) >= 0 {
+			return true
+		}
+	}
+	// Also allow closest-within-tol when the hold is not exactly a stored vertex.
+	tolSq := g.tolM * g.tolM
+	check := func(name string) bool {
+		s := g.Surface(name)
+		if s == nil {
+			return false
+		}
+		for _, q := range s.Points {
+			if geo.DistanceSq(p.Lat, p.Lon, q.Lat, q.Lon) <= tolSq {
+				return true
+			}
+		}
+		return false
+	}
+	if current != "" && check(current) {
+		return true
+	}
+	for _, sName := range steps {
+		if check(sName) {
+			return true
+		}
+	}
+	return false
+}
+
+// insertWaypoint inserts p into wps if not already present within epsM.
+// Insertion is before the closest existing waypoint (or append if empty).
+// Returns the updated slice and the index of p.
+func insertWaypoint(wps []Point, p Point, epsM float64) ([]Point, int) {
+	if idx := findWaypointIndex(wps, p, epsM); idx >= 0 {
+		return wps, idx
+	}
+	if len(wps) == 0 {
+		return []Point{p}, 0
+	}
+	// Insert before the closest path vertex so holds ahead of the first turn
+	// appear earlier on the path.
+	best := 0
+	bestD := geo.DistanceSq(p.Lat, p.Lon, wps[0].Lat, wps[0].Lon)
+	for i := 1; i < len(wps); i++ {
+		d := geo.DistanceSq(p.Lat, p.Lon, wps[i].Lat, wps[i].Lon)
+		if d < bestD {
+			bestD = d
+			best = i
+		}
+	}
+	out := make([]Point, 0, len(wps)+1)
+	out = append(out, wps[:best]...)
+	out = append(out, p)
+	out = append(out, wps[best:]...)
+	return out, best
+}
+
+// intersectionOnSurface returns the intersection point preferred on surface B
+// (the second name), falling back to the point on A.
+func intersectionOnSurface(g *Graph, nameA, nameB string) (Point, bool) {
+	p, idxA, idxB, ok := g.FindIntersection(nameA, nameB)
+	if !ok {
+		return Point{}, false
+	}
+	if sb := g.Surface(nameB); sb != nil && idxB >= 0 && idxB < len(sb.Points) {
+		return sb.Points[idxB], true
+	}
+	if sa := g.Surface(nameA); sa != nil && idxA >= 0 && idxA < len(sa.Points) {
+		return sa.Points[idxA], true
+	}
+	return p, true
+}
+
+// firstPathPointOnSurface finds the first waypoint within snap of any point on surface h.
+func firstPathPointOnSurface(g *Graph, wps []Point, h string) (Point, bool) {
+	s := g.Surface(h)
+	if s == nil || len(s.Points) == 0 || len(wps) == 0 {
+		return Point{}, false
+	}
+	tolSq := g.tolM * g.tolM
+	for _, wp := range wps {
+		for _, sp := range s.Points {
+			if geo.DistanceSq(wp.Lat, wp.Lon, sp.Lat, sp.Lon) <= tolSq {
+				return wp, true
+			}
+		}
+	}
+	return Point{}, false
+}
+
+// walkPolyline returns points along s from the vertex nearest "from" to the
+// vertex nearest "to" (inclusive), walking index-forward or index-reverse along
+// the open polyline (no closed-loop shorter-arc logic).
+func walkPolyline(s *Surface, from, to Point) []Point {
 	if s == nil || len(s.Points) == 0 {
 		return nil
 	}
@@ -463,11 +573,9 @@ func walkPolyline(s *Surface, from, to Point, tolM float64) []Point {
 	if iFrom == iTo {
 		return []Point{s.Points[iFrom]}
 	}
-	// Forward path length vs reverse.
 	if iFrom < iTo {
 		return append([]Point(nil), s.Points[iFrom:iTo+1]...)
 	}
-	// Reverse.
 	out := make([]Point, 0, iFrom-iTo+1)
 	for i := iFrom; i >= iTo; i-- {
 		out = append(out, s.Points[i])
@@ -491,12 +599,14 @@ func closestIndex(pts []Point, p Point) int {
 	return best
 }
 
-func appendUniquePoints(dst []Point, src []Point, tolM float64) []Point {
-	tolSq := tolM * tolM
+// appendUniquePoints appends src onto dst, skipping a point only when it is
+// within epsM of the current last point (stitch joint dedup — not intersection snap).
+func appendUniquePoints(dst []Point, src []Point, epsM float64) []Point {
+	epsSq := epsM * epsM
 	for _, p := range src {
 		if len(dst) > 0 {
 			last := dst[len(dst)-1]
-			if geo.DistanceSq(last.Lat, last.Lon, p.Lat, p.Lon) <= tolSq {
+			if geo.DistanceSq(last.Lat, last.Lon, p.Lat, p.Lon) <= epsSq {
 				continue
 			}
 		}
@@ -507,10 +617,15 @@ func appendUniquePoints(dst []Point, src []Point, tolM float64) []Point {
 
 func findWaypointIndex(wps []Point, p Point, tolM float64) int {
 	tolSq := tolM * tolM
+	// Prefer closest within tol so a hold snaps to the best path vertex.
+	best := -1
+	bestD := tolSq + 1
 	for i, q := range wps {
-		if geo.DistanceSq(q.Lat, q.Lon, p.Lat, p.Lon) <= tolSq {
-			return i
+		d := geo.DistanceSq(q.Lat, q.Lon, p.Lat, p.Lon)
+		if d <= tolSq && d < bestD {
+			bestD = d
+			best = i
 		}
 	}
-	return -1
+	return best
 }

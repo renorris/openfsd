@@ -126,10 +126,14 @@ func (g *Graph) Intersect(nameA, nameB string) bool {
 	return ok
 }
 
-// FindIntersection finds the first pair of waypoints (scan order of A then B)
-// within tol and returns the point on surface A (TWRTrainer FindNextWaypoint
-// semantics), plus the point indices on A and B. ok is false if either surface
-// is missing or no pair is within tolerance.
+// FindIntersection finds waypoints of A and B within tol and returns the
+// closest pair (ties broken by scan order of A then B). The returned point is
+// on surface A. ok is false if either surface is missing or no pair is within
+// tolerance.
+//
+// Closest-within-tol (rather than first-within-tol) keeps junctions correct on
+// dense polylines where several vertices of A lie within snap of a shared
+// vertex on B.
 //
 // When nameA and nameB refer to the same surface, returns the first waypoint.
 func (g *Graph) FindIntersection(nameA, nameB string) (pt Point, idxA, idxB int, ok bool) {
@@ -149,18 +153,24 @@ func (g *Graph) FindIntersection(nameA, nameB string) (pt Point, idxA, idxB int,
 	if ia == ib {
 		return sa.Points[0], 0, 0, true
 	}
-	tol := g.tolM
-	tolSq := tol * tol
+	tolSq := g.tolM * g.tolM
+	bestD := tolSq + 1
+	bestA, bestB := -1, -1
 	for a := range sa.Points {
 		pa := sa.Points[a]
 		for b := range sb.Points {
 			pb := sb.Points[b]
-			if geo.DistanceSq(pa.Lat, pa.Lon, pb.Lat, pb.Lon) <= tolSq {
-				return pa, a, b, true
+			d := geo.DistanceSq(pa.Lat, pa.Lon, pb.Lat, pb.Lon)
+			if d <= tolSq && d < bestD {
+				bestD = d
+				bestA, bestB = a, b
 			}
 		}
 	}
-	return Point{}, -1, -1, false
+	if bestA < 0 {
+		return Point{}, -1, -1, false
+	}
+	return sa.Points[bestA], bestA, bestB, true
 }
 
 // Neighbors returns names of surfaces that intersect name (excluding itself),
