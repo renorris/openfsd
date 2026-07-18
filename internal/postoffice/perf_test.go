@@ -8,16 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/renorris/openfsd/internal/geo"
 	"github.com/renorris/openfsd/internal/session"
 )
-
-// setLinearSearchThreshold overrides the large-N threshold for the duration of t.
-func setLinearSearchThreshold(t *testing.T, n int) {
-	t.Helper()
-	old := linearSearchThreshold
-	linearSearchThreshold = n
-	t.Cleanup(func() { linearSearchThreshold = old })
-}
 
 func callsignsOf(ss []*session.Session) []string {
 	out := make([]string, len(ss))
@@ -46,8 +39,30 @@ func searchATCCallsigns(p *PostOffice, self *session.Session) []string {
 	return callsignsOf(found)
 }
 
-// TestSearchATC_LinearPath yields only ATC peers on the lock-free snapshot path.
-func TestSearchATC_LinearPath(t *testing.T) {
+// linearOracleSearch is a brute-force AABB scan used only in tests as the
+// reference semantics for the spatial hash.
+func linearOracleSearch(all []*session.Session, self *session.Session, atcOnly bool) []string {
+	sMin, sMax := geo.BoundingBox(self.LatLon(), self.VisRange.Load())
+	var found []string
+	for _, other := range all {
+		if other == self {
+			continue
+		}
+		if atcOnly && !other.IsAtc {
+			continue
+		}
+		oMin, oMax := geo.BoundingBox(other.LatLon(), other.VisRange.Load())
+		if !geo.AABBOverlap(sMin, sMax, oMin, oMax) {
+			continue
+		}
+		found = append(found, other.Callsign)
+	}
+	sort.Strings(found)
+	return found
+}
+
+// TestSearchATC_ATCOnly yields only ATC peers.
+func TestSearchATC_ATCOnly(t *testing.T) {
 	p := New()
 	pilot := newTestClient("PIL1", 34.0, -118.0, 200*1852)
 	pilot.IsAtc = false
@@ -63,9 +78,6 @@ func TestSearchATC_LinearPath(t *testing.T) {
 		if err := p.Register(c); err != nil {
 			t.Fatal(err)
 		}
-	}
-	if p.treeReady.Load() {
-		t.Fatal("expected linear mode (treeReady=false) for small N")
 	}
 
 	got := searchATCCallsigns(p, pilot)
@@ -105,111 +117,53 @@ func TestSearchATC_EarlyStop(t *testing.T) {
 	}
 }
 
-// TestThresholdCrossing_TreeMode enables the R-tree once N exceeds the threshold
-// and Search results stay consistent with the linear path.
-func TestThresholdCrossing_TreeMode(t *testing.T) {
-	const thr = 4
-	setLinearSearchThreshold(t, thr)
+// TestSearch_EquivalenceToLinearOracle compares Search to brute-force AABB.
+func TestSearch_EquivalenceToLinearOracle(t *testing.T) {
+	type place struct {
+		cs       string
+		lat, lon float64
+		vr       float64
+		atc      bool
+	}
+	places := []place{
+		{"P0", 34.00, -118.00, 80 * 1852, false},
+		{"P1", 34.10, -118.00, 80 * 1852, false},
+		{"P2", 34.50, -118.00, 40 * 1852, true},
+		{"P3", 40.00, -100.00, 30 * 1852, true},
+		{"P4", 34.05, -118.05, 100 * 1852, false},
+	}
 
 	p := New()
-	// Cluster of thr+2 co-located clients so range searches hit everyone.
-	clients := make([]*session.Session, thr+2)
-	for i := 0; i < thr+2; i++ {
-		c := newTestClient(fmt.Sprintf("C%d", i), 34.0, -118.0, 100*1852)
-		if i%3 == 0 {
-			c.IsAtc = true
-		}
-		clients[i] = c
+	all := make([]*session.Session, 0, len(places))
+	for _, pl := range places {
+		c := newTestClient(pl.cs, pl.lat, pl.lon, pl.vr)
+		c.IsAtc = pl.atc
 		if err := p.Register(c); err != nil {
 			t.Fatal(err)
 		}
+		all = append(all, c)
 	}
 
-	if !p.treeReady.Load() {
-		t.Fatal("expected treeReady after crossing threshold")
-	}
-	if p.liveLen() != thr+2 {
-		t.Fatalf("liveLen=%d want %d", p.liveLen(), thr+2)
-	}
-
-	// Every client should see all others via Search (tree path).
-	for _, self := range clients {
+	for _, pl := range places {
+		self, err := p.Find(pl.cs)
+		if err != nil {
+			t.Fatal(err)
+		}
 		got := searchCallsigns(p, self)
-		if len(got) != thr+1 {
-			t.Fatalf("%s Search len=%d want %d (%v)", self.Callsign, len(got), thr+1, got)
+		want := linearOracleSearch(all, self, false)
+		if fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Fatalf("Search(%s) grid=%v oracle=%v", pl.cs, got, want)
 		}
-	}
-
-	// SearchATC must only return ATC and never self.
-	for _, self := range clients {
-		got := searchATCCallsigns(p, self)
-		for _, cs := range got {
-			found, err := p.Find(cs)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !found.IsAtc {
-				t.Fatalf("SearchATC returned non-ATC %s", cs)
-			}
-			if found == self {
-				t.Fatalf("SearchATC included self %s", cs)
-			}
+		gotA := searchATCCallsigns(p, self)
+		wantA := linearOracleSearch(all, self, true)
+		if fmt.Sprint(gotA) != fmt.Sprint(wantA) {
+			t.Fatalf("SearchATC(%s) grid=%v oracle=%v", pl.cs, gotA, wantA)
 		}
 	}
 }
 
-// TestThresholdDrop_ReturnsToLinear clears treeReady when N falls back.
-func TestThresholdDrop_ReturnsToLinear(t *testing.T) {
-	const thr = 3
-	setLinearSearchThreshold(t, thr)
-
-	p := New()
-	clients := make([]*session.Session, thr+1)
-	for i := 0; i < thr+1; i++ {
-		c := newTestClient(fmt.Sprintf("D%d", i), 0, 0, 500000)
-		clients[i] = c
-		if err := p.Register(c); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if !p.treeReady.Load() {
-		t.Fatal("expected tree mode")
-	}
-
-	// Drop one → at threshold → linear again.
-	p.Release(clients[0])
-	if p.treeReady.Load() {
-		t.Fatal("expected treeReady=false after dropping to threshold")
-	}
-	if p.liveLen() != thr {
-		t.Fatalf("liveLen=%d want %d", p.liveLen(), thr)
-	}
-
-	// Remaining clients still find each other on the linear path.
-	got := searchCallsigns(p, clients[1])
-	if len(got) != thr-1 {
-		t.Fatalf("Search after drop len=%d want %d (%v)", len(got), thr-1, got)
-	}
-
-	// Re-cross threshold: tree comes back and Search remains correct.
-	extra := newTestClient("EXTRA", 0, 0, 500000)
-	if err := p.Register(extra); err != nil {
-		t.Fatal(err)
-	}
-	if !p.treeReady.Load() {
-		t.Fatal("expected treeReady after re-crossing")
-	}
-	got = searchCallsigns(p, extra)
-	if len(got) != thr {
-		t.Fatalf("Search after re-cross len=%d want %d (%v)", len(got), thr, got)
-	}
-}
-
-// TestUpdatePosition_TreeMode rewrites the index so distant peers fall out of range.
-func TestUpdatePosition_TreeMode(t *testing.T) {
-	const thr = 2
-	setLinearSearchThreshold(t, thr)
-
+// TestUpdatePosition_MovesOutOfRange rewrites the index so distant peers fall out of range.
+func TestUpdatePosition_MovesOutOfRange(t *testing.T) {
 	p := New()
 	a := newTestClient("A", 34.0, -118.0, 50*1852)
 	b := newTestClient("B", 34.0, -118.0, 50*1852)
@@ -219,23 +173,19 @@ func TestUpdatePosition_TreeMode(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if !p.treeReady.Load() {
-		t.Fatal("expected tree mode")
-	}
 
 	got := searchCallsigns(p, a)
 	if len(got) != 2 {
 		t.Fatalf("before move Search=%v", got)
 	}
 
-	// Move B far away; quantized box must change so the tree entry is rewritten.
 	p.UpdatePosition(b, [2]float64{50.0, 10.0}, 50*1852)
 	got = searchCallsigns(p, a)
 	if fmt.Sprint(got) != fmt.Sprint([]string{"C"}) {
 		t.Fatalf("after move Search=%v, want [C]", got)
 	}
 
-	// No-op quantized update keeps B searchable from its new home (with a peer there).
+	// No-op update keeps B searchable from its new home.
 	p.UpdatePosition(b, [2]float64{50.0, 10.0}, 50*1852)
 	peer := newTestClient("PEER", 50.0, 10.0, 50*1852)
 	if err := p.Register(peer); err != nil {
@@ -256,82 +206,12 @@ func contains(ss []string, want string) bool {
 	return false
 }
 
-// TestLinearVsTree_SearchEquivalence registers the same geometry under both modes
-// and asserts identical recipient sets (modulo order).
-func TestLinearVsTree_SearchEquivalence(t *testing.T) {
-	// Fixed geometry: mixed ranges so some pairs overlap and some do not.
-	type place struct {
-		cs       string
-		lat, lon float64
-		vr       float64
-		atc      bool
-	}
-	places := []place{
-		{"P0", 34.00, -118.00, 80 * 1852, false},
-		{"P1", 34.10, -118.00, 80 * 1852, false},
-		{"P2", 34.50, -118.00, 40 * 1852, true}, // farther; may not see P0 depending on ranges
-		{"P3", 40.00, -100.00, 30 * 1852, true}, // far away
-		{"P4", 34.05, -118.05, 100 * 1852, false},
-	}
-
-	build := func(thr int) *PostOffice {
-		setLinearSearchThreshold(t, thr)
-		p := New()
-		for _, pl := range places {
-			c := newTestClient(pl.cs, pl.lat, pl.lon, pl.vr)
-			c.IsAtc = pl.atc
-			if err := p.Register(c); err != nil {
-				t.Fatal(err)
-			}
-		}
-		return p
-	}
-
-	// Linear: threshold above N.
-	linear := build(100)
-	if linear.treeReady.Load() {
-		t.Fatal("linear fixture unexpectedly in tree mode")
-	}
-
-	// Tree: threshold below N.
-	tree := build(2)
-	if !tree.treeReady.Load() {
-		t.Fatal("tree fixture not in tree mode")
-	}
-
-	for _, pl := range places {
-		selfL, err := linear.Find(pl.cs)
-		if err != nil {
-			t.Fatal(err)
-		}
-		selfT, err := tree.Find(pl.cs)
-		if err != nil {
-			t.Fatal(err)
-		}
-		gotL := searchCallsigns(linear, selfL)
-		gotT := searchCallsigns(tree, selfT)
-		if fmt.Sprint(gotL) != fmt.Sprint(gotT) {
-			t.Fatalf("Search(%s) linear=%v tree=%v", pl.cs, gotL, gotT)
-		}
-		gotAL := searchATCCallsigns(linear, selfL)
-		gotAT := searchATCCallsigns(tree, selfT)
-		if fmt.Sprint(gotAL) != fmt.Sprint(gotAT) {
-			t.Fatalf("SearchATC(%s) linear=%v tree=%v", pl.cs, gotAL, gotAT)
-		}
-	}
-}
-
-// TestConcurrentRegisterAcrossThreshold hammers Register around the threshold
-// and asserts the registry ends consistent (no lost sessions, Search works).
-func TestConcurrentRegisterAcrossThreshold(t *testing.T) {
-	const thr = 8
+// TestConcurrentRegisterRelease hammers Register/Release and asserts consistency.
+func TestConcurrentRegisterRelease(t *testing.T) {
 	const n = 32
-	setLinearSearchThreshold(t, thr)
-
 	p := New()
 	clients := make([]*session.Session, n)
 	for i := 0; i < n; i++ {
-		// Slight spatial spread so the tree has non-trivial boxes.
 		clients[i] = newTestClient(
 			fmt.Sprintf("R%d", i),
 			34.0+float64(i%8)*0.01,
@@ -358,15 +238,11 @@ func TestConcurrentRegisterAcrossThreshold(t *testing.T) {
 	if p.liveLen() != n {
 		t.Fatalf("liveLen=%d want %d", p.liveLen(), n)
 	}
-	if !p.treeReady.Load() {
-		t.Fatal("expected treeReady after concurrent register past threshold")
-	}
 	snap := p.Snapshot()
 	if len(snap) != n {
 		t.Fatalf("Snapshot len=%d want %d", len(snap), n)
 	}
 
-	// Every registered callsign must be Find-able and appear in some Search.
 	for _, c := range clients {
 		got, err := p.Find(c.Callsign)
 		if err != nil || got != c {
@@ -374,7 +250,6 @@ func TestConcurrentRegisterAcrossThreshold(t *testing.T) {
 		}
 	}
 
-	// Concurrent Search + UpdatePosition must not race or panic.
 	for i := 0; i < n; i++ {
 		wg.Add(1)
 		go func(c *session.Session) {
@@ -388,7 +263,6 @@ func TestConcurrentRegisterAcrossThreshold(t *testing.T) {
 	}
 	wg.Wait()
 
-	// Concurrent release of half, then the rest.
 	for i := 0; i < n/2; i++ {
 		wg.Add(1)
 		go func(c *session.Session) {
@@ -413,9 +287,6 @@ func TestConcurrentRegisterAcrossThreshold(t *testing.T) {
 	if p.liveLen() != 0 {
 		t.Fatalf("after full release liveLen=%d", p.liveLen())
 	}
-	if p.treeReady.Load() {
-		t.Fatal("expected treeReady=false on empty registry")
-	}
 	if len(p.Snapshot()) != 0 {
 		t.Fatalf("Snapshot not empty: %d", len(p.Snapshot()))
 	}
@@ -427,7 +298,6 @@ func TestSearch_DoesNotHoldLockAcrossCallback(t *testing.T) {
 	p := New()
 	self := newTestClient("self", 0, 0, 500000)
 	peer := newTestClient("peer", 0, 0, 500000)
-	// Fill peer outbound so Send would block if the buffer is full.
 	for i := 0; i < 32; i++ {
 		if err := peer.Send("pad"); err != nil {
 			t.Fatal(err)
@@ -439,14 +309,11 @@ func TestSearch_DoesNotHoldLockAcrossCallback(t *testing.T) {
 		}
 	}
 
-	// Run Search that tries blocking Send in a goroutine; ensure another
-	// Register can still complete (proves no lock held across callback).
 	started := make(chan struct{})
 	done := make(chan struct{})
 	go func() {
 		close(started)
 		p.Search(self, func(r *session.Session) bool {
-			// This will block until we cancel the peer context.
 			_ = r.Send("blocked\r\n")
 			return true
 		})
@@ -477,7 +344,7 @@ func TestSearch_DoesNotHoldLockAcrossCallback(t *testing.T) {
 }
 
 // TestBroadcastFanout_SendPositionDoesNotStall ensures a slow peer with a full
-// buffer cannot stall position fan-out to other recipients (UX-critical path).
+// buffer cannot stall position fan-out to other recipients.
 func TestBroadcastFanout_SendPositionDoesNotStall(t *testing.T) {
 	p := New()
 	src := newTestClient("SRC", 34.0, -118.0, 100*1852)
@@ -488,7 +355,6 @@ func TestBroadcastFanout_SendPositionDoesNotStall(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// Saturate slow peer's outbound channel.
 	for i := 0; i < 32; i++ {
 		if err := slow.Send("old"); err != nil {
 			t.Fatal(err)
@@ -506,7 +372,6 @@ func TestBroadcastFanout_SendPositionDoesNotStall(t *testing.T) {
 		t.Fatalf("fan-out took %v — SendPosition appears to block on slow peer", elapsed)
 	}
 
-	// Fast peer must have received the fresh position.
 	var saw bool
 	for {
 		out, ok := fast.DequeueOutbound()
@@ -521,7 +386,6 @@ func TestBroadcastFanout_SendPositionDoesNotStall(t *testing.T) {
 		t.Fatal("FAST peer did not receive position packet")
 	}
 
-	// Slow peer should also have the latest position (latest-wins drop).
 	saw = false
 	for {
 		out, ok := slow.DequeueOutbound()
@@ -537,43 +401,79 @@ func TestBroadcastFanout_SendPositionDoesNotStall(t *testing.T) {
 	}
 }
 
-// TestSnapshotCOW_Isolation ensures live snapshot readers are not mutated by
-// later Register/Release (copy-on-write).
-func TestSnapshotCOW_Isolation(t *testing.T) {
+// TestLiveSlab_ReleaseInvisible ensures released sessions disappear from All/Search
+// without requiring COW freeze of prior slab pointers.
+func TestLiveSlab_ReleaseInvisible(t *testing.T) {
 	p := New()
 	a := newTestClient("A", 0, 0, 1000)
 	if err := p.Register(a); err != nil {
 		t.Fatal(err)
 	}
-	live1 := p.live.Load()
-	if live1 == nil || len(*live1) != 1 {
-		t.Fatalf("live1 = %v", live1)
-	}
-
 	b := newTestClient("B", 0, 0, 1000)
 	if err := p.Register(b); err != nil {
 		t.Fatal(err)
 	}
-	// Prior snapshot slice must be unchanged (COW).
-	if len(*live1) != 1 || (*live1)[0] != a {
-		t.Fatalf("live1 mutated after Register: %v", *live1)
-	}
-	live2 := p.live.Load()
-	if live2 == nil || len(*live2) != 2 {
-		t.Fatalf("live2 len=%v", live2)
+	if p.liveLen() != 2 {
+		t.Fatalf("liveLen=%d", p.liveLen())
 	}
 
 	p.Release(a)
-	if len(*live2) != 2 {
-		t.Fatalf("live2 mutated after Release: len=%d", len(*live2))
+	if p.liveLen() != 1 {
+		t.Fatalf("liveLen after release=%d", p.liveLen())
 	}
-	live3 := p.live.Load()
-	if live3 == nil || len(*live3) != 1 || (*live3)[0] != b {
-		t.Fatalf("live3 = %v", live3)
+	if _, err := p.Find("A"); err != ErrCallsignDoesNotExist {
+		t.Fatalf("Find A after release: %v", err)
+	}
+
+	var seen []string
+	p.All(nil, func(r *session.Session) bool {
+		seen = append(seen, r.Callsign)
+		return true
+	})
+	if len(seen) != 1 || seen[0] != "B" {
+		t.Fatalf("All after release A = %v, want [B]", seen)
 	}
 }
 
-// TestATCSnapshot_TracksATCOnly keeps atcLive consistent across Register/Release.
+// TestLiveSlab_FreeListReuse registers, releases all, re-registers without capacity explosion.
+func TestLiveSlab_FreeListReuse(t *testing.T) {
+	const n = 200
+	p := New()
+	clients := make([]*session.Session, n)
+	for i := 0; i < n; i++ {
+		clients[i] = newTestClient(fmt.Sprintf("F%d", i), 0, 0, 1000)
+		if err := p.Register(clients[i]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	slab1 := p.live.Load()
+	cap1 := len(slab1.slots)
+
+	for _, c := range clients {
+		p.Release(c)
+	}
+	if p.liveLen() != 0 {
+		t.Fatalf("liveLen=%d", p.liveLen())
+	}
+
+	// Re-register same population (new sessions, same N).
+	for i := 0; i < n; i++ {
+		clients[i] = newTestClient(fmt.Sprintf("G%d", i), 0, 0, 1000)
+		if err := p.Register(clients[i]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	slab2 := p.live.Load()
+	cap2 := len(slab2.slots)
+	if cap2 > cap1*2 {
+		t.Fatalf("slab cap exploded: before=%d after=%d", cap1, cap2)
+	}
+	if p.liveLen() != n {
+		t.Fatalf("liveLen=%d want %d", p.liveLen(), n)
+	}
+}
+
+// TestATCSnapshot_TracksATCOnly keeps ATC slab consistent across Register/Release.
 func TestATCSnapshot_TracksATCOnly(t *testing.T) {
 	p := New()
 	pilot := newTestClient("P", 0, 0, 1000)
@@ -585,21 +485,18 @@ func TestATCSnapshot_TracksATCOnly(t *testing.T) {
 	if err := p.Register(atc); err != nil {
 		t.Fatal(err)
 	}
-	atcLive := p.atcLive.Load()
-	if atcLive == nil || len(*atcLive) != 1 || (*atcLive)[0] != atc {
-		t.Fatalf("atcLive after register = %v", atcLive)
+	if p.atcCount.Load() != 1 {
+		t.Fatalf("atcCount=%d want 1", p.atcCount.Load())
 	}
 
 	p.Release(pilot)
-	atcLive = p.atcLive.Load()
-	if atcLive == nil || len(*atcLive) != 1 || (*atcLive)[0] != atc {
-		t.Fatalf("atcLive after pilot release = %v", atcLive)
+	if p.atcCount.Load() != 1 {
+		t.Fatalf("atcCount after pilot release=%d", p.atcCount.Load())
 	}
 
 	p.Release(atc)
-	atcLive = p.atcLive.Load()
-	if atcLive == nil || len(*atcLive) != 0 {
-		t.Fatalf("atcLive after atc release = %v", atcLive)
+	if p.atcCount.Load() != 0 {
+		t.Fatalf("atcCount after atc release=%d", p.atcCount.Load())
 	}
 }
 
@@ -607,7 +504,7 @@ func TestATCSnapshot_TracksATCOnly(t *testing.T) {
 func TestReleaseUnregistered(t *testing.T) {
 	p := New()
 	ghost := newTestClient("GHOST", 0, 0, 1000)
-	p.Release(ghost) // must not panic
+	p.Release(ghost)
 	if p.liveLen() != 0 {
 		t.Fatalf("liveLen=%d", p.liveLen())
 	}
@@ -615,27 +512,20 @@ func TestReleaseUnregistered(t *testing.T) {
 
 // TestFoundPool_OversizedDropped ensures huge recipient slices are not pooled.
 func TestFoundPool_OversizedDropped(t *testing.T) {
-	// Build a slice larger than the pool cap limit and release it; a subsequent
-	// acquire must not return the oversized buffer.
-	big := make([]*session.Session, 0, 5000)
+	big := make([]*session.Session, 0, foundPoolMaxCap+1)
 	ptr := &big
 	releaseFound(ptr)
 
 	got := acquireFound()
-	if cap(*got) > 4096 {
+	if cap(*got) > foundPoolMaxCap {
 		t.Fatalf("acquireFound returned oversized buffer cap=%d", cap(*got))
 	}
 	releaseFound(got)
 }
 
-// TestSearch_ConcurrentWithPositionStorm mimics dense event load: many clients
-// updating positions while others Search. Must stay race-clean and not drop
-// registry entries.
+// TestSearch_ConcurrentWithPositionStorm mimics dense event load.
 func TestSearch_ConcurrentWithPositionStorm(t *testing.T) {
-	const thr = 16
 	const n = 48
-	setLinearSearchThreshold(t, thr)
-
 	p := New()
 	clients := make([]*session.Session, n)
 	for i := 0; i < n; i++ {
@@ -654,7 +544,6 @@ func TestSearch_ConcurrentWithPositionStorm(t *testing.T) {
 	var wg sync.WaitGroup
 	stop := make(chan struct{})
 
-	// Position updaters.
 	for i := 0; i < n; i++ {
 		wg.Add(1)
 		go func(c *session.Session, idx int) {
@@ -673,7 +562,6 @@ func TestSearch_ConcurrentWithPositionStorm(t *testing.T) {
 		}(clients[i], i)
 	}
 
-	// Searchers / fan-out.
 	for i := 0; i < 8; i++ {
 		wg.Add(1)
 		go func(idx int) {
@@ -729,9 +617,8 @@ func TestAll_NilExcept(t *testing.T) {
 	}
 }
 
-// TestAllSnapshot_MapFallback covers the defensive map-locked paths used when
-// the atomic live pointer is nil (should not happen after New, but must be safe).
-func TestAllSnapshot_MapFallback(t *testing.T) {
+// TestAll_MapFallback covers All when the live slab pointer is nil.
+func TestAll_MapFallback(t *testing.T) {
 	p := New()
 	a := newTestClient("A", 0, 0, 1000)
 	b := newTestClient("B", 0, 0, 1000)
@@ -741,13 +628,12 @@ func TestAllSnapshot_MapFallback(t *testing.T) {
 	if err := p.Register(b); err != nil {
 		t.Fatal(err)
 	}
-	// Force nil live/atc to exercise fallback branches.
 	p.live.Store(nil)
-	p.atcLive.Store(nil)
 
+	// Snapshot still works via map.
 	snap := p.Snapshot()
 	if len(snap) != 2 {
-		t.Fatalf("Snapshot fallback len=%d want 2", len(snap))
+		t.Fatalf("Snapshot len=%d want 2", len(snap))
 	}
 
 	var seen []string
@@ -759,7 +645,6 @@ func TestAllSnapshot_MapFallback(t *testing.T) {
 		t.Fatalf("All fallback = %v, want [B]", seen)
 	}
 
-	// Early stop on map fallback.
 	count := 0
 	p.All(nil, func(r *session.Session) bool {
 		count++
@@ -769,17 +654,76 @@ func TestAllSnapshot_MapFallback(t *testing.T) {
 		t.Fatalf("early-stop All fallback count=%d", count)
 	}
 
-	// liveLen nil branch + Search with nil live (linear) must not panic.
-	if p.liveLen() != 0 {
-		t.Fatalf("liveLen with nil live = %d", p.liveLen())
+	// Search with nil live slab finds nothing (defensive; New always sets live).
+	got := searchCallsigns(p, a)
+	if len(got) != 0 {
+		t.Fatalf("Search with nil live slab = %v, want []", got)
 	}
-	// Restore empty snapshot so Search linear nil path is hit cleanly.
-	p.Search(a, func(r *session.Session) bool {
-		t.Fatal("Search should find nothing with nil live")
-		return true
-	})
-	p.SearchATC(a, func(r *session.Session) bool {
-		t.Fatal("SearchATC should find nothing with nil atcLive")
-		return true
-	})
+}
+
+// TestATCSlab_GrowAndCompact exercises ATC free-list reuse, slab grow, and compact.
+func TestATCSlab_GrowAndCompact(t *testing.T) {
+	const n = 80
+	p := New()
+	clients := make([]*session.Session, n)
+	for i := 0; i < n; i++ {
+		c := newTestClient(fmt.Sprintf("ATC%d", i), 34+float64(i)*0.01, -118, 50*1852)
+		c.IsAtc = true
+		clients[i] = c
+		if err := p.Register(c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if p.atcCount.Load() != int32(n) {
+		t.Fatalf("atcCount=%d want %d", p.atcCount.Load(), n)
+	}
+	// Release more than half so free >= remaining and cap is large enough to compact.
+	for i := 0; i < n*3/4; i++ {
+		p.Release(clients[i])
+	}
+	if p.atcCount.Load() != int32(n-n*3/4) {
+		t.Fatalf("atcCount after release=%d", p.atcCount.Load())
+	}
+	// Remaining ATC still searchable.
+	src := clients[n-1]
+	got := searchATCCallsigns(p, src)
+	if len(got) != int(p.atcCount.Load())-1 {
+		t.Fatalf("SearchATC len=%d atcCount=%d got=%v", len(got), p.atcCount.Load(), got)
+	}
+	// Re-register released callsigns (free-list path).
+	for i := 0; i < n/4; i++ {
+		c := newTestClient(fmt.Sprintf("NEW%d", i), 0, 0, 1000)
+		c.IsAtc = true
+		if err := p.Register(c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if p.liveLen() < n/4 {
+		t.Fatalf("liveLen=%d", p.liveLen())
+	}
+}
+
+// TestRegisterRelease_IdentityGuard: Release of an old session after callsign
+// re-register must not drop the new occupant.
+func TestRegisterRelease_IdentityGuard(t *testing.T) {
+	p := New()
+	old := newTestClient("SAME", 0, 0, 1000)
+	if err := p.Register(old); err != nil {
+		t.Fatal(err)
+	}
+	p.Release(old)
+
+	neu := newTestClient("SAME", 1, 1, 1000)
+	if err := p.Register(neu); err != nil {
+		t.Fatal(err)
+	}
+	// Ghost release of old must not remove neu.
+	p.Release(old)
+	got, err := p.Find("SAME")
+	if err != nil || got != neu {
+		t.Fatalf("Find after ghost release: %v %v", got, err)
+	}
+	if p.liveLen() != 1 {
+		t.Fatalf("liveLen=%d", p.liveLen())
+	}
 }

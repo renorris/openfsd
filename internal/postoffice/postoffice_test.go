@@ -16,8 +16,7 @@ import (
 
 func newTestClient(callsign string, lat, lon, visRange float64) *session.Session {
 	s := session.New(context.Background(), nil, nil, session.LoginData{Callsign: callsign})
-	s.SetLatLon(lat, lon)
-	s.VisRange.Store(visRange)
+	s.SetGeo(lat, lon, visRange)
 	return s
 }
 
@@ -114,8 +113,7 @@ func TestUpdatePosition(t *testing.T) {
 }
 
 // TestUpdatePosition_NoopKeepsIndexed covers the early-return path when the
-// derived bounding box does not change, and asserts the client remains
-// searchable (still present in the tree after the noop update).
+// cell footprint does not change, and asserts the client remains searchable.
 func TestUpdatePosition_NoopKeepsIndexed(t *testing.T) {
 	p := New()
 	client1 := newTestClient("client1", 10, 20, 50000)
@@ -127,7 +125,7 @@ func TestUpdatePosition_NoopKeepsIndexed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Same center and range → identical bbox → early return (no tree rewrite).
+	// Same center and range → identical cell cover → early return.
 	p.UpdatePosition(client1, [2]float64{10, 20}, 50000)
 	latLon := client1.LatLon()
 	if latLon[0] != 10 || latLon[1] != 20 {
@@ -137,7 +135,7 @@ func TestUpdatePosition_NoopKeepsIndexed(t *testing.T) {
 		t.Fatalf("visRange after noop update = %v", client1.VisRange.Load())
 	}
 
-	// Peer must still find client1, proving the tree entry remains valid.
+	// Peer must still find client1, proving the geo entry remains valid.
 	var found []*session.Session
 	p.Search(peer, func(recipient *session.Session) bool {
 		found = append(found, recipient)
@@ -332,8 +330,7 @@ func TestSend(t *testing.T) {
 	defer cancel()
 
 	client := session.New(ctx, nil, nil, session.LoginData{Callsign: "RECV"})
-	client.SetLatLon(0, 0)
-	client.VisRange.Store(1000)
+	client.SetGeo(0, 0, 1000)
 	if err := p.Register(client); err != nil {
 		t.Fatal(err)
 	}

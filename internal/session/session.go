@@ -7,6 +7,7 @@ package session
 import (
 	"bufio"
 	"context"
+	"math"
 	"net"
 	"time"
 	"unsafe"
@@ -42,7 +43,7 @@ type LoginData struct {
 	IsAtc            bool                   // True if the client is ATC, false if a pilot
 }
 
-// LatLon is a geographic coordinate pair stored in Session.Coords.
+// LatLon is a geographic coordinate pair (API convenience; storage is non-boxing atomics).
 type LatLon struct {
 	Lat, Lon float64
 }
@@ -65,7 +66,7 @@ type LatLon struct {
 // Atomic / concurrent-safe (may be read by postoffice, HTTP service, or other
 // session goroutines; writers are typically the owning read loop or postoffice
 // position updates):
-//   - Coords (via LatLon/SetLatLon), VisRange
+//   - LatLon / SetLatLon / SetGeo / VisRange / VisBox (non-boxing float atomics)
 //   - FlightPlan, AssignedBeaconCode
 //   - Frequency (ATC % position field 1; stored by handleATCPosition), Altitude,
 //     Groundspeed, Transponder, Heading, LastUpdated
@@ -103,9 +104,17 @@ type Session struct {
 	Cancel   context.CancelFunc
 	sendChan chan string
 
-	// Coords stores LatLon; use LatLon/SetLatLon.
-	Coords                        atomic.Value
-	VisRange                      atomic.Float64
+	// Geographic state (non-boxing atomics — hot path for postoffice Search).
+	// Prefer SetGeo / SetLatLon / SetVisRange so VisBox stays in sync.
+	latBits  atomic.Uint64 // math.Float64bits(lat)
+	lonBits  atomic.Uint64 // math.Float64bits(lon)
+	VisRange atomic.Float64
+	// Cached visibility AABB from last SetGeo/SetLatLon/SetVisRange (float bits).
+	boxMinLatBits atomic.Uint64
+	boxMinLonBits atomic.Uint64
+	boxMaxLatBits atomic.Uint64
+	boxMaxLonBits atomic.Uint64
+
 	ClosestVelocityClientDistance float64 // Closest Velocity-compatible client distance in meters
 
 	FlightPlan         atomic.String
@@ -279,13 +288,62 @@ func (s *Session) SetSendEnqueueObserver(obs SendEnqueueObserver) {
 
 // LatLon returns the current [lat, lon] coordinates.
 func (s *Session) LatLon() [2]float64 {
-	ll := s.Coords.Load().(LatLon)
-	return [2]float64{ll.Lat, ll.Lon}
+	return [2]float64{
+		math.Float64frombits(s.latBits.Load()),
+		math.Float64frombits(s.lonBits.Load()),
+	}
 }
 
-// SetLatLon stores the current coordinates atomically.
+// SetLatLon stores coordinates atomically and refreshes VisBox using current VisRange.
 func (s *Session) SetLatLon(lat, lon float64) {
-	s.Coords.Store(LatLon{Lat: lat, Lon: lon})
+	s.latBits.Store(math.Float64bits(lat))
+	s.lonBits.Store(math.Float64bits(lon))
+	s.refreshVisBox(lat, lon, s.VisRange.Load())
+}
+
+// SetVisRange stores visibility range (meters) and refreshes VisBox.
+func (s *Session) SetVisRange(rangeM float64) {
+	s.VisRange.Store(rangeM)
+	ll := s.LatLon()
+	s.refreshVisBox(ll[0], ll[1], rangeM)
+}
+
+// SetGeo sets lat, lon, and visibility range together (single VisBox refresh).
+// Prefer this over separate SetLatLon + VisRange.Store on hot paths.
+func (s *Session) SetGeo(lat, lon, rangeM float64) {
+	s.latBits.Store(math.Float64bits(lat))
+	s.lonBits.Store(math.Float64bits(lon))
+	s.VisRange.Store(rangeM)
+	s.refreshVisBox(lat, lon, rangeM)
+}
+
+// VisBox returns the cached axis-aligned visibility box [min, max] in degrees.
+// Updated by SetLatLon / SetVisRange / SetGeo. Concurrent readers may observe a
+// torn combination of edges for a brief window; acceptable for range filtering.
+func (s *Session) VisBox() (min, max [2]float64) {
+	min = [2]float64{
+		math.Float64frombits(s.boxMinLatBits.Load()),
+		math.Float64frombits(s.boxMinLonBits.Load()),
+	}
+	max = [2]float64{
+		math.Float64frombits(s.boxMaxLatBits.Load()),
+		math.Float64frombits(s.boxMaxLonBits.Load()),
+	}
+	return min, max
+}
+
+// refreshVisBox writes the equirectangular AABB for center/range into atomics.
+// Duplicates geo.BoundingBox math to avoid a session → geo import edge.
+func (s *Session) refreshVisBox(lat, lon, rangeM float64) {
+	const metersPerDegreeLat = (math.Pi * 6371000.0) / 180
+	latRad := lat * (math.Pi / 180)
+	deltaLat := rangeM / metersPerDegreeLat
+	metersPerDegreeLon := metersPerDegreeLat * math.Cos(latRad)
+	deltaLon := rangeM / metersPerDegreeLon
+	s.boxMinLatBits.Store(math.Float64bits(lat - deltaLat))
+	s.boxMaxLatBits.Store(math.Float64bits(lat + deltaLat))
+	s.boxMinLonBits.Store(math.Float64bits(lon - deltaLon))
+	s.boxMaxLonBits.Store(math.Float64bits(lon + deltaLon))
 }
 
 // DequeueOutbound non-blockingly takes one queued outbound packet.

@@ -104,3 +104,92 @@ func QuantizeCenter(center [2]float64, quantumDeg float64) [2]float64 {
 		QuantizeDeg(center[1], quantumDeg),
 	}
 }
+
+// DefaultGridCellDeg is the spatial-hash cell size used by postoffice (~0.25° ≈ 28 km).
+// Larger cells reduce multi-cell membership churn for large ATC ranges; smaller
+// cells tighten Search candidate sets in dense hubs.
+const DefaultGridCellDeg = 0.25
+
+// CellKey is an integer grid coordinate for a uniform lat/lon hash.
+type CellKey struct {
+	ILat, ILon int32
+}
+
+// CellIndex returns the grid index for a degree coordinate.
+func CellIndex(deg, cellDeg float64) int32 {
+	if cellDeg <= 0 {
+		cellDeg = DefaultGridCellDeg
+	}
+	return int32(math.Floor(deg / cellDeg))
+}
+
+// CellCover appends every CellKey whose cell square intersects the AABB [min,max]
+// (degrees). Handles non-finite extents by clamping latitude and limiting the
+// longitude span so polar Inf δlon does not hang.
+//
+// Does not wrap across ±180° (matches BoundingBox, which also does not wrap).
+func CellCover(min, max [2]float64, cellDeg float64, dst []CellKey) []CellKey {
+	if cellDeg <= 0 {
+		cellDeg = DefaultGridCellDeg
+	}
+	minLat, maxLat := min[0], max[0]
+	minLon, maxLon := min[1], max[1]
+	if minLat > maxLat {
+		minLat, maxLat = maxLat, minLat
+	}
+	if minLon > maxLon {
+		minLon, maxLon = maxLon, minLon
+	}
+
+	// Clamp latitude to a usable band.
+	if minLat < -90 {
+		minLat = -90
+	}
+	if maxLat > 90 {
+		maxLat = 90
+	}
+	if !isFinite(minLat) || !isFinite(maxLat) {
+		minLat, maxLat = -90, 90
+	}
+
+	// Cap longitude span (~half globe) when non-finite or absurdly wide.
+	const maxLonSpan = 180.0
+	if !isFinite(minLon) || !isFinite(maxLon) || maxLon-minLon > maxLonSpan {
+		// Degenerate: cover a single band of lon cells around 0 with full span cap.
+		// Callers with true global range still recheck live AABB.
+		mid := 0.0
+		if isFinite(minLon) && isFinite(maxLon) {
+			mid = (minLon + maxLon) * 0.5
+		}
+		minLon, maxLon = mid-maxLonSpan*0.5, mid+maxLonSpan*0.5
+	}
+
+	iLat0 := CellIndex(minLat, cellDeg)
+	iLat1 := CellIndex(maxLat, cellDeg)
+	iLon0 := CellIndex(minLon, cellDeg)
+	iLon1 := CellIndex(maxLon, cellDeg)
+
+	// Safety cap on cell count (e.g. huge CTR boxes).
+	const maxCellsPerAxis = 128
+	if int(iLat1-iLat0) > maxCellsPerAxis {
+		mid := (iLat0 + iLat1) / 2
+		iLat0 = mid - maxCellsPerAxis/2
+		iLat1 = mid + maxCellsPerAxis/2
+	}
+	if int(iLon1-iLon0) > maxCellsPerAxis {
+		mid := (iLon0 + iLon1) / 2
+		iLon0 = mid - maxCellsPerAxis/2
+		iLon1 = mid + maxCellsPerAxis/2
+	}
+
+	for i := iLat0; i <= iLat1; i++ {
+		for j := iLon0; j <= iLon1; j++ {
+			dst = append(dst, CellKey{ILat: i, ILon: j})
+		}
+	}
+	return dst
+}
+
+func isFinite(v float64) bool {
+	return !math.IsNaN(v) && !math.IsInf(v, 0)
+}

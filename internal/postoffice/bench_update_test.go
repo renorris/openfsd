@@ -10,7 +10,7 @@ import (
 
 // BenchmarkUpdatePosition measures geospatial index rewrite cost.
 func BenchmarkUpdatePosition(b *testing.B) {
-	for _, n := range []int{100, 1000} {
+	for _, n := range []int{100, 1000, 10000} {
 		b.Run(fmt.Sprintf("n=%d", n), func(b *testing.B) {
 			p := New()
 			r := rand.New(rand.NewSource(42))
@@ -42,7 +42,7 @@ func BenchmarkUpdatePosition(b *testing.B) {
 // BenchmarkBroadcastRanged measures Search + fan-out Send cost (broadcast path).
 // Sessions use nil Conn; Send enqueues to the outbound buffer (drained each iter).
 func BenchmarkBroadcastRanged(b *testing.B) {
-	for _, n := range []int{100, 1000} {
+	for _, n := range []int{100, 1000, 10000} {
 		b.Run(fmt.Sprintf("n=%d", n), func(b *testing.B) {
 			p := New()
 			// Cluster clients so Search hits many peers.

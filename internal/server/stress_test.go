@@ -156,7 +156,7 @@ func TestStressConcurrentPositionUpdates(t *testing.T) {
 			RealName:      "Stress",
 		})
 		// Cluster around LAX so ranged search finds peers.
-		// Do not SetLatLon before UpdatePosition — identical old/new bbox skips the tree rewrite.
+		// Position is applied via UpdatePosition (SetGeo); avoid double-writing coords.
 		lat := 33.94 + float64(i%10)*0.01
 		lon := -118.40 + float64(i/10)*0.01
 		s.SetSendEnqueueObserver(func(callsign string, enqueuedAt time.Time, queueDepth int) {

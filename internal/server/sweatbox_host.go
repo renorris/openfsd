@@ -484,8 +484,7 @@ func (h *SweatboxHost) buildSession(ac sweatbox.AircraftSnapshot) *session.Sessi
 	s.Altitude.Store(int32(ac.Alt))
 	s.Groundspeed.Store(int32(ac.Speed))
 	s.Heading.Store(int32(ac.Heading))
-	s.SetLatLon(ac.Lat, ac.Lon)
-	s.VisRange.Store(sweatboxPilotVisRangeM)
+	s.SetGeo(ac.Lat, ac.Lon, sweatboxPilotVisRangeM)
 	s.LastUpdated.Store(now)
 	return s
 }
