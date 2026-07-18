@@ -142,11 +142,6 @@ type sweatboxPage struct {
 	ArrCount int
 	DepCount int
 	Aircraft []sweatboxAircraftRow
-
-	// Sticky form values (re-render on soft failure)
-	Command string
-	AptText string
-	AirText string
 }
 
 func pageUserFromClaims(claims *auth.CustomClaims) *pageUser {

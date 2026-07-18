@@ -126,7 +126,7 @@
             <div class="mb-2">
                 <label for="sbx-command" class="form-label">Command</label>
                 <input type="text" class="form-control" id="sbx-command" name="command" required
-                       value="{{ .Command }}" autocomplete="off" spellcheck="false"
+                       value="" autocomplete="off" spellcheck="false"
                        placeholder="add AAL1 B738 J I KBTV KBOS …  or  p / un / ops / del AAL1">
             </div>
             <button type="submit" class="btn btn-primary">Run command</button>
@@ -147,7 +147,7 @@
                         <div class="mb-2">
                             <label for="sbx-apt-text" class="form-label">Or paste .apt text</label>
                             <textarea class="form-control form-control-sm" id="sbx-apt-text" name="apt_text" rows="6"
-                                      placeholder="icao=KBTV&#10;…">{{ .AptText }}</textarea>
+                                      placeholder="icao=KBTV&#10;…"></textarea>
                         </div>
                         <div class="form-check mb-2">
                             <input class="form-check-input" type="checkbox" name="replace" value="on" id="sbx-apt-replace">
@@ -171,7 +171,7 @@
                         <div class="mb-2">
                             <label for="sbx-air-text" class="form-label">Or paste .air text</label>
                             <textarea class="form-control form-control-sm" id="sbx-air-text" name="air_text" rows="6"
-                                      placeholder="AAL123:B738/F:J:I:…">{{ .AirText }}</textarea>
+                                      placeholder="AAL123:B738/F:J:I:…"></textarea>
                         </div>
                         <button type="submit" class="btn btn-outline-primary">Load scenario</button>
                     </form>

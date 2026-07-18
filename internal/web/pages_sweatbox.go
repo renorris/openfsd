@@ -20,6 +20,12 @@ import (
 // Max body for airport/scenario form payloads (mirrors FSD service HTTP 2 MiB).
 const sweatboxWebMaxBody = 2 << 20
 
+// Max body for small sweatbox form POSTs (command/pause/delete — not file uploads).
+const sweatboxWebSmallFormMaxBody = 64 << 10
+
+// Max freeform flash message length embedded in redirect Location query.
+const sweatboxFlashMsgMaxRunes = 240
+
 // handleFrontendSweatbox GET /sweatbox — server-rendered instructor page.
 // Works with JS disabled: aircraft table from FSD GET /sweatbox/state + forms.
 func (s *Server) handleFrontendSweatbox(c *gin.Context) {
@@ -41,7 +47,7 @@ func (s *Server) newSweatboxPage(c *gin.Context) sweatboxPage {
 }
 
 func (s *Server) applySweatboxFlash(c *gin.Context, page *sweatboxPage) {
-	msg := strings.TrimSpace(c.Query("msg"))
+	msg := truncateRunes(strings.TrimSpace(c.Query("msg")), sweatboxFlashMsgMaxRunes)
 	switch c.Query("flash") {
 	case "ok":
 		if msg == "" {
@@ -141,6 +147,8 @@ func (s *Server) populateSweatboxState(c *gin.Context, page *sweatboxPage) {
 
 // handleFrontendSweatboxAirport POST /sweatbox/airport
 func (s *Server) handleFrontendSweatboxAirport(c *gin.Context) {
+	// Cap before CSRF form parse so oversized bodies fail closed early.
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, sweatboxWebMaxBody+4096)
 	if !s.validateCSRF(c) {
 		c.AbortWithStatus(http.StatusForbidden)
 		return
@@ -193,6 +201,8 @@ func (s *Server) handleFrontendSweatboxAirport(c *gin.Context) {
 
 // handleFrontendSweatboxScenario POST /sweatbox/scenario
 func (s *Server) handleFrontendSweatboxScenario(c *gin.Context) {
+	// Cap before CSRF form parse so oversized bodies fail closed early.
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, sweatboxWebMaxBody+4096)
 	if !s.validateCSRF(c) {
 		c.AbortWithStatus(http.StatusForbidden)
 		return
@@ -220,7 +230,10 @@ func (s *Server) handleFrontendSweatboxScenario(c *gin.Context) {
 	switch status {
 	case http.StatusOK:
 		var res server.SweatboxScenarioResponse
-		_ = json.Unmarshal(respBody, &res)
+		if err := json.Unmarshal(respBody, &res); err != nil {
+			s.redirectSweatboxFlash(c, "err", "Unable to parse scenario response")
+			return
+		}
 		msg := fmt.Sprintf("Scenario loaded: %d aircraft", res.Loaded)
 		if len(res.Errors) > 0 {
 			msg = fmt.Sprintf("%s (%d warning(s))", msg, len(res.Errors))
@@ -241,6 +254,9 @@ func (s *Server) handleFrontendSweatboxScenario(c *gin.Context) {
 
 // handleFrontendSweatboxCommand POST /sweatbox/command
 func (s *Server) handleFrontendSweatboxCommand(c *gin.Context) {
+	if !s.limitSweatboxSmallForm(c) {
+		return
+	}
 	if !s.validateCSRF(c) {
 		c.AbortWithStatus(http.StatusForbidden)
 		return
@@ -300,6 +316,9 @@ func (s *Server) handleFrontendSweatboxCommand(c *gin.Context) {
 
 // handleFrontendSweatboxPause POST /sweatbox/pause
 func (s *Server) handleFrontendSweatboxPause(c *gin.Context) {
+	if !s.limitSweatboxSmallForm(c) {
+		return
+	}
 	if !s.validateCSRF(c) {
 		c.AbortWithStatus(http.StatusForbidden)
 		return
@@ -321,6 +340,9 @@ func (s *Server) handleFrontendSweatboxPause(c *gin.Context) {
 
 // handleFrontendSweatboxUnpause POST /sweatbox/unpause
 func (s *Server) handleFrontendSweatboxUnpause(c *gin.Context) {
+	if !s.limitSweatboxSmallForm(c) {
+		return
+	}
 	if !s.validateCSRF(c) {
 		c.AbortWithStatus(http.StatusForbidden)
 		return
@@ -342,6 +364,9 @@ func (s *Server) handleFrontendSweatboxUnpause(c *gin.Context) {
 
 // handleFrontendSweatboxDelete POST /sweatbox/delete
 func (s *Server) handleFrontendSweatboxDelete(c *gin.Context) {
+	if !s.limitSweatboxSmallForm(c) {
+		return
+	}
 	if !s.validateCSRF(c) {
 		c.AbortWithStatus(http.StatusForbidden)
 		return
@@ -372,6 +397,9 @@ func (s *Server) handleFrontendSweatboxDelete(c *gin.Context) {
 
 // handleFrontendSweatboxDeleteAll POST /sweatbox/delete-all
 func (s *Server) handleFrontendSweatboxDeleteAll(c *gin.Context) {
+	if !s.limitSweatboxSmallForm(c) {
+		return
+	}
 	if !s.validateCSRF(c) {
 		c.AbortWithStatus(http.StatusForbidden)
 		return
@@ -394,6 +422,21 @@ func (s *Server) handleFrontendSweatboxDeleteAll(c *gin.Context) {
 	default:
 		s.redirectSweatboxFlash(c, "err", fmt.Sprintf("Delete-all failed (HTTP %d)", status))
 	}
+}
+
+// limitSweatboxSmallForm caps POST body for non-upload sweatbox forms.
+// Returns false when the body is too large (flash + redirect already issued).
+func (s *Server) limitSweatboxSmallForm(c *gin.Context) bool {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, sweatboxWebSmallFormMaxBody)
+	// Force parse so MaxBytesReader surfaces early for form-urlencoded.
+	if err := c.Request.ParseForm(); err != nil {
+		if isRequestTooLarge(err) {
+			s.redirectSweatboxFlash(c, "err", "Request body too large")
+			return false
+		}
+		// Leave form empty on other parse errors; handlers validate required fields.
+	}
+	return true
 }
 
 // ---------------------------------------------------------------------------
@@ -428,16 +471,34 @@ func (s *Server) fsdSweatboxDo(method, path, contentType string, body io.Reader)
 func (s *Server) redirectSweatboxFlash(c *gin.Context, flash, msg string) {
 	u := "/sweatbox?flash=" + url.QueryEscape(flash)
 	if msg != "" {
-		u += "&msg=" + url.QueryEscape(msg)
+		u += "&msg=" + url.QueryEscape(truncateRunes(msg, sweatboxFlashMsgMaxRunes))
 	}
 	c.Redirect(http.StatusSeeOther, u)
 }
 
-// readSweatboxFormPayload prefers an uploaded file, else named text fields.
-func readSweatboxFormPayload(c *gin.Context, fileField string, textFields ...string) ([]byte, error) {
-	// Cap body before parsing multipart/urlencoded.
-	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, sweatboxWebMaxBody+4096)
+// truncateRunes shortens s to at most max runes, appending "…" when truncated.
+func truncateRunes(s string, max int) string {
+	if max <= 0 || s == "" {
+		return ""
+	}
+	if max == 1 {
+		// Single-rune budget: prefer ellipsis over a partial character.
+		r := []rune(s)
+		if len(r) <= 1 {
+			return s
+		}
+		return "…"
+	}
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max-1]) + "…"
+}
 
+// readSweatboxFormPayload prefers an uploaded file, else named text fields.
+// Callers should already wrap the request body with MaxBytesReader.
+func readSweatboxFormPayload(c *gin.Context, fileField string, textFields ...string) ([]byte, error) {
 	ct := c.ContentType()
 	if strings.HasPrefix(ct, "multipart/form-data") {
 		if err := c.Request.ParseMultipartForm(sweatboxWebMaxBody); err != nil {
