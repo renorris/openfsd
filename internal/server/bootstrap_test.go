@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -149,6 +150,58 @@ func TestServiceHTTPAuthAndKick(t *testing.T) {
 	default:
 		t.Fatal("kick should cancel session")
 	}
+}
+
+// TestOnlineUsersSyntheticBadge ensures sweatbox pilots expose synthetic:true
+// on GET /online_users while human pilots omit the field (omitempty).
+func TestOnlineUsersSyntheticBadge(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	reg := postoffice.New()
+	kv := &mapConfig{m: map[string]string{db.ConfigJwtSecretKey: TestJWTSecret}}
+	srv, err := New(Deps{
+		Config:   &Config{FsdListenAddrs: []string{":0"}, ServiceHTTPListenAddr: "127.0.0.1:0"},
+		Users:    stubUserStore{},
+		ConfigKV: kv,
+		Registry: reg,
+		Metar:    &recordingMetar{},
+		Clock:    realClock{},
+	})
+	require.NoError(t, err)
+
+	human := newSess("HUMAN1", false, NetworkRatingObserver)
+	require.NoError(t, reg.Register(human))
+
+	synth := newSess("SBX1", false, NetworkRatingObserver)
+	synth.Synthetic = true
+	require.NoError(t, reg.Register(synth))
+
+	e := srv.setupRoutes()
+	tok := mintServiceToken(t, TestJWTSecret, protocol.NetworkRatingAdministator)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/online_users", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	e.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	body := w.Body.String()
+	var data OnlineUsersResponseData
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &data))
+	var sawHuman, sawSynth bool
+	for _, p := range data.Pilots {
+		switch p.Callsign {
+		case "HUMAN1":
+			sawHuman = true
+			require.False(t, p.Synthetic, "human pilot must not be synthetic")
+		case "SBX1":
+			sawSynth = true
+			require.True(t, p.Synthetic, "sweatbox pilot must be synthetic")
+		}
+	}
+	require.True(t, sawHuman && sawSynth, "expected both pilots in snapshot")
+	// Wire JSON must include synthetic:true for sweatbox (operators / dashboard badge).
+	require.Contains(t, body, `"synthetic":true`)
+	// Human pilots must omit synthetic when false (omitempty).
+	require.NotContains(t, body, `"synthetic":false`)
 }
 
 func TestRunServiceHTTPAndListen(t *testing.T) {

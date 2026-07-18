@@ -148,7 +148,7 @@ Enforced by `scripts/check-coverage.sh` (CI).
 | `internal/geo` | ≥98% | **Hard** |
 | `internal/auth` | ≥95% | **Hard** |
 | `internal/postoffice` | ≥90% | **Hard** |
-| `internal/sweatbox` | ≥95% | **Hard** (target; may land in coverage script with later PR) |
+| `internal/sweatbox` | ≥95% | **Hard** |
 | `internal/web` | ≥80% | Soft (report only) |
 | Overall aspirational | 90% | Soft (report only) |
 | `cmd/*` | — | Excluded from measurement |

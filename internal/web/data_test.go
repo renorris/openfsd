@@ -153,16 +153,23 @@ func TestGenerateDatafeedWithStubOnline(t *testing.T) {
 		Pilots: []server.OnlineUserPilot{{
 			OnlineUserGeneralData: server.OnlineUserGeneralData{Callsign: "N1", CID: 1},
 			Altitude:              1000,
+		}, {
+			OnlineUserGeneralData: server.OnlineUserGeneralData{Callsign: "SBX1", CID: 900001},
+			Altitude:              2000,
+			Synthetic:             true,
 		}},
 		ATC: []server.OnlineUserATC{{
 			OnlineUserGeneralData: server.OnlineUserGeneralData{Callsign: "TWR", CID: 2},
 			Frequency:             "118.7",
 		}},
 	}
-	// Ensure JSON shape of OnlineUser types is stable
+	// Ensure JSON shape of OnlineUser types is stable; synthetic omitempty works.
 	b, err := json.Marshal(ou)
 	require.NoError(t, err)
-	assert.Contains(t, string(b), "N1")
+	s := string(b)
+	assert.Contains(t, s, "N1")
+	assert.Contains(t, s, `"synthetic":true`)
+	assert.NotContains(t, s, `"synthetic":false`)
 }
 
 func TestMakeFsdHttpServiceRequest(t *testing.T) {

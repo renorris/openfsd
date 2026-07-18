@@ -350,8 +350,11 @@ func TestE2E_Sweatbox_ATCVisibility(t *testing.T) {
 		t.Fatalf("ATC missed @ for %s (recv=%v)", ac, atc.Recorder().Received())
 	}
 
-	// Confirm registry / service HTTP also list the synthetic.
-	_ = waitOnlinePilot(t, ts, ac, sweatboxDefaultCID)
+	// Confirm registry / service HTTP also list the synthetic with badge field.
+	p := waitOnlinePilot(t, ts, ac, sweatboxDefaultCID)
+	if !p.Synthetic {
+		t.Fatalf("online_users pilot %s: Synthetic=false, want true (sweatbox badge)", ac)
+	}
 }
 
 // TestE2E_Sweatbox_FPQuery: ATC $CQ SERVER:FP returns plan for a synthetic aircraft.

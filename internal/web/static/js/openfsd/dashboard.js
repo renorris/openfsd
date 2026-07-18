@@ -92,6 +92,13 @@ async function populateMap(map, planeIcon) {
             b.textContent = "Callsign: ";
             wrap.appendChild(b);
             wrap.appendChild(document.createTextNode(String(callsign)));
+            if (pilot.synthetic) {
+                wrap.appendChild(document.createTextNode(" "));
+                const badge = document.createElement("span");
+                badge.textContent = "[sweatbox]";
+                badge.setAttribute("title", "In-process sweatbox pilot");
+                wrap.appendChild(badge);
+            }
             wrap.appendChild(document.createElement("br"));
             wrap.appendChild(document.createTextNode(String(name || "")));
             wrap.appendChild(document.createElement("br"));

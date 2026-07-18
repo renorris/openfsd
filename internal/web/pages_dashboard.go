@@ -34,11 +34,12 @@ func (s *Server) handleFrontendDashboard(c *gin.Context) {
 		page.Connections = make([]connectionRow, 0, page.ConnectionCount)
 		for _, p := range online.Pilots {
 			page.Connections = append(page.Connections, connectionRow{
-				Callsign: p.Callsign,
-				CID:      p.CID,
-				Name:     p.Name,
-				Kind:     "pilot",
-				Detail:   fmt.Sprintf("%d ft · %d kts · hdg %d", p.Altitude, p.Groundspeed, p.Heading),
+				Callsign:  p.Callsign,
+				CID:       p.CID,
+				Name:      p.Name,
+				Kind:      "pilot",
+				Detail:    fmt.Sprintf("%d ft · %d kts · hdg %d", p.Altitude, p.Groundspeed, p.Heading),
+				Synthetic: p.Synthetic,
 			})
 		}
 		for _, a := range online.ATC {

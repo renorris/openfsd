@@ -38,11 +38,12 @@ type loginPage struct {
 
 // connectionRow is one pilot or ATC line in the dashboard summary table.
 type connectionRow struct {
-	Callsign string
-	CID      int
-	Name     string
-	Kind     string // "pilot" or "atc"
-	Detail   string // altitude/gs or frequency
+	Callsign  string
+	CID       int
+	Name      string
+	Kind      string // "pilot" or "atc"
+	Detail    string // altitude/gs or frequency
+	Synthetic bool   // sweatbox in-process pilot (badge on dashboard)
 }
 
 type dashboardPage struct {

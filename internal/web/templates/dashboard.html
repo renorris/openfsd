@@ -43,8 +43,13 @@
                 </thead>
                 <tbody>
                 {{ range .Connections }}
-                <tr>
-                    <td>{{ .Callsign }}</td>
+                <tr{{ if .Synthetic }} data-synthetic="1"{{ end }}>
+                    <td>
+                        {{ .Callsign }}
+                        {{ if .Synthetic }}
+                        <span class="badge text-bg-secondary ms-1" title="In-process sweatbox pilot">sweatbox</span>
+                        {{ end }}
+                    </td>
                     <td>{{ .CID }}</td>
                     <td>{{ .Name }}</td>
                     <td>{{ .Kind }}</td>

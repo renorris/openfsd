@@ -109,6 +109,9 @@ type OnlineUserPilot struct {
 	Groundspeed int    `json:"groundspeed"`
 	Heading     int    `json:"heading"`
 	Transponder string `json:"transponder"`
+	// Synthetic is true for in-process sweatbox pilots (no TCP client).
+	// Omitted from JSON when false so human pilots stay compact.
+	Synthetic bool `json:"synthetic,omitempty"`
 }
 
 // OnlineUserATC is an ATC entry in the online-users snapshot.
@@ -162,6 +165,7 @@ func (s *Server) handleGetOnlineUsers(c *gin.Context) {
 				Groundspeed:           int(client.Groundspeed.Load()),
 				Heading:               int(client.Heading.Load()),
 				Transponder:           client.Transponder.Load(),
+				Synthetic:             client.Synthetic,
 			}
 			resData.Pilots = append(resData.Pilots, pilot)
 		}
