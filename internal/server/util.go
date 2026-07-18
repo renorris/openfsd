@@ -167,11 +167,11 @@ func isAllowedFacilityType(rating NetworkRating, facilityType int) bool {
 func parseLatLon(packet []byte, latIndex, lonIndex int) (lat float64, lon float64, ok bool) {
 	rawLat := getField(packet, latIndex)
 	rawLon := getField(packet, lonIndex)
-	lat, err := strconv.ParseFloat(string(rawLat), 64)
+	lat, err := strconv.ParseFloat(btoa(rawLat), 64)
 	if err != nil {
 		return
 	}
-	lon, err = strconv.ParseFloat(string(rawLon), 64)
+	lon, err = strconv.ParseFloat(btoa(rawLon), 64)
 	if err != nil {
 		return
 	}
@@ -182,7 +182,7 @@ func parseLatLon(packet []byte, latIndex, lonIndex int) (lat float64, lon float6
 
 // parseVisRange parses an FSD-encoded visibility range and returns the distance in meters
 func parseVisRange(packet []byte, index int) (visRange float64, ok bool) {
-	visRangeNauticalMiles, err := strconv.ParseFloat(string(getField(packet, index)), 64)
+	visRangeNauticalMiles, err := strconv.ParseFloat(btoa(getField(packet, index)), 64)
 	if err != nil {
 		return
 	}

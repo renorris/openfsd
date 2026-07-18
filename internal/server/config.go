@@ -11,6 +11,11 @@ import (
 type Config struct {
 	FsdListenAddrs []string `env:"FSD_LISTEN_ADDRS, default=:6809"` // FSD listen addresses
 
+	// FsdNumEventLoop is the number of gnet event-loop goroutines for the FSD
+	// TCP plane. 0 (default) means GOMAXPROCS. Only used when the gnet path is
+	// active (Deps.Listen is nil).
+	FsdNumEventLoop int `env:"FSD_NUM_EVENT_LOOP, default=0"`
+
 	// DatabaseDriver is accepted for backward compatibility only.
 	// openfsd is SQLite-only; any non-empty value other than "sqlite" is rejected at startup.
 	DatabaseDriver      string `env:"DATABASE_DRIVER, default=sqlite"`

@@ -79,30 +79,42 @@ type LatLon struct {
 //
 // Context / outbound path:
 //   - Ctx, Cancel — lifecycle; Cancel is safe from any goroutine
-//   - sendChan — private; producers must call Send; only SenderWorker writes to Conn
+//   - sendChan — private channel path used when Outbound is nil
+//   - Outbound — optional event-driven sink (gnet); when set, Send/SendPosition
+//     route there and SenderWorker must not run for this session
 //
 // # Outbound I/O rule
 //
-// After login, all packet writes to the client MUST go through Send → sendChan →
-// SenderWorker. Direct Conn.Write outside SenderWorker is forbidden post-login
-// (login-phase errors may still use protocol.WriteError on the raw connection
-// before SenderWorker is started). Conn remains exported for RemoteAddr and
-// login-phase WriteError; do not use Conn.Write after SenderWorker starts.
-// Future CI may allowlist only SenderWorker + login-phase files for Conn.Write.
+// After login, all packet writes to the client MUST go through Send / SendPosition.
+// Two sinks are supported:
+//  1. Channel path: Send → sendChan → SenderWorker → Conn.Write (classic / synthetic).
+//  2. Outbound path: Send → Outbound (coalesced AsyncWrite; no per-conn writer goroutine).
 //
-// Synthetic sessions typically have Conn == nil. Fan-out helpers skip them as
-// recipients; direct registry.Send still enqueues and relies on SenderWorker
-// drain (no network write when Conn is nil).
+// Direct Conn.Write outside SenderWorker is forbidden post-login on the channel path
+// (login-phase errors may still use protocol.WriteError on the raw connection
+// before the post-login sink is active). Conn remains exported for RemoteAddr and
+// login-phase WriteError.
+//
+// Synthetic sessions typically have Conn == nil and Outbound == nil. Fan-out helpers
+// skip them as recipients; direct registry.Send still enqueues and relies on
+// SenderWorker drain (no network write when Conn is nil).
 type Session struct {
-	// Conn is the underlying network connection.
+	// Conn is the underlying network connection (classic net path).
 	// Exported for RemoteAddr and login-phase protocol.WriteError only.
 	// Post-login packet writes MUST use Send, not Conn.Write.
-	// May be nil for synthetic / unit-test sessions; use RemoteIP() for nil-safe IP.
+	// May be nil for synthetic / unit-test / gnet sessions; use RemoteIP().
 	Conn     net.Conn
 	Scanner  *bufio.Scanner
 	Ctx      context.Context
 	Cancel   context.CancelFunc
 	sendChan chan string
+
+	// outbound, when non-nil, replaces sendChan+SenderWorker for post-login writes.
+	// Set once after login (gnet path); not changed concurrently with Send.
+	outbound Outbound
+
+	// remoteIP is a cached host string for RemoteIP() when Conn is nil (gnet).
+	remoteIP string
 
 	// Geographic state (non-boxing atomics — hot path for postoffice Search).
 	// Prefer SetGeo / SetLatLon / SetVisRange so VisBox stays in sync.
@@ -173,10 +185,32 @@ func New(ctx context.Context, conn net.Conn, scanner *bufio.Scanner, data LoginD
 	return s
 }
 
+// SetOutbound installs an event-driven post-login sink (gnet path).
+// Must be called once after login before any post-login Send; not concurrent with Send.
+// When set, do not start SenderWorker for this session.
+func (s *Session) SetOutbound(o Outbound) {
+	s.outbound = o
+}
+
+// Outbound returns the event-driven sink, if any.
+func (s *Session) Outbound() Outbound {
+	return s.outbound
+}
+
+// SetRemoteIP caches the remote host IP for nil-Conn sessions (gnet).
+func (s *Session) SetRemoteIP(ip string) {
+	s.remoteIP = ip
+}
+
 // SenderWorker drains sendChan and writes packets to Conn until the context ends
-// or a write fails. It is the only post-login code path allowed to Conn.Write.
+// or a write fails. Channel-path only: do not run when Outbound is set.
 // On exit it closes Conn and cancels the session context.
 func (s *Session) SenderWorker() {
+	if s.outbound != nil {
+		// Event-driven path owns writes; this is a no-op drain for safety.
+		<-s.Ctx.Done()
+		return
+	}
 	if s.Conn != nil {
 		defer s.Conn.Close()
 	}
@@ -206,15 +240,29 @@ func unsafeStringBytes(s string) []byte {
 	return unsafe.Slice(unsafe.StringData(s), len(s))
 }
 
-// SendError enqueues an FSD $ER packet via the outbound send channel.
-// Thread-safe; must only be used after SenderWorker is running (post-login).
+// SendError enqueues an FSD $ER packet via the outbound send path.
+// Thread-safe; must only be used after post-login outbound is active.
 func (s *Session) SendError(code int, message string) error {
 	return s.Send(protocol.FormatError(protocol.ErrorCode(code), message))
 }
 
-// Send queues a packet on the session's outbound channel.
+// Send queues a reliable packet on the session's outbound path.
 // Blocks until the packet is queued or the session context is done.
 func (s *Session) Send(packet string) error {
+	if o := s.outbound; o != nil {
+		if err := s.Ctx.Err(); err != nil {
+			return err
+		}
+		err := o.Send(packet)
+		if err != nil {
+			if s.Ctx.Err() != nil {
+				return s.Ctx.Err()
+			}
+			return err
+		}
+		s.fireEnqueueObs()
+		return nil
+	}
 	select {
 	case s.sendChan <- packet:
 		s.fireEnqueueObs()
@@ -227,18 +275,32 @@ func (s *Session) Send(packet string) error {
 // SendPosition enqueues a high-frequency position (or similar telemetry) packet
 // without blocking the broadcaster when the peer is slow.
 //
-// Latest-wins policy when the buffer is full:
+// Channel path — latest-wins when the buffer is full:
 //  1. try non-blocking send
 //  2. if full, drop one oldest packet and retry once
 //  3. if still full, drop the new packet (prefer keeping queued traffic moving)
 //
+// Outbound path — latest-wins single slot + coalesced flush (see CoalesceOutbound).
+//
 // Returns nil on drop (soft loss is acceptable for position streams). Returns
-// ctx error when the session is shutting down (checked before enqueue so a
-// canceled session does not accept further position traffic).
+// ctx error when the session is shutting down.
 func (s *Session) SendPosition(packet string) error {
 	// Prefer a fast shutdown path so fan-out does not keep feeding dead peers.
 	if err := s.Ctx.Err(); err != nil {
 		return err
+	}
+
+	if o := s.outbound; o != nil {
+		err := o.SendPosition(packet)
+		if err != nil {
+			if s.Ctx.Err() != nil {
+				return s.Ctx.Err()
+			}
+			// Soft-drop on closed outbound mid-shutdown.
+			return nil
+		}
+		s.fireEnqueueObs()
+		return nil
 	}
 
 	select {
@@ -358,10 +420,16 @@ func (s *Session) DequeueOutbound() (packet string, ok bool) {
 }
 
 // RemoteIP returns the remote host IP for this session.
-// Nil-safe: returns "" when Conn or RemoteAddr is nil (unit tests / synthetic).
+// Nil-safe: returns "" when neither Conn nor a cached remoteIP is available.
 // Host is taken from net.SplitHostPort when possible; otherwise the raw addr string.
 func (s *Session) RemoteIP() string {
-	if s == nil || s.Conn == nil {
+	if s == nil {
+		return ""
+	}
+	if s.remoteIP != "" {
+		return s.remoteIP
+	}
+	if s.Conn == nil {
 		return ""
 	}
 	addr := s.Conn.RemoteAddr()

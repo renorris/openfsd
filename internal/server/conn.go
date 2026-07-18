@@ -2,7 +2,6 @@ package server
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -103,9 +102,13 @@ func (s *Server) eventLoop(client *session.Session) {
 			return
 		}
 
-		// Reference the next packet
-		packet := client.Scanner.Bytes()
-		packet = append(packet, '\r', '\n') // Re-append delimiter
+		// Copy packet out of the scanner buffer (reused on next Scan) and
+		// re-append CRLF so handlers / fan-out own an immutable payload.
+		raw := client.Scanner.Bytes()
+		packet := make([]byte, len(raw)+2)
+		copy(packet, raw)
+		packet[len(raw)] = '\r'
+		packet[len(raw)+1] = '\n'
 
 		// Verify packet and obtain type
 		packetType, ok := verifyPacket(packet, client)
@@ -157,114 +160,13 @@ func readLoginPackets(conn net.Conn, scanner *bufio.Scanner, clock Clock) (data 
 	}
 	addPacket := append([]byte{}, scanner.Bytes()...)
 
-	// Check if the client sent a challenge field
-	if countFields(idPacket) == 9 {
-		// Extract the challenge
-		data.ClientChallenge = string(getField(idPacket, 8))
-
-		// Extract the client ID
-		var clientId uint64
-		clientId, err = strconv.ParseUint(string(getField(idPacket, 2)), 16, 16)
-		if err != nil {
-			err = ErrInvalidIDPacket
-			sendError(conn, SyntaxError, "Error parsing client ID")
-			return
-		}
-		data.ClientID = uint16(clientId)
-	}
-
-	if len(addPacket) < 16 {
-		err = ErrInvalidAddPacket
-		sendError(conn, SyntaxError, "Invalid add packet")
+	var errCode int
+	var errMsg string
+	data, token, errCode, errMsg, err = parseLoginPackets(idPacket, addPacket, clock.Now())
+	if err != nil {
+		sendError(conn, errCode, errMsg)
 		return
 	}
-
-	// Determine client type
-	var prefix string
-	switch string(addPacket[:3]) {
-	case "#AA":
-		data.IsAtc = true
-		prefix = "#AA"
-	case "#AP":
-		prefix = "#AP"
-	default:
-		err = ErrInvalidAddPacket
-		sendError(conn, SyntaxError, "Invalid add packet prefix")
-		return
-	}
-
-	if data.IsAtc {
-		if countFields(addPacket) != 7 {
-			err = ErrInvalidAddPacket
-			sendError(conn, SyntaxError, "Invalid number of fields in ATC add packet")
-			return
-		}
-	} else {
-		if countFields(addPacket) != 8 {
-			err = ErrInvalidAddPacket
-			sendError(conn, SyntaxError, "Invalid number of fields in pilot add packet")
-			return
-		}
-	}
-
-	if callsign, found := bytes.CutPrefix(getField(addPacket, 0), []byte(prefix)); found {
-		data.Callsign = string(callsign)
-	} else {
-		sendError(conn, SyntaxError, "Invalid callsign in add packet")
-		err = ErrInvalidAddPacket
-		return
-	}
-
-	if data.IsAtc {
-		data.RealName = string(getField(addPacket, 2))
-		if data.CID, err = strconv.Atoi(string(getField(addPacket, 3))); err != nil {
-			err = ErrInvalidAddPacket
-			sendError(conn, SyntaxError, "Invalid CID in ATC add packet")
-			return
-		}
-		token = string(getField(addPacket, 4))
-		var networkRating int
-		if networkRating, err = strconv.Atoi(string(getField(addPacket, 5))); err != nil {
-			err = ErrInvalidAddPacket
-			sendError(conn, SyntaxError, "Invalid network rating in pilot add packet")
-			return
-		}
-		data.NetworkRating = NetworkRating(networkRating)
-		if data.ProtoRevision, err = strconv.Atoi(string(getField(addPacket, 6))); err != nil {
-			err = ErrInvalidAddPacket
-			sendError(conn, SyntaxError, "Invalid protocol revision in ATC add packet")
-			return
-		}
-	} else {
-		if data.CID, err = strconv.Atoi(string(getField(addPacket, 2))); err != nil {
-			err = ErrInvalidAddPacket
-			sendError(conn, SyntaxError, "Invalid CID in pilot add packet")
-			return
-		}
-		token = string(getField(addPacket, 3))
-		var networkRating int
-		if networkRating, err = strconv.Atoi(string(getField(addPacket, 4))); err != nil {
-			err = ErrInvalidAddPacket
-			sendError(conn, SyntaxError, "Invalid network rating in pilot add packet")
-			return
-		}
-		data.NetworkRating = NetworkRating(networkRating)
-		if data.ProtoRevision, err = strconv.Atoi(string(getField(addPacket, 5))); err != nil {
-			err = ErrInvalidAddPacket
-			sendError(conn, SyntaxError, "Invalid protocol revision in pilot add packet")
-			return
-		}
-		data.RealName = string(getField(addPacket, 7))
-	}
-
-	if data.ProtoRevision < 100 || data.ProtoRevision > 101 {
-		err = ErrInvalidAddPacket
-		sendError(conn, InvalidProtocolRevisionError, "Invalid protocol revision")
-		return
-	}
-
-	data.LoginTime = clock.Now()
-
 	return
 }
 

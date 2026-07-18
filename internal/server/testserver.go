@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -226,11 +225,12 @@ func StartTestServer(t testing.TB) *TestServer {
 	}
 	httpAddr := httpLn.Addr().String()
 
-	var fsdOnce sync.Once
-	fsdAddrCh := make(chan string, 1)
+	// Bound FSD address reported by gnet OnBoot (or classic listenLoop).
+	fsdAddrCh := make(chan string, 2)
 
 	cfg := &Config{
 		FsdListenAddrs:        []string{"127.0.0.1:0"},
+		FsdNumEventLoop:       2,
 		NumMetarWorkers:       2,
 		ServiceHTTPListenAddr: httpAddr,
 		DatabaseDriver:        "sqlite",
@@ -248,18 +248,8 @@ func StartTestServer(t testing.TB) *TestServer {
 		Metar:           metarSvc,
 		Logger:          logger,
 		SweatboxEnabled: true, // e2e convenience; empty until airport/scenario load
-		// Pass through network/addr from listenLoop (proves config address wiring).
-		Listen: func(ctx context.Context, network, addr string) (net.Listener, error) {
-			var lc net.ListenConfig
-			ln, err := lc.Listen(ctx, network, addr)
-			if err != nil {
-				return nil, err
-			}
-			fsdOnce.Do(func() {
-				fsdAddrCh <- ln.Addr().String()
-			})
-			return ln, nil
-		},
+		// Production gnet path (Listen nil). Bound address via FSDBound.
+		FSDBound: fsdAddrCh,
 		// Return the already-bound listener; never rebind.
 		HTTPListen: func(network, addr string) (net.Listener, error) {
 			_ = network
@@ -286,10 +276,16 @@ func StartTestServer(t testing.TB) *TestServer {
 		_ = sqlDB.Close()
 		cancel()
 		t.Fatalf("server exited before listen: %v", err)
-	case <-time.After(5 * time.Second):
+	case <-time.After(8 * time.Second):
 		cancel()
 		_ = sqlDB.Close()
-		t.Fatal("timeout waiting for FSD listener")
+		t.Fatal("timeout waiting for FSD listener (gnet OnBoot / classic bind)")
+	}
+	// gnet may report 0.0.0.0 — clients should dial loopback.
+	if host, port, err := net.SplitHostPort(fsdAddr); err == nil {
+		if host == "0.0.0.0" || host == "::" {
+			fsdAddr = net.JoinHostPort("127.0.0.1", port)
+		}
 	}
 
 	waitHTTPReady(t, httpAddr)

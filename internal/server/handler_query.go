@@ -2,7 +2,6 @@ package server
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/renorris/openfsd/internal/session"
 )
@@ -183,7 +182,7 @@ func (s *Server) handleClientQueryCAPSRequest(client *session.Session, _ []byte)
 }
 
 func (s *Server) handleClientQueryIPRequest(client *session.Session, packet []byte) {
-	ip := strings.SplitN(client.Conn.RemoteAddr().String(), ":", 2)[0]
+	ip := client.RemoteIP()
 	p := fmt.Sprintf("$CRSERVER:%s:IP:%s\r\n", client.Callsign, ip)
 	client.Send(p)
 }

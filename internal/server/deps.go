@@ -68,8 +68,15 @@ type Deps struct {
 	Clock    Clock // nil => real clock
 	Logger   *slog.Logger
 	// Listen optionally injects FSD net listener creation (tests).
-	// nil => net.ListenConfig{}.Listen
+	// When non-nil, the classic per-connection goroutine path is used instead of gnet.
+	// nil => production gnet FSD plane (or defaultListen only if ForceClassicFSD).
 	Listen func(ctx context.Context, network, addr string) (net.Listener, error)
+	// ForceClassicFSD forces the classic net.Listener accept loop even when Listen
+	// is nil. Used by tests that need the classic path without a custom Listen.
+	ForceClassicFSD bool
+	// FSDBound is an optional channel that receives each bound FSD listen address
+	// after the listener starts (useful for :0). Buffered; non-blocking send.
+	FSDBound chan<- string
 	// HTTPListen optionally injects service HTTP listener creation (tests).
 	// Signature matches net.Listen. nil => net.Listen("tcp", ServiceHTTPListenAddr).
 	// Prefer returning a pre-bound listener so tests avoid bind/close/rebind TOCTOU.

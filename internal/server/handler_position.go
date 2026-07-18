@@ -2,9 +2,19 @@ package server
 
 import (
 	"strconv"
+	"unsafe"
 
 	"github.com/renorris/openfsd/internal/session"
 )
+
+// btoa returns a string view of b without allocation. b must not be mutated
+// while the string is in use (OK for immediate strconv/atoi).
+func btoa(b []byte) string {
+	if len(b) == 0 {
+		return ""
+	}
+	return unsafe.String(unsafe.SliceData(b), len(b))
+}
 
 func (s *Server) handleATCPosition(client *session.Session, packet []byte) {
 	// Verify and set facility type
@@ -58,12 +68,12 @@ func (s *Server) handlePilotPosition(client *session.Session, packet []byte) {
 		return
 	}
 
-	lat, err := strconv.ParseFloat(string(fields[4]), 64)
+	lat, err := strconv.ParseFloat(btoa(fields[4]), 64)
 	if err != nil {
 		client.SendError(SyntaxError, "Invalid latitude/longitude")
 		return
 	}
-	lon, err := strconv.ParseFloat(string(fields[5]), 64)
+	lon, err := strconv.ParseFloat(btoa(fields[5]), 64)
 	if err != nil {
 		client.SendError(SyntaxError, "Invalid latitude/longitude")
 		return
@@ -72,19 +82,20 @@ func (s *Server) handlePilotPosition(client *session.Session, packet []byte) {
 	const pilotVisRange = 50.0 * 1852.0 // 50 nautical miles
 
 	// Update registry position then fan-out (hot path).
+	// packet is an owned immutable copy (eventLoop / gnet dispatch).
 	s.registry.UpdatePosition(client, [2]float64{lat, lon}, pilotVisRange)
 	broadcastRanged(s.registry, client, packet)
 
-	// Update state from the same field split.
+	// Update state from the same field split (copy for atomics that store string).
 	client.Transponder.Store(string(fields[2]))
 
-	if groundspeed, err := strconv.Atoi(string(fields[7])); err == nil {
+	if groundspeed, err := strconv.Atoi(btoa(fields[7])); err == nil {
 		client.Groundspeed.Store(int32(groundspeed))
 	}
-	if altitude, err := strconv.Atoi(string(fields[6])); err == nil {
+	if altitude, err := strconv.Atoi(btoa(fields[6])); err == nil {
 		client.Altitude.Store(int32(altitude))
 	}
-	if pbhUint, err := strconv.ParseUint(string(fields[8]), 10, 32); err == nil {
+	if pbhUint, err := strconv.ParseUint(btoa(fields[8]), 10, 32); err == nil {
 		_, _, heading := pitchBankHeading(uint32(pbhUint))
 		client.Heading.Store(int32(heading))
 	}

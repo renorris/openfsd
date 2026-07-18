@@ -20,6 +20,13 @@ import (
 )
 
 // Server is the FSD server orchestration layer.
+//
+// # FSD I/O model
+//
+// Production default is the gnet event-driven plane (fixed event-loop count,
+// coalesced AsyncWrite outbound). When Deps.Listen is injected or
+// ForceClassicFSD is set, the classic net.Listener accept loop runs instead
+// (one reader + one SenderWorker per connection) for test harnesses.
 type Server struct {
 	cfg        *Config
 	users      UserStore
@@ -29,7 +36,10 @@ type Server struct {
 	clock      Clock
 	logger     *slog.Logger
 	listen     func(ctx context.Context, network, addr string) (net.Listener, error)
-	httpListen func(network, addr string) (net.Listener, error)
+	// useClassicFSD selects the classic 2-goroutine-per-conn path.
+	useClassicFSD bool
+	fsdBound      chan<- string
+	httpListen    func(network, addr string) (net.Listener, error)
 	// httpDone is closed when runServiceHTTP returns (after Serve exits).
 	httpDone chan struct{}
 	// sweatbox is the integrated simulator host (nil when disabled).
@@ -66,18 +76,22 @@ func New(d Deps) (*Server, error) {
 	if listen == nil {
 		listen = defaultListen
 	}
+	// Classic path when tests inject Listen or ForceClassicFSD.
+	useClassic := d.ForceClassicFSD || d.Listen != nil
 
 	s := &Server{
-		cfg:        d.Config,
-		users:      d.Users,
-		configKV:   d.ConfigKV,
-		registry:   d.Registry,
-		metar:      d.Metar,
-		clock:      clock,
-		logger:     logger,
-		listen:     listen,
-		httpListen: d.HTTPListen,
-		httpDone:   make(chan struct{}),
+		cfg:           d.Config,
+		users:         d.Users,
+		configKV:      d.ConfigKV,
+		registry:      d.Registry,
+		metar:         d.Metar,
+		clock:         clock,
+		logger:        logger,
+		listen:        listen,
+		useClassicFSD: useClassic,
+		fsdBound:      d.FSDBound,
+		httpListen:    d.HTTPListen,
+		httpDone:      make(chan struct{}),
 	}
 	// Two-phase: Server exists so SweatboxHost can hold a back-ref for
 	// unexported broadcast helpers, registry, clock, and logger.
@@ -204,11 +218,110 @@ func (s *Server) Run(ctx context.Context) (err error) {
 	// Start HTTP service
 	go s.runServiceHTTP(ctx)
 
+	if s.useClassicFSD {
+		err = s.runClassicFSD(ctx)
+	} else {
+		err = s.runGnetFSD(ctx)
+	}
+
+	// Join service HTTP so callers (and tests) can close shared resources safely.
+	select {
+	case <-s.httpDone:
+	case <-time.After(5 * time.Second):
+	}
+
+	return err
+}
+
+// runGnetFSD runs the production FSD plane: fixed gnet event loops + coalesced
+// AsyncWrite outbound (no 2N connection goroutines).
+func (s *Server) runGnetFSD(ctx context.Context) error {
+	addrs := s.cfg.FsdListenAddrs
+	if len(addrs) == 0 {
+		return errors.New("server: no FSD listen addresses")
+	}
+	for _, addr := range addrs {
+		s.logger.Info(fmt.Sprintf("Listening (gnet) on %s\n", addr))
+	}
+
+	bound := make(chan string, len(addrs))
+	eng := newFSDEngine(s, ctx, addrs, s.cfg.FsdNumEventLoop, bound)
+
+	// Forward bound addresses to Deps.FSDBound if set.
+	if s.fsdBound != nil {
+		go func() {
+			for {
+				select {
+				case a, ok := <-bound:
+					if !ok {
+						return
+					}
+					select {
+					case s.fsdBound <- a:
+					default:
+					}
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- eng.run()
+	}()
+
+	// Wait for first bound address or run failure (startup).
+	select {
+	case a := <-bound:
+		// Re-queue for FSDBound forwarder if present.
+		select {
+		case bound <- a:
+		default:
+		}
+		if s.fsdBound != nil {
+			select {
+			case s.fsdBound <- a:
+			default:
+			}
+		}
+	case err := <-errCh:
+		if err != nil {
+			return fmt.Errorf("gnet FSD failed to start: %w", err)
+		}
+		return nil
+	case <-time.After(5 * time.Second):
+		// gnet may not report bound via Dup on all platforms; proceed if still running.
+		s.logger.Debug("gnet FSD: no bound address reported within timeout; continuing")
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+
+	// Block until engine exits or context cancelled.
+	select {
+	case err := <-errCh:
+		if err != nil && ctx.Err() == nil {
+			return err
+		}
+		return nil
+	case <-ctx.Done():
+		// eng.run's cancel watcher stops the engine; wait for exit.
+		select {
+		case <-errCh:
+		case <-time.After(5 * time.Second):
+		}
+		return nil
+	}
+}
+
+// runClassicFSD is the legacy accept-loop path (2 goroutines per connection).
+func (s *Server) runClassicFSD(ctx context.Context) error {
 	errCh := make(chan error, len(s.cfg.FsdListenAddrs))
 	var listenerWg sync.WaitGroup
 
 	for _, addr := range s.cfg.FsdListenAddrs {
-		s.logger.Info(fmt.Sprintf("Listening on %s\n", addr))
+		s.logger.Info(fmt.Sprintf("Listening (classic) on %s\n", addr))
 		listenerWg.Add(1)
 		go func(ctx context.Context, addr string) {
 			defer listenerWg.Done()
@@ -216,7 +329,6 @@ func (s *Server) Run(ctx context.Context) (err error) {
 		}(ctx, addr)
 	}
 
-	// Collect startup errors
 	go func() {
 		listenerWg.Wait()
 		close(errCh)
@@ -228,7 +340,6 @@ func (s *Server) Run(ctx context.Context) (err error) {
 	}
 
 	if len(startupErrors) > 0 {
-		// Best-effort join HTTP (ctx may still be live on bind failure).
 		select {
 		case <-s.httpDone:
 		case <-time.After(2 * time.Second):
@@ -236,16 +347,8 @@ func (s *Server) Run(ctx context.Context) (err error) {
 		return fmt.Errorf("some listeners failed: %v", startupErrors)
 	}
 
-	// All listeners exited (normally after ctx cancel); wait for context if still active.
 	<-ctx.Done()
-
-	// Join service HTTP so callers (and tests) can close shared resources safely.
-	select {
-	case <-s.httpDone:
-	case <-time.After(5 * time.Second):
-	}
-
-	return
+	return nil
 }
 
 func (s *Server) listenLoop(ctx context.Context, addr string, errCh chan<- error) {
@@ -255,6 +358,13 @@ func (s *Server) listenLoop(ctx context.Context, addr string, errCh chan<- error
 		return
 	}
 	defer listener.Close()
+
+	if s.fsdBound != nil {
+		select {
+		case s.fsdBound <- listener.Addr().String():
+		default:
+		}
+	}
 
 	// Start a goroutine to close the listener when the context is cancelled
 	go func() {
