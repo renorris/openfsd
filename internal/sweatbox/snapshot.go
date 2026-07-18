@@ -47,6 +47,15 @@ type AircraftSnapshot struct {
 	TaxiParking    string
 	TaxiSteps      []string
 
+	// Pattern flying (P1).
+	InPattern     bool
+	PatternSizeNM float64
+	LandingType   string // "", TG, SG, LA, FS
+	ExtendLeg     bool
+	ShortApproach bool
+	SGWaitSec     float64
+	SGWaiting     bool
+
 	// Air vector targets (domain; host/UI may surface instruction instead).
 	DesiredHeading    float64
 	HasDesiredHeading bool

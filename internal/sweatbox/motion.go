@@ -22,6 +22,9 @@ const (
 	// Takeoff initial-climb rate (ft/min); steeper than enroute vectors.
 	takeoffClimbRateFpm = 2500.0
 
+	// Pattern climb / descent (ft/min) — gentler for circuit work.
+	patternClimbRateFpm = 1000.0
+
 	// Airspeed change rate when DesiredSpeed is set (kt/s).
 	speedChangeKtPerSec = 8.0
 
@@ -145,7 +148,16 @@ func (e *Engine) tickAircraftLocked(ac *SimAircraft, dtSec float64) (changed boo
 		c := e.tickAirborneLocked(ac, dtSec)
 		return changed || c, false
 
+	case StatusUpwind, StatusCrosswind, StatusDownwind, StatusBase, StatusFinal:
+		c := e.tickPatternLocked(ac, dtSec)
+		return changed || c, false
+
 	case StatusLanded:
+		// Stop-and-go waiting on the runway.
+		if ac.SGWaiting {
+			c := e.tickSGWaitLocked(ac, dtSec)
+			return changed || c, false
+		}
 		// Landed roll without a taxi path: slow to a stop.
 		if ac.hasTaxiPath() {
 			c, del := e.tickTaxiLocked(ac, dtSec)
@@ -338,10 +350,22 @@ func (e *Engine) finishTaxiPathLocked(ac *SimAircraft) (changed bool, shouldDele
 }
 
 // tickTakeoffLocked accelerates, rotates, climbs to initial climb, then departs.
+// Closed-traffic takeoffs (PatternTraffic set) climb to pattern altitude and
+// enter Upwind instead of Departing.
 func (e *Engine) tickTakeoffLocked(ac *SimAircraft, dtSec float64) bool {
 	apt := e.airport
 	field := fieldElevFeet(apt)
-	targetAlt := initialClimbTarget(apt, ac.Engine)
+	closed := ac.PatternTraffic == "L" || ac.PatternTraffic == "R"
+	var targetAlt float64
+	if closed {
+		targetAlt = patternAltitudeMSL(apt)
+		// Ensure we climb at least a few hundred feet AGL.
+		if targetAlt < field+500 {
+			targetAlt = field + 500
+		}
+	} else {
+		targetAlt = initialClimbTarget(apt, ac.Engine)
+	}
 	vr := rotateSpeedKt(ac.Engine)
 	changed := false
 
@@ -379,15 +403,20 @@ func (e *Engine) tickTakeoffLocked(ac *SimAircraft, dtSec float64) bool {
 		changed = true
 	}
 
-	// Climb toward initial climb altitude.
+	// Climb toward target altitude.
 	if ac.Alt < targetAlt-altEqualEpsFt {
-		delta := takeoffClimbRateFpm * dtSec / 60.0
+		rate := takeoffClimbRateFpm
+		if closed {
+			rate = patternClimbRateFpm
+		}
+		delta := rate * dtSec / 60.0
 		ac.Alt = math.Min(targetAlt, ac.Alt+delta)
 		changed = true
 	}
 
-	// Turn to departure heading once airborne.
-	if ac.HasDepHeading {
+	// Closed traffic: stay runway heading until pattern entry.
+	// Open departure: turn to departure heading once airborne.
+	if !closed && ac.HasDepHeading {
 		if turnToward(ac, ac.DepHeading, TurnShortest, dtSec) {
 			changed = true
 		}
@@ -400,11 +429,16 @@ func (e *Engine) tickTakeoffLocked(ac *SimAircraft, dtSec float64) bool {
 		changed = true
 	}
 
-	// Level at initial climb → Departing (vectors take over after).
+	// Level at climb target → pattern Upwind or Departing.
 	if ac.Alt >= targetAlt-altEqualEpsFt {
 		ac.Alt = targetAlt
-		ac.Status = StatusDeparting
 		ac.ClearedTakeoff = false
+		if closed {
+			e.enterPatternFromTakeoffLocked(ac)
+			changed = true
+			return changed
+		}
+		ac.Status = StatusDeparting
 		// Seed desired altitude so subsequent cm can override; until then hold.
 		if !ac.HasDesiredAlt {
 			ac.DesiredAlt = targetAlt
@@ -585,6 +619,286 @@ func speedToward(ac *SimAircraft, target float64, dtSec float64) bool {
 		ac.Speed += step
 	} else {
 		ac.Speed -= step
+	}
+	return true
+}
+
+// tickPatternLocked advances one aircraft along the traffic pattern.
+func (e *Engine) tickPatternLocked(ac *SimAircraft, dtSec float64) bool {
+	if ac == nil || dtSec <= 0 {
+		return false
+	}
+	a, errMsg := e.anchorsForAircraftLocked(ac)
+	if errMsg != "" {
+		// No runway geometry — fall back to free vectors.
+		return e.tickAirborneLocked(ac, dtSec)
+	}
+	changed := false
+	field := fieldElevFeet(e.airport)
+	patAlt := patternAltitudeMSL(e.airport)
+	leg := ac.Status
+
+	// --- Altitude ---
+	var altTarget float64
+	switch leg {
+	case StatusFinal:
+		distNM := distToPoint(ac, a.Threshold) / metersPerNM
+		if ac.LandingType == LandingLA {
+			// Descend to field+200, level for overfly.
+			altTarget = field + lowApproachAGLFt
+			gs := approachAltitude(field, distNM)
+			if gs > altTarget {
+				altTarget = gs
+			}
+			// Once near/over runway, hold low-approach AGL.
+			if distNM < 0.15 {
+				altTarget = field + lowApproachAGLFt
+			}
+		} else {
+			altTarget = approachAltitude(field, distNM)
+		}
+	default:
+		altTarget = patAlt
+	}
+	ac.DesiredAlt = altTarget
+	ac.HasDesiredAlt = true
+	if climbTowardRate(ac, altTarget, patternClimbRateFpm, dtSec) {
+		changed = true
+	}
+
+	// --- Speed ---
+	if !ac.HasDesiredSpeed || ac.DesiredSpeed <= 0 {
+		ac.DesiredSpeed = defaultApproachSpeed(ac.Engine)
+		ac.HasDesiredSpeed = true
+	}
+	if speedToward(ac, ac.DesiredSpeed, dtSec) {
+		changed = true
+	}
+
+	// --- Heading / track ---
+	// Prefer flying toward the leg corner (or threshold on final) so early turns
+	// from enter-* placement converge; fall back to nominal leg heading when
+	// nearly on top of the target or extending.
+	target := a.legTarget(leg)
+	nomHdg := a.legHeading(leg)
+	if ac.ExtendLeg {
+		ac.DesiredHeading = nomHdg
+		ac.HasDesiredHeading = true
+		ac.TurnDir = patternTurnDir(a.Traffic)
+	} else {
+		d := distToPoint(ac, target)
+		if d > patternCornerEpsM*0.5 {
+			brg := initialBearingDeg(ac.Lat, ac.Lon, target.Lat, target.Lon)
+			ac.DesiredHeading = brg
+		} else {
+			ac.DesiredHeading = nomHdg
+		}
+		ac.HasDesiredHeading = true
+		ac.TurnDir = patternTurnDir(a.Traffic)
+	}
+	if turnToward(ac, ac.DesiredHeading, ac.TurnDir, dtSec) {
+		changed = true
+	}
+
+	// --- Position ---
+	if ac.Speed > spdEqualEpsKt {
+		dist := knotsToMps(ac.Speed) * dtSec
+		ac.Lat, ac.Lon = destinationPoint(ac.Lat, ac.Lon, ac.Heading, dist)
+		changed = true
+	}
+
+	// --- Midfield downwind report ---
+	if leg == StatusDownwind && !ac.MidfieldReported {
+		if distToPoint(ac, a.MidfieldDW) <= midfieldEpsM {
+			ac.MidfieldReported = true
+			ac.Instruction = "Midfield on the downwind, runway " + a.Runway
+			changed = true
+		}
+	}
+
+	// --- Short approach: from downwind, pull toward threshold once past midfield ---
+	if ac.ShortApproach && leg == StatusDownwind && !ac.ExtendLeg {
+		// When roughly abeam / past midfield, cut to final.
+		if ac.MidfieldReported || distToPoint(ac, a.MidfieldDW) <= midfieldEpsM {
+			e.advancePatternLegLocked(ac, a) // forces Final via ShortApproach branch
+			changed = true
+			return changed
+		}
+	}
+
+	// --- Final: landing / low approach / overshoot ---
+	if leg == StatusFinal {
+		dThr := distToPoint(ac, a.Threshold)
+		// Along-track: if we've passed the threshold (beyond landing heading), treat as arrival.
+		brgToThr := initialBearingDeg(ac.Lat, ac.Lon, a.Threshold.Lat, a.Threshold.Lon)
+		past := math.Abs(headingDelta(brgToThr, a.LandingHdg)) > 90 && dThr < a.SizeNM*metersPerNM
+		near := dThr <= patternThreshEpsM
+		if near || past {
+			c := e.handlePatternThresholdLocked(ac, a, dtSec)
+			return changed || c
+		}
+		// Keep instruction current on final.
+		want := formatPatternInstruction(ac)
+		if ac.Instruction != want {
+			ac.Instruction = want
+			changed = true
+		}
+		return changed
+	}
+
+	// --- Leg advance at corners (unless extending) ---
+	if !ac.ExtendLeg {
+		d := distToPoint(ac, target)
+		if d <= patternCornerEpsM {
+			e.advancePatternLegLocked(ac, a)
+			changed = true
+		}
+	}
+
+	return changed
+}
+
+// handlePatternThresholdLocked resolves TG/SG/LA/FS when reaching the threshold.
+func (e *Engine) handlePatternThresholdLocked(ac *SimAircraft, a PatternAnchors, dtSec float64) bool {
+	field := fieldElevFeet(e.airport)
+	lt := ac.LandingType
+	if lt == "" {
+		// Arrivals without an explicit type full-stop by default.
+		if ac.InPattern {
+			lt = LandingTG
+		} else {
+			lt = LandingFS
+		}
+	}
+	changed := true
+
+	switch lt {
+	case LandingLA:
+		// Overfly at low-approach AGL and continue upwind.
+		ac.Alt = field + lowApproachAGLFt
+		ac.Lat, ac.Lon = a.Threshold.Lat, a.Threshold.Lon
+		ac.Heading = a.LandingHdg
+		ac.Status = StatusUpwind
+		ac.InPattern = true
+		ac.DesiredHeading = a.legHeading(StatusUpwind)
+		ac.HasDesiredHeading = true
+		ac.TurnDir = patternTurnDir(a.Traffic)
+		ac.DesiredAlt = patternAltitudeMSL(e.airport)
+		ac.HasDesiredAlt = true
+		ac.Instruction = "Low approach, " + formatPatternInstruction(ac)
+		return changed
+
+	case LandingTG:
+		// Touch and go: put on runway, accelerate via takeoff → upwind.
+		ac.Alt = field
+		ac.Lat, ac.Lon = a.Threshold.Lat, a.Threshold.Lon
+		ac.Heading = a.LandingHdg
+		ac.Speed = math.Max(ac.Speed*0.6, rotateSpeedKt(ac.Engine)*0.5)
+		ac.Status = StatusTakeoff
+		ac.ClearedTakeoff = true
+		ac.DepRunway = a.Runway
+		ac.LandingRunway = a.Runway
+		ac.InPattern = true
+		ac.PatternTraffic = a.Traffic
+		// Keep TG for next circuit.
+		ac.LandingType = LandingTG
+		ac.Instruction = "Touch and go runway " + a.Runway
+		return changed
+
+	case LandingSG:
+		// Stop on runway, wait for timer or `go`.
+		ac.Alt = field
+		ac.Lat, ac.Lon = a.Threshold.Lat, a.Threshold.Lon
+		ac.Heading = a.LandingHdg
+		ac.Speed = 0
+		ac.Status = StatusLanded
+		ac.SGWaiting = true
+		if ac.SGWaitSec > 0 {
+			ac.SGTimer = ac.SGWaitSec
+		} else {
+			ac.SGTimer = 0 // wait forever for `go`
+		}
+		ac.DepRunway = a.Runway
+		ac.LandingRunway = a.Runway
+		ac.InPattern = true
+		ac.PatternTraffic = a.Traffic
+		ac.Instruction = "Stop and go, holding runway " + a.Runway
+		return changed
+
+	default: // LandingFS
+		ac.Alt = field
+		ac.Lat, ac.Lon = a.Threshold.Lat, a.Threshold.Lon
+		ac.Heading = a.LandingHdg
+		// Decelerate on the runway.
+		if ac.Speed > 40 {
+			ac.Speed = 40
+		}
+		ac.Status = StatusLanded
+		ac.InPattern = false
+		ac.SGWaiting = false
+		ac.Instruction = "Landed runway " + a.Runway
+		e.arr++
+		return changed
+	}
+}
+
+// tickSGWaitLocked counts down stop-and-go hold; auto-rolls when timer expires.
+func (e *Engine) tickSGWaitLocked(ac *SimAircraft, dtSec float64) bool {
+	if ac == nil || !ac.SGWaiting {
+		return false
+	}
+	// Freeze on runway.
+	if ac.Speed != 0 {
+		ac.Speed = 0
+	}
+	if ac.SGWaitSec <= 0 {
+		// Indefinite until `go` command.
+		return false
+	}
+	ac.SGTimer -= dtSec
+	if ac.SGTimer > 0 {
+		return true
+	}
+	// Timer expired → roll.
+	ac.SGWaiting = false
+	ac.SGTimer = 0
+	ac.Status = StatusTakeoff
+	ac.ClearedTakeoff = true
+	if ac.LandingRunway != "" {
+		ac.DepRunway = ac.LandingRunway
+	}
+	if ac.PatternTraffic == "" {
+		ac.PatternTraffic = "L"
+	}
+	ac.InPattern = true
+	ac.LandingType = LandingTG
+	e.alignTakeoffHeadingLocked(ac)
+	ac.Instruction = "Stop and go, rolling"
+	return true
+}
+
+// climbTowardRate is climbToward with a custom fpm rate.
+func climbTowardRate(ac *SimAircraft, target, rateFpm, dtSec float64) bool {
+	diff := target - ac.Alt
+	if math.Abs(diff) <= altEqualEpsFt {
+		if ac.Alt != target {
+			ac.Alt = target
+			return true
+		}
+		return false
+	}
+	if rateFpm <= 0 {
+		rateFpm = climbRateFpm
+	}
+	step := rateFpm * dtSec / 60.0
+	if math.Abs(diff) <= step {
+		ac.Alt = target
+		return true
+	}
+	if diff > 0 {
+		ac.Alt += step
+	} else {
+		ac.Alt -= step
 	}
 	return true
 }

@@ -792,3 +792,52 @@ func TestE2E_Sweatbox_LateJoinATC(t *testing.T) {
 		t.Logf("note: late ATC also saw #AP for %s (not required)", cs)
 	}
 }
+
+// TestE2E_Sweatbox_PatternEntrySmoke: enter left downwind via command; status
+// surfaces on /sweatbox/state and positions update after unpause.
+func TestE2E_Sweatbox_PatternEntrySmoke(t *testing.T) {
+	ts := server.StartTestServer(t)
+	loadKBTVAirport(t, ts)
+
+	res := sweatboxCommand(t, ts, "add v s p 33 8")
+	if !res.OK {
+		t.Fatalf("add approach: %+v", res)
+	}
+	st := getSweatboxState(t, ts)
+	if len(st.Aircraft) < 1 {
+		t.Fatal("no aircraft")
+	}
+	cs := st.Aircraft[0].Callsign
+
+	res = sweatboxCommand(t, ts, cs+" eld 33")
+	if !res.OK {
+		t.Fatalf("eld: %+v", res)
+	}
+	ac := waitSweatboxAircraft(t, ts, cs)
+	if ac.Status != "Downwind" {
+		t.Fatalf("status after eld = %q, want Downwind", ac.Status)
+	}
+	if !strings.Contains(ac.Instruction, "Downwind") {
+		t.Errorf("instruction = %q", ac.Instruction)
+	}
+	startLat, startLon := ac.Lat, ac.Lon
+
+	// Landing type + unpause: aircraft should move along the downwind.
+	res = sweatboxCommand(t, ts, cs+" tg")
+	if !res.OK {
+		t.Fatalf("tg: %+v", res)
+	}
+	sweatboxUnpause(t, ts)
+
+	deadline := time.Now().Add(12 * time.Second)
+	for time.Now().Before(deadline) {
+		ac = waitSweatboxAircraft(t, ts, cs)
+		if math.Abs(ac.Lat-startLat) > 1e-5 || math.Abs(ac.Lon-startLon) > 1e-5 {
+			t.Logf("pattern motion %s: status=%s Δlat=%.6f Δlon=%.6f",
+				cs, ac.Status, ac.Lat-startLat, ac.Lon-startLon)
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("pattern aircraft did not move (status=%s)", waitSweatboxAircraft(t, ts, cs).Status)
+}

@@ -18,6 +18,21 @@ const (
 	StatusAirborne          = "Airborne"
 	StatusLanded            = "Landed"
 	StatusHolding           = "Holding"
+
+	// Pattern legs (P1) — Status equals the active leg name while in the circuit.
+	StatusUpwind    = "Upwind"
+	StatusCrosswind = "Crosswind"
+	StatusDownwind  = "Downwind"
+	StatusBase      = "Base"
+	StatusFinal     = "Final"
+)
+
+// Landing-type codes for pattern / approach clearances (tg/sg/la/fs).
+const (
+	LandingTG = "TG" // touch and go
+	LandingSG = "SG" // stop and go
+	LandingLA = "LA" // low approach
+	LandingFS = "FS" // full stop
 )
 
 // Weight class codes (add command).
@@ -80,10 +95,30 @@ type SimAircraft struct {
 	ClearedTakeoff bool
 	DepHeading     float64 // used when HasDepHeading
 	HasDepHeading  bool
-	// PatternTraffic is "L" or "R" after ctomlt/ctomrt; empty otherwise.
+	// PatternTraffic is "L" or "R" after ctomlt/ctomrt/mlt/mrt; empty otherwise.
 	PatternTraffic string
 	// NoStop is set by nostop/nohold (don't stop when clear of runway).
 	NoStop bool
+
+	// Pattern flying (P1). InPattern is true while Status is a pattern leg or
+	// the aircraft is on a closed-traffic takeoff that will rejoin.
+	InPattern bool
+	// PatternSizeNM overrides airport PatternSize when ≥ 0.5; 0 → airport default.
+	PatternSizeNM float64
+	// LandingType is TG/SG/LA/FS (empty until cleared).
+	LandingType string
+	// ExtendLeg freezes leg advancement until tc/td/tb (or ga/re-enter).
+	ExtendLeg bool
+	// ShortApproach (msa): from downwind, fly direct to threshold (skip base).
+	ShortApproach bool
+	// MidfieldReported is set once when crossing midfield downwind (instruction).
+	MidfieldReported bool
+	// SGWaitSec is the stop-and-go hold duration; 0 means wait for `go` forever.
+	// SGTimer counts remaining seconds while stopped on the runway for SG.
+	SGWaitSec float64
+	SGTimer   float64
+	// SGWaiting is true while stopped mid-runway awaiting `go` / timer.
+	SGWaiting bool
 
 	// Air vector targets (set by fh/cm/spd family; Tick consumes in PR 4).
 	// Has* flags distinguish "not commanded" from zero values.
@@ -146,6 +181,13 @@ func (a *SimAircraft) snapshot() AircraftSnapshot {
 		HasDepHeading:     a.HasDepHeading,
 		PatternTraffic:    a.PatternTraffic,
 		NoStop:            a.NoStop,
+		InPattern:         a.InPattern,
+		PatternSizeNM:     a.PatternSizeNM,
+		LandingType:       a.LandingType,
+		ExtendLeg:         a.ExtendLeg,
+		ShortApproach:     a.ShortApproach,
+		SGWaitSec:         a.SGWaitSec,
+		SGWaiting:         a.SGWaiting,
 		TaxiWPIndex:       a.TaxiWPIndex,
 		TaxiParking:       a.TaxiParking,
 		TaxiSteps:         append([]string(nil), a.TaxiSteps...),
@@ -157,6 +199,19 @@ func (a *SimAircraft) snapshot() AircraftSnapshot {
 		HasDesiredAlt:     a.HasDesiredAlt,
 		DesiredSpeed:      a.DesiredSpeed,
 		HasDesiredSpeed:   a.HasDesiredSpeed,
+	}
+}
+
+// inPatternLeg reports whether Status is one of the five circuit legs.
+func (a *SimAircraft) inPatternLeg() bool {
+	if a == nil {
+		return false
+	}
+	switch a.Status {
+	case StatusUpwind, StatusCrosswind, StatusDownwind, StatusBase, StatusFinal:
+		return true
+	default:
+		return false
 	}
 }
 

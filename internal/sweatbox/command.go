@@ -79,6 +79,13 @@ func isAircraftVerb(tok string) bool {
 		"fp", "vp", "remarks",
 		"ctopp", "land", "hs":
 		return true
+	// Pattern / arrival (P1):
+	case "erc", "erd", "erb", "elc", "eld", "elb", "ef",
+		"tg", "sg", "la", "fs", "ga", "go",
+		"ext", "mlt", "mrt", "ps",
+		"msa", "mna",
+		"tc", "tcn", "td", "tdn", "tb", "tbn":
+		return true
 	default:
 		return false
 	}
@@ -105,6 +112,12 @@ func normalizeVerb(tok string) string {
 		return "cm"
 	case "speed", "slow", "sln", "sl", "ds", "is":
 		return "spd"
+	case "tcn":
+		return "tc"
+	case "tdn":
+		return "td"
+	case "tbn":
+		return "tb"
 	default:
 		return strings.ToLower(tok)
 	}

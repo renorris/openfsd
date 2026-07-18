@@ -105,6 +105,35 @@ func (e *Engine) Command(selectedCS, line string) CommandResult {
 		return e.cmdFlightPlanLocked(target, args, RulesVFR)
 	case "remarks":
 		return e.cmdRemarksLocked(target, args)
+	// Pattern / arrival (P1)
+	case "erc", "erd", "erb", "elc", "eld", "elb", "ef":
+		return e.cmdEnterPatternLocked(target, verb, args)
+	case "tg":
+		return e.cmdLandingTypeLocked(target, LandingTG, args)
+	case "sg":
+		return e.cmdLandingTypeLocked(target, LandingSG, args)
+	case "la":
+		return e.cmdLandingTypeLocked(target, LandingLA, args)
+	case "fs":
+		return e.cmdLandingTypeLocked(target, LandingFS, args)
+	case "ga":
+		return e.cmdGoAroundLocked(target)
+	case "go":
+		return e.cmdGoLocked(target)
+	case "ext":
+		return e.cmdExtendLegLocked(target)
+	case "mlt":
+		return e.cmdMakeTrafficLocked(target, "L")
+	case "mrt":
+		return e.cmdMakeTrafficLocked(target, "R")
+	case "ps":
+		return e.cmdPatternSizeLocked(target, args)
+	case "msa":
+		return e.cmdShortApproachLocked(target, true)
+	case "mna":
+		return e.cmdShortApproachLocked(target, false)
+	case "tc", "td", "tb":
+		return e.cmdTurnPatternLegLocked(target, verb)
 	default:
 		return CommandResult{OK: false, Message: "Invalid command: " + rest[0]}
 	}
@@ -764,6 +793,328 @@ func parseCruiseAltitude(raw float64) int {
 		return int(math.Round(raw * 100))
 	}
 	return int(math.Round(raw))
+}
+
+// --- Pattern / arrival (P1) -------------------------------------------------
+
+// cmdEnterPatternLocked implements erc/erd/erb/elc/eld/elb/ef.
+func (e *Engine) cmdEnterPatternLocked(target, verb string, args []string) CommandResult {
+	ac, errMsg := e.requireAircraftLocked(target)
+	if errMsg != "" {
+		return CommandResult{OK: false, Message: errMsg}
+	}
+	if e.airport == nil {
+		return CommandResult{OK: false, Message: "No airport loaded."}
+	}
+	if len(args) < 1 {
+		return CommandResult{OK: false, Message: patternEntryUsage(verb)}
+	}
+	leg, traffic, ok := patternLegFromEnterVerb(verb)
+	if !ok {
+		return CommandResult{OK: false, Message: "Invalid command: " + verb}
+	}
+	rwy := strings.ToUpper(strings.TrimSpace(args[0]))
+	s, end, errMsg := e.resolveRunwaySurfaceLocked(rwy)
+	if errMsg != "" {
+		return CommandResult{OK: false, Message: errMsg}
+	}
+	if traffic == "" {
+		// ef: keep existing traffic side, default left.
+		if ac.PatternTraffic == "L" || ac.PatternTraffic == "R" {
+			traffic = ac.PatternTraffic
+		} else {
+			traffic = "L"
+		}
+	}
+	a, errMsg := computePatternAnchors(s, end, traffic, e.effectivePatternSizeNMLocked(ac))
+	if errMsg != "" {
+		return CommandResult{OK: false, Message: errMsg}
+	}
+	placeOnPatternLegLocked(ac, a, leg, e.airport)
+	return CommandResult{OK: true}
+}
+
+// cmdLandingTypeLocked implements tg / sg [sec] / la / fs.
+func (e *Engine) cmdLandingTypeLocked(target, landingType string, args []string) CommandResult {
+	ac, errMsg := e.requireAircraftLocked(target)
+	if errMsg != "" {
+		return CommandResult{OK: false, Message: errMsg}
+	}
+	// Applicable airborne / pattern / approach states.
+	switch ac.Status {
+	case StatusUpwind, StatusCrosswind, StatusDownwind, StatusBase, StatusFinal,
+		StatusOnApproach, StatusAirborne, StatusDeparting, StatusTakeoff:
+		// ok
+	default:
+		return CommandResult{OK: false, Message: "Not in a position to set landing type."}
+	}
+
+	ac.LandingType = landingType
+	ac.SGWaitSec = 0
+	if landingType == LandingSG && len(args) >= 1 {
+		sec, ok := parseFiniteFloat(args[0])
+		if !ok || sec < 0 {
+			return CommandResult{OK: false, Message: `Missing parameters. Example: "sg 15"`}
+		}
+		ac.SGWaitSec = sec
+	}
+
+	// Ensure a landing runway when on approach-style statuses.
+	if ac.LandingRunway == "" && ac.DepRunway != "" {
+		ac.LandingRunway = ac.DepRunway
+	}
+	// Promote plain approach to Final when given a landing clearance.
+	if ac.Status == StatusOnApproach || ac.Status == StatusAirborne {
+		if ac.LandingRunway != "" {
+			ac.Status = StatusFinal
+			ac.InPattern = ac.InPattern || ac.PatternTraffic != ""
+		}
+	}
+
+	if ac.inPatternLeg() {
+		ac.Instruction = formatPatternInstruction(ac)
+	} else {
+		name := formatLandingTypeName(landingType)
+		if ac.LandingRunway != "" {
+			ac.Instruction = name + " runway " + ac.LandingRunway
+		} else {
+			ac.Instruction = name
+		}
+	}
+	return CommandResult{OK: true}
+}
+
+// cmdGoAroundLocked implements ga — climb to pattern altitude and rejoin upwind.
+func (e *Engine) cmdGoAroundLocked(target string) CommandResult {
+	ac, errMsg := e.requireAircraftLocked(target)
+	if errMsg != "" {
+		return CommandResult{OK: false, Message: errMsg}
+	}
+	switch ac.Status {
+	case StatusFinal, StatusBase, StatusOnApproach, StatusDownwind, StatusLanded:
+		// ok — go around from late pattern / approach / bounced landing
+	case StatusUpwind, StatusCrosswind:
+		// already going around / early pattern — treat as climb + continue
+	default:
+		if !ac.InPattern {
+			return CommandResult{OK: false, Message: "Not on approach or in the pattern."}
+		}
+	}
+
+	// Need a runway to rejoin.
+	rwy := ac.LandingRunway
+	if rwy == "" {
+		rwy = ac.DepRunway
+	}
+	if rwy == "" || e.airport == nil {
+		// Fallback: climb and mark airborne.
+		ac.Status = StatusAirborne
+		ac.InPattern = false
+		ac.DesiredAlt = patternAltitudeMSL(e.airport)
+		ac.HasDesiredAlt = true
+		ac.LandingType = ""
+		ac.SGWaiting = false
+		ac.Instruction = "Go around"
+		return CommandResult{OK: true}
+	}
+	s, end, errMsg := e.resolveRunwaySurfaceLocked(rwy)
+	if errMsg != "" {
+		return CommandResult{OK: false, Message: errMsg}
+	}
+	traffic := ac.PatternTraffic
+	if traffic != "L" && traffic != "R" {
+		traffic = "L"
+		ac.PatternTraffic = traffic
+	}
+	a, errMsg := computePatternAnchors(s, end, traffic, e.effectivePatternSizeNMLocked(ac))
+	if errMsg != "" {
+		return CommandResult{OK: false, Message: errMsg}
+	}
+	ac.LandingRunway = a.Runway
+	ac.InPattern = true
+	ac.Status = StatusUpwind
+	ac.ExtendLeg = false
+	ac.SGWaiting = false
+	ac.SGTimer = 0
+	// Keep landing type for next circuit unless full stop was planned → default TG.
+	if ac.LandingType == LandingFS || ac.LandingType == "" {
+		ac.LandingType = LandingTG
+	}
+	ac.DesiredHeading = a.legHeading(StatusUpwind)
+	ac.HasDesiredHeading = true
+	ac.TurnDir = patternTurnDir(traffic)
+	ac.ImmediateHeading = false
+	ac.DesiredAlt = patternAltitudeMSL(e.airport)
+	ac.HasDesiredAlt = true
+	if !ac.HasDesiredSpeed {
+		ac.DesiredSpeed = defaultApproachSpeed(ac.Engine)
+		ac.HasDesiredSpeed = true
+	}
+	if ac.Speed < 50 {
+		ac.Speed = ac.DesiredSpeed
+	}
+	ac.Instruction = "Go around, " + formatPatternInstruction(ac)
+	return CommandResult{OK: true}
+}
+
+// cmdGoLocked resumes after a stop-and-go wait.
+func (e *Engine) cmdGoLocked(target string) CommandResult {
+	ac, errMsg := e.requireAircraftLocked(target)
+	if errMsg != "" {
+		return CommandResult{OK: false, Message: errMsg}
+	}
+	if !ac.SGWaiting {
+		return CommandResult{OK: false, Message: "Not waiting for stop-and-go takeoff."}
+	}
+	ac.SGWaiting = false
+	ac.SGTimer = 0
+	ac.LandingType = LandingTG // next circuit after go
+	// Roll again into upwind like touch-and-go.
+	ac.Status = StatusTakeoff
+	ac.ClearedTakeoff = true
+	if ac.LandingRunway != "" {
+		ac.DepRunway = ac.LandingRunway
+	}
+	if ac.PatternTraffic == "" {
+		ac.PatternTraffic = "L"
+	}
+	ac.InPattern = true
+	e.alignTakeoffHeadingLocked(ac)
+	ac.Instruction = "Stop and go, rolling"
+	return CommandResult{OK: true}
+}
+
+// cmdExtendLegLocked implements ext.
+func (e *Engine) cmdExtendLegLocked(target string) CommandResult {
+	ac, errMsg := e.requireAircraftLocked(target)
+	if errMsg != "" {
+		return CommandResult{OK: false, Message: errMsg}
+	}
+	switch ac.Status {
+	case StatusUpwind, StatusCrosswind, StatusDownwind:
+		// ok — TWRTrainer: "Can only extend upwind, crosswind or downwind leg."
+	default:
+		return CommandResult{OK: false, Message: "Can only extend upwind, crosswind or downwind leg."}
+	}
+	ac.ExtendLeg = true
+	ac.Instruction = formatPatternInstruction(ac)
+	return CommandResult{OK: true}
+}
+
+// cmdTurnPatternLegLocked implements tc/td/tb (and aliases via normalizeVerb).
+func (e *Engine) cmdTurnPatternLegLocked(target, verb string) CommandResult {
+	ac, errMsg := e.requireAircraftLocked(target)
+	if errMsg != "" {
+		return CommandResult{OK: false, Message: errMsg}
+	}
+	want := turnCommandTargetLeg(verb)
+	if want == "" {
+		return CommandResult{OK: false, Message: "Invalid command: " + verb}
+	}
+	// Expected current leg is the previous of want (e.g. tc requires Upwind).
+	needCur := prevLeg(want)
+	if ac.Status != needCur {
+		return CommandResult{OK: false, Message: fmt.Sprintf("Not on %s.", strings.ToLower(needCur))}
+	}
+	a, errMsg := e.anchorsForAircraftLocked(ac)
+	if errMsg != "" {
+		return CommandResult{OK: false, Message: errMsg}
+	}
+	ac.ExtendLeg = false
+	ac.Status = want
+	ac.InPattern = true
+	ac.DesiredHeading = a.legHeading(want)
+	ac.HasDesiredHeading = true
+	ac.TurnDir = patternTurnDir(a.Traffic)
+	ac.ImmediateHeading = false
+	if want == StatusBase || want == StatusDownwind || want == StatusCrosswind {
+		ac.DesiredAlt = patternAltitudeMSL(e.airport)
+		ac.HasDesiredAlt = true
+	}
+	if want == StatusDownwind {
+		ac.MidfieldReported = false
+	}
+	ac.Instruction = formatPatternInstruction(ac)
+	return CommandResult{OK: true}
+}
+
+// cmdMakeTrafficLocked implements mlt/mrt (takeoff only).
+func (e *Engine) cmdMakeTrafficLocked(target, traffic string) CommandResult {
+	ac, errMsg := e.requireAircraftLocked(target)
+	if errMsg != "" {
+		return CommandResult{OK: false, Message: errMsg}
+	}
+	// TWRTrainer: "Can only be issued during takeoff."
+	switch ac.Status {
+	case StatusTakeoff:
+		// ok
+	default:
+		// Also allow when cleared for takeoff but still on ground rolling into it.
+		if !(ac.ClearedTakeoff && (ac.Status == StatusHoldingInPosition ||
+			ac.Status == StatusHoldingShort || ac.Status == StatusTaxiing)) {
+			return CommandResult{OK: false, Message: "Can only be issued during takeoff."}
+		}
+	}
+	ac.PatternTraffic = traffic
+	ac.InPattern = true
+	if ac.LandingType == "" {
+		ac.LandingType = LandingTG
+	}
+	if ac.LandingRunway == "" && ac.DepRunway != "" {
+		ac.LandingRunway = ac.DepRunway
+	}
+	ac.Instruction = formatCTOInstruction(ac)
+	if ac.Status == StatusTakeoff {
+		side := "left"
+		if traffic == "R" {
+			side = "right"
+		}
+		ac.Instruction = "Takeoff, " + side + " traffic"
+	}
+	return CommandResult{OK: true}
+}
+
+// cmdPatternSizeLocked implements ps size.
+func (e *Engine) cmdPatternSizeLocked(target string, args []string) CommandResult {
+	ac, errMsg := e.requireAircraftLocked(target)
+	if errMsg != "" {
+		return CommandResult{OK: false, Message: errMsg}
+	}
+	if len(args) < 1 {
+		return CommandResult{OK: false, Message: `Missing parameters. Example: "ps 1.5"`}
+	}
+	size, ok := parseFiniteFloat(args[0])
+	if !ok {
+		return CommandResult{OK: false, Message: `Missing parameters. Example: "ps 1.5"`}
+	}
+	if size < minPatternSizeNM || size > maxPatternSizeNM {
+		return CommandResult{OK: false, Message: fmt.Sprintf("Pattern size must be between %.1f and %.0f NM.", minPatternSizeNM, maxPatternSizeNM)}
+	}
+	ac.PatternSizeNM = clampPatternSize(size)
+	if ac.inPatternLeg() {
+		ac.Instruction = formatPatternInstruction(ac)
+	}
+	return CommandResult{OK: true}
+}
+
+// cmdShortApproachLocked implements msa / mna.
+func (e *Engine) cmdShortApproachLocked(target string, short bool) CommandResult {
+	ac, errMsg := e.requireAircraftLocked(target)
+	if errMsg != "" {
+		return CommandResult{OK: false, Message: errMsg}
+	}
+	if !ac.InPattern && !ac.inPatternLeg() && ac.Status != StatusOnApproach {
+		return CommandResult{OK: false, Message: "Not in the pattern."}
+	}
+	ac.ShortApproach = short
+	if ac.inPatternLeg() {
+		ac.Instruction = formatPatternInstruction(ac)
+	} else if short {
+		ac.Instruction = "Short approach"
+	} else {
+		ac.Instruction = "Normal approach"
+	}
+	return CommandResult{OK: true}
 }
 
 // looksLikeAirport reports whether s looks like an ICAO/IATA airport code
