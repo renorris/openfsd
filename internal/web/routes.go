@@ -33,6 +33,7 @@ func (s *Server) setupRoutes() (*gin.Engine, error) {
 	s.setupConfigRoutes(apiV1Group)
 	s.setupDataRoutes(apiV1Group)
 	s.setupFsdConnRoutes(apiV1Group)
+	s.setupSweatboxAPIRoutes(apiV1Group)
 
 	// Frontend groups
 	s.setupFrontendRoutes(e.Group(""))
@@ -74,6 +75,15 @@ func (s *Server) setupFsdConnRoutes(parent *gin.RouterGroup) {
 	fsdConnGroup := parent.Group("/fsdconn")
 	fsdConnGroup.Use(s.jwtBearerMiddleware, s.csrfIfCookieSession)
 	fsdConnGroup.POST("/kickuser", s.handleKickActiveConnection)
+}
+
+// setupSweatboxAPIRoutes mounts read-only PE proxies under /api/v1/sweatbox.
+// Mutations stay on HTML form POSTs (CSRF + PRG) — not on this JSON surface.
+func (s *Server) setupSweatboxAPIRoutes(parent *gin.RouterGroup) {
+	g := parent.Group("/sweatbox")
+	g.Use(s.jwtBearerMiddleware, s.csrfIfCookieSession)
+	g.GET("/state", s.handleAPISweatboxState)
+	g.GET("/ops", s.handleAPISweatboxOps)
 }
 
 func (s *Server) setupDataRoutes(parent *gin.RouterGroup) {

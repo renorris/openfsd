@@ -1,12 +1,25 @@
 {{ define "title" }}Sweatbox{{ end }}
 
 {{ define "body" }}
-<main class="container mt-4" style="max-width: 960px">
+{{/*
+  Progressive enhancement (sweatbox.js):
+  Polls GET /api/v1/sweatbox/state every 1–2 s to refresh status + aircraft
+  table when JS is available. Forms remain server-side command authority
+  (POST + CSRF). No SPA / client router / global store.
+  First-party openfsd JS only (no Leaflet on this page).
+*/}}
+<main class="container mt-4" style="max-width: 960px"
+      id="sweatbox-root"
+      data-js="sweatbox"
+      data-poll-ms="1500"
+      data-available="{{ if .Available }}1{{ else }}0{{ end }}">
     <h1 class="h4 mb-3">Sweatbox instructor</h1>
     <p class="text-muted small">
         Server-rendered control plane for the integrated sweatbox simulator.
-        JavaScript is not required. Refresh the page to update aircraft state.
+        JavaScript is not required — use <strong>Refresh</strong> to update aircraft state.
+        With JavaScript enabled, the status and table update automatically.
     </p>
+    <p class="small mb-3" data-js="live-status" hidden aria-live="polite"></p>
 
     {{ if .FlashSuccess }}
     <div class="alert alert-success" role="status">{{ .FlashSuccess }}</div>
@@ -31,26 +44,24 @@
         <h2 id="sweatbox-status-heading" class="h5">Status</h2>
         <dl class="row mb-0 small">
             <dt class="col-sm-3">Airport</dt>
-            <dd class="col-sm-9">{{ if .ICAO }}{{ .ICAO }}{{ else }}—{{ end }}</dd>
+            <dd class="col-sm-9" data-js="icao">{{ if .ICAO }}{{ .ICAO }}{{ else }}—{{ end }}</dd>
             <dt class="col-sm-3">Paused</dt>
-            <dd class="col-sm-9">{{ if .Paused }}yes{{ else }}no{{ end }}</dd>
+            <dd class="col-sm-9" data-js="paused">{{ if .Paused }}yes{{ else }}no{{ end }}</dd>
             <dt class="col-sm-3">Elapsed</dt>
-            <dd class="col-sm-9">{{ .Elapsed }}</dd>
+            <dd class="col-sm-9" data-js="elapsed">{{ .Elapsed }}</dd>
             <dt class="col-sm-3">Arrivals / departures</dt>
-            <dd class="col-sm-9">{{ .ArrCount }} / {{ .DepCount }}</dd>
+            <dd class="col-sm-9" data-js="arr-dep">{{ .ArrCount }} / {{ .DepCount }}</dd>
         </dl>
-        {{ if .StatusMsg }}
-        <p class="text-muted small mt-2 mb-0">{{ .StatusMsg }}</p>
-        {{ end }}
+        <p class="text-muted small mt-2 mb-0" data-js="status-msg"{{ if not .StatusMsg }} hidden{{ end }}>{{ .StatusMsg }}</p>
 
         <div class="d-flex flex-wrap gap-2 mt-3">
             <form method="post" action="/sweatbox/pause" class="d-inline m-0">
                 <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
-                <button type="submit" class="btn btn-sm btn-outline-secondary"{{ if .Paused }} disabled{{ end }}>Pause</button>
+                <button type="submit" class="btn btn-sm btn-outline-secondary" data-js="pause-btn"{{ if .Paused }} disabled{{ end }}>Pause</button>
             </form>
             <form method="post" action="/sweatbox/unpause" class="d-inline m-0">
                 <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
-                <button type="submit" class="btn btn-sm btn-outline-secondary"{{ if not .Paused }} disabled{{ end }}>Unpause</button>
+                <button type="submit" class="btn btn-sm btn-outline-secondary" data-js="unpause-btn"{{ if not .Paused }} disabled{{ end }}>Unpause</button>
             </form>
             <a class="btn btn-sm btn-outline-primary" href="/sweatbox">Refresh</a>
         </div>
@@ -58,9 +69,8 @@
 
     <section class="mb-4" aria-labelledby="sweatbox-aircraft-heading">
         <h2 id="sweatbox-aircraft-heading" class="h5">Aircraft</h2>
-        {{ if .Aircraft }}
-        <div class="table-responsive">
-            <table class="table table-sm table-striped align-middle">
+        <div class="table-responsive" data-js="aircraft-table-wrap"{{ if not .Aircraft }} hidden{{ end }}>
+            <table class="table table-sm table-striped align-middle" id="sweatbox-aircraft-table">
                 <thead>
                 <tr>
                     <th scope="col">Callsign</th>
@@ -75,9 +85,9 @@
                     <th scope="col"><span class="visually-hidden">Actions</span></th>
                 </tr>
                 </thead>
-                <tbody>
+                <tbody data-js="aircraft-tbody" id="sweatbox-aircraft-tbody">
                 {{ range .Aircraft }}
-                <tr>
+                <tr data-callsign="{{ .Callsign }}">
                     <td>{{ .Callsign }}</td>
                     <td>{{ .Type }}</td>
                     <td>{{ .Rules }}</td>
@@ -99,9 +109,7 @@
                 </tbody>
             </table>
         </div>
-        {{ else }}
-        <p class="text-muted small">No sweatbox aircraft. Load a scenario or use the command box (<code>add …</code>).</p>
-        {{ end }}
+        <p class="text-muted small" data-js="aircraft-empty"{{ if .Aircraft }} hidden{{ end }}>No sweatbox aircraft. Load a scenario or use the command box (<code>add …</code>).</p>
 
         <form method="post" action="/sweatbox/delete-all" class="mt-2">
             <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
@@ -121,7 +129,7 @@
                 <label for="sbx-callsign" class="form-label">Selected callsign (optional)</label>
                 <input type="text" class="form-control form-control-sm" id="sbx-callsign" name="callsign"
                        value="" autocomplete="off" spellcheck="false" placeholder="e.g. AAL123">
-                <div class="form-text">Used for aircraft-scoped verbs when the command line does not include a callsign.</div>
+                <div class="form-text">Used for aircraft-scoped verbs when the command line does not include a callsign. With JS, click a table row to fill this field.</div>
             </div>
             <div class="mb-2">
                 <label for="sbx-command" class="form-label">Command</label>
@@ -180,6 +188,7 @@
         </div>
     </div>
 
+    <script src="/static/js/openfsd/sweatbox.js" defer></script>
     {{ end }}
 </main>
 {{ end }}
