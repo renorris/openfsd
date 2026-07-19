@@ -28,14 +28,14 @@ import (
 // ForceClassicFSD is set, the classic net.Listener accept loop runs instead
 // (one reader + one SenderWorker per connection) for test harnesses.
 type Server struct {
-	cfg        *Config
-	users      UserStore
-	configKV   ConfigStore
-	registry   Registry
-	metar      MetarQueue
-	clock      Clock
-	logger     *slog.Logger
-	listen     func(ctx context.Context, network, addr string) (net.Listener, error)
+	cfg      *Config
+	users    UserStore
+	configKV ConfigStore
+	registry Registry
+	metar    MetarQueue
+	clock    Clock
+	logger   *slog.Logger
+	listen   func(ctx context.Context, network, addr string) (net.Listener, error)
 	// useClassicFSD selects the classic 2-goroutine-per-conn path.
 	useClassicFSD bool
 	fsdBound      chan<- string

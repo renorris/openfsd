@@ -11,7 +11,7 @@ func (s *Server) handleFileFlightplan(client *session.Session, packet []byte) {
 }
 
 func (s *Server) handleAmendFlightplan(client *session.Session, packet []byte) {
-	if !client.IsAtc || client.FacilityType <= 0 {
+	if !client.IsAtc || client.FacilityType.Load() <= 0 {
 		return
 	}
 

@@ -184,6 +184,131 @@ func TestQuantizeDeg_NonPositiveQuantumPassthrough(t *testing.T) {
 	}
 }
 
+func TestCellIndex(t *testing.T) {
+	// 0.25° cells: floor division into int32 indices.
+	if got := CellIndex(0, 0.25); got != 0 {
+		t.Fatalf("CellIndex(0) = %d", got)
+	}
+	if got := CellIndex(0.24, 0.25); got != 0 {
+		t.Fatalf("CellIndex(0.24) = %d", got)
+	}
+	if got := CellIndex(0.25, 0.25); got != 1 {
+		t.Fatalf("CellIndex(0.25) = %d", got)
+	}
+	if got := CellIndex(-0.01, 0.25); got != -1 {
+		t.Fatalf("CellIndex(-0.01) = %d, want -1", got)
+	}
+	// Non-positive cellDeg falls back to DefaultGridCellDeg.
+	if got := CellIndex(0.3, 0); got != CellIndex(0.3, DefaultGridCellDeg) {
+		t.Fatalf("CellIndex default cellDeg mismatch: %d vs %d", got, CellIndex(0.3, DefaultGridCellDeg))
+	}
+	if got := CellIndex(0.3, -1); got != CellIndex(0.3, DefaultGridCellDeg) {
+		t.Fatalf("CellIndex negative cellDeg mismatch")
+	}
+}
+
+func TestCellCover_SingleCell(t *testing.T) {
+	// Point-like AABB entirely inside one 0.25° cell.
+	min := [2]float64{34.01, -118.02}
+	max := [2]float64{34.02, -118.01}
+	cells := CellCover(min, max, 0.25, nil)
+	if len(cells) != 1 {
+		t.Fatalf("want 1 cell, got %d: %v", len(cells), cells)
+	}
+	want := CellKey{ILat: CellIndex(34.01, 0.25), ILon: CellIndex(-118.02, 0.25)}
+	if cells[0] != want {
+		t.Fatalf("cell = %+v, want %+v", cells[0], want)
+	}
+}
+
+func TestCellCover_MultiCellAndSwap(t *testing.T) {
+	// min/max deliberately swapped — CellCover should normalize.
+	// 0–1° @ 0.5°: floor(0)=0 … floor(1)=2 → 3×3 = 9 cells.
+	min := [2]float64{1.0, 1.0} // actually larger
+	max := [2]float64{0.0, 0.0} // actually smaller
+	cells := CellCover(min, max, 0.5, nil)
+	if len(cells) != 9 {
+		t.Fatalf("want 9 cells for 0–1° @ 0.5°, got %d: %v", len(cells), cells)
+	}
+	seen := map[CellKey]bool{}
+	for _, c := range cells {
+		seen[c] = true
+	}
+	for _, lat := range []int32{0, 1, 2} {
+		for _, lon := range []int32{0, 1, 2} {
+			if !seen[CellKey{ILat: lat, ILon: lon}] {
+				t.Fatalf("missing cell {%d,%d}", lat, lon)
+			}
+		}
+	}
+}
+
+func TestCellCover_DefaultCellDegAndAppend(t *testing.T) {
+	dst := []CellKey{{ILat: 99, ILon: 99}}
+	out := CellCover([2]float64{0, 0}, [2]float64{0.1, 0.1}, 0, dst)
+	if len(out) < 2 {
+		t.Fatalf("expected append onto dst, got %v", out)
+	}
+	if out[0] != (CellKey{ILat: 99, ILon: 99}) {
+		t.Fatalf("dst prefix lost: %v", out)
+	}
+}
+
+func TestCellCover_LatClampAndNonFinite(t *testing.T) {
+	// Latitude below -90 / above 90 is clamped.
+	cells := CellCover([2]float64{-100, 0}, [2]float64{100, 0.1}, 10, nil)
+	if len(cells) == 0 {
+		t.Fatal("expected cells after lat clamp")
+	}
+	// Non-finite lat → full -90..90 band.
+	infCells := CellCover([2]float64{math.Inf(-1), 0}, [2]float64{math.Inf(1), 0.1}, 45, nil)
+	if len(infCells) == 0 {
+		t.Fatal("expected cells for non-finite lat")
+	}
+	// Non-finite lon spans mid=0 with ±90° cap.
+	lonInf := CellCover([2]float64{0, math.NaN()}, [2]float64{0.1, math.Inf(1)}, 30, nil)
+	if len(lonInf) == 0 {
+		t.Fatal("expected cells for non-finite lon")
+	}
+	// Absurdly wide finite lon span is capped around midpoint (finite mid path).
+	wide := CellCover([2]float64{0, -170}, [2]float64{0.1, 170}, 30, nil)
+	if len(wide) == 0 {
+		t.Fatal("expected cells for wide lon")
+	}
+	// Wide finite lon with NaN mid fallback when only one side finite:
+	// both Inf/NaN lon already covered; one more path: both finite but > maxLonSpan
+	// is the wide case above. Cover NaN lat with finite lon separately.
+	nanLat := CellCover([2]float64{math.NaN(), -1}, [2]float64{math.NaN(), 1}, 1, nil)
+	if len(nanLat) == 0 {
+		t.Fatal("expected cells for NaN lat")
+	}
+}
+
+func TestCellCover_AxisCap(t *testing.T) {
+	// Force more than maxCellsPerAxis (128) along lon with a tiny cell size.
+	cells := CellCover([2]float64{0, -40}, [2]float64{0.01, 40}, 0.1, nil)
+	// After cap: at most 129 cells per axis (mid ± 64), so ≤ 129*129 but lat is 1 cell.
+	// lat span tiny → 1 lat cell; lon capped to ≤ 129.
+	lats := map[int32]bool{}
+	lons := map[int32]bool{}
+	for _, c := range cells {
+		lats[c.ILat] = true
+		lons[c.ILon] = true
+	}
+	if len(lons) > 129 {
+		t.Fatalf("lon axis not capped: %d distinct lon indices", len(lons))
+	}
+	// Huge lat span with tiny cells also caps.
+	latHuge := CellCover([2]float64{-80, 0}, [2]float64{80, 0.01}, 0.1, nil)
+	lats2 := map[int32]bool{}
+	for _, c := range latHuge {
+		lats2[c.ILat] = true
+	}
+	if len(lats2) > 129 {
+		t.Fatalf("lat axis not capped: %d", len(lats2))
+	}
+}
+
 func BenchmarkDistance(b *testing.B) {
 	const numPairs = 1024 * 64
 	lats1 := make([]float64, numPairs)

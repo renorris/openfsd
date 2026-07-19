@@ -154,7 +154,7 @@ func (s *Server) handleGetOnlineUsers(c *gin.Context) {
 			atc := OnlineUserATC{
 				OnlineUserGeneralData: genData,
 				Frequency:             client.Frequency.Load(),
-				Facility:              client.FacilityType,
+				Facility:              int(client.FacilityType.Load()),
 				VisRange:              int(client.VisRange.Load() * 0.000539957), // Convert meters to nautical miles
 			}
 			resData.ATC = append(resData.ATC, atc)

@@ -30,7 +30,7 @@ func (s *Server) handleATCPosition(client *session.Session, packet []byte) {
 		return
 	}
 
-	client.FacilityType = int(facilityType)
+	client.FacilityType.Store(int32(facilityType))
 
 	// ATC frequency field (raw &-delimited wire value, e.g. "28550")
 	client.Frequency.Store(string(getField(packet, 1)))

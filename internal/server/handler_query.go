@@ -55,7 +55,7 @@ func (s *Server) handleProcontroller(client *session.Session, packet []byte) {
 		"ST": // Set flight strip
 
 		// Only active ATC above OBS
-		if client.FacilityType <= 0 {
+		if client.FacilityType.Load() <= 0 {
 			client.SendError(InvalidControlError, "Invalid control")
 			return
 		}
@@ -124,7 +124,7 @@ func (s *Server) handleClientQuery(client *session.Session, packet []byte) {
 		"IPC": // Force squawk code change
 
 		// ATC above OBS facility only
-		if !client.IsAtc || client.FacilityType <= 0 {
+		if !client.IsAtc || client.FacilityType.Load() <= 0 {
 			client.SendError(InvalidControlError, "Invalid control")
 			return
 		}
@@ -165,7 +165,7 @@ func (s *Server) handleClientQueryATCRequest(client *session.Session, packet []b
 	}
 
 	var p string
-	if targetClient.FacilityType > 0 {
+	if targetClient.FacilityType.Load() > 0 {
 		p = fmt.Sprintf("$CRSERVER:%s:ATC:Y:%s\r\n", client.Callsign, targetCallsign)
 	} else {
 		p = fmt.Sprintf("$CRSERVER:%s:ATC:N:%s\r\n", client.Callsign, targetCallsign)

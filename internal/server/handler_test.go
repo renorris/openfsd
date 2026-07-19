@@ -220,8 +220,8 @@ func TestHandleATCPosition(t *testing.T) {
 	// Valid DEL facility (2) for C1
 	pkt := []byte("%LAX_TWR:28550:2:50:1:34.0:-118.0:0\r\n")
 	srv.handleATCPosition(atc, pkt)
-	if atc.FacilityType != 2 {
-		t.Fatalf("FacilityType=%d want 2", atc.FacilityType)
+	if atc.FacilityType.Load() != 2 {
+		t.Fatalf("FacilityType=%d want 2", atc.FacilityType.Load())
 	}
 	if atc.Frequency.Load() != "28550" {
 		t.Fatalf("Frequency=%q", atc.Frequency.Load())
@@ -306,7 +306,7 @@ func TestHandleDeleteSquawkboxProcontroller(t *testing.T) {
 	srv, reg := newHandlerEnv(t)
 	p := newSess("N100", false, NetworkRatingObserver)
 	atc := newSess("LAX_TWR", true, NetworkRatingController1)
-	atc.FacilityType = 4
+	atc.FacilityType.Store(4)
 	other := newSess("N200", false, NetworkRatingObserver)
 	for _, s := range []*session.Session{p, atc, other} {
 		if err := reg.Register(s); err != nil {
@@ -335,11 +335,11 @@ func TestHandleDeleteSquawkboxProcontroller(t *testing.T) {
 	srv.handleProcontroller(atc, []byte("#PCLAX_TWR:X:CCP:VER\r\n"))
 
 	// Privileged without facility
-	atc.FacilityType = 0
+	atc.FacilityType.Store(0)
 	srv.handleProcontroller(atc, []byte("#PCLAX_TWR:N200:CCP:SC:ABC\r\n"))
 
 	// Privileged with facility + range ATC
-	atc.FacilityType = 4
+	atc.FacilityType.Store(4)
 	srv.handleProcontroller(atc, []byte("#PCLAX_TWR:@94835:CCP:SC:ABC\r\n"))
 	// Privileged direct
 	srv.handleProcontroller(atc, []byte("#PCLAX_TWR:N200:CCP:BC:N200:1200\r\n"))
@@ -349,13 +349,13 @@ func TestHandleClientQuery(t *testing.T) {
 	srv, reg := newHandlerEnv(t)
 	pilot := newSess("N100", false, NetworkRatingObserver)
 	atc := newSess("LAX_TWR", true, NetworkRatingController1)
-	atc.FacilityType = 4
+	atc.FacilityType.Store(4)
 	sup := newSess("SUP1", true, NetworkRatingSupervisor)
 	target := newSess("N200", false, NetworkRatingObserver)
 	target.FlightPlan.Store("I:B738:KLAX:KSFO")
 	target.AssignedBeaconCode.Store("1234")
 	obsATC := newSess("OBS1", true, NetworkRatingObserver)
-	obsATC.FacilityType = 0
+	obsATC.FacilityType.Store(0)
 
 	// Conn for IP query
 	c1, c2 := net.Pipe()
@@ -467,7 +467,7 @@ func TestHandleMetarKillAuthHandoffFlightplan(t *testing.T) {
 	srv, reg := newHandlerEnv(t)
 	pilot := newSess("N100", false, NetworkRatingObserver)
 	atc := newSess("LAX_TWR", true, NetworkRatingController1)
-	atc.FacilityType = 4
+	atc.FacilityType.Store(4)
 	sup := newSess("SUP1", true, NetworkRatingSupervisor)
 	victim := newSess("N200", false, NetworkRatingObserver)
 	for _, s := range []*session.Session{pilot, atc, sup, victim} {
@@ -520,9 +520,9 @@ func TestHandleMetarKillAuthHandoffFlightplan(t *testing.T) {
 	}
 
 	// Handoff low facility ignored
-	atc.FacilityType = 0
+	atc.FacilityType.Store(0)
 	srv.handleHandoff(atc, []byte("$HOLAX_TWR:N100:CS\r\n"))
-	atc.FacilityType = 4
+	atc.FacilityType.Store(4)
 	srv.handleHandoff(atc, []byte("$HOLAX_TWR:N100:CS\r\n"))
 	// pilot handoff ignored
 	srv.handleHandoff(pilot, []byte("$HON100:LAX_TWR:CS\r\n"))
@@ -536,10 +536,10 @@ func TestHandleMetarKillAuthHandoffFlightplan(t *testing.T) {
 	// Amend flightplan — non ATC ignored
 	srv.handleAmendFlightplan(pilot, []byte("$AMN100:*A:N100:I:B738:430:KLAX:0000:0000:KSFO:0000:0000:0:0:0:0::/V/:\r\n"))
 	// ATC facility 0 ignored
-	atc.FacilityType = 0
+	atc.FacilityType.Store(0)
 	srv.handleAmendFlightplan(atc, []byte("$AMLAX_TWR:*A:N100:I:B738:430:KLAX:0000:0000:KSFO:0000:0000:0:0:0:0::/V/:\r\n"))
 	// ATC OK
-	atc.FacilityType = 4
+	atc.FacilityType.Store(4)
 	srv.handleAmendFlightplan(atc, []byte("$AMLAX_TWR:*A:N100:I:B738:430:KLAX:0000:0000:KSFO:0000:0000:0:0:0:0::/V/:\r\n"))
 	// missing target
 	srv.handleAmendFlightplan(atc, []byte("$AMLAX_TWR:*A:NONE:I:B738:430:KLAX:0000:0000:KSFO:0000:0000:0:0:0:0::/V/:\r\n"))

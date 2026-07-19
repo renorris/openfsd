@@ -26,9 +26,9 @@ const nm = 1852.0
 
 // hub is a geographic traffic center (airport / FIR cluster).
 type hub struct {
-	name    string
-	lat     float64
-	lon     float64
+	name string
+	lat  float64
+	lon  float64
 	// radiusDeg is the 1σ spread of client positions around the hub.
 	radiusDeg float64
 }
@@ -300,9 +300,9 @@ func benchRWUpdatePosition(b *testing.B, n int) {
 	// Precompute small position deltas (taxi / cruise drift) — typical FSD updates
 	// move a few hundred meters, not half a continent.
 	type move struct {
-		c          *session.Session
-		lat, lon   float64
-		vis        float64
+		c        *session.Session
+		lat, lon float64
+		vis      float64
 	}
 	moves := make([]move, n)
 	for i, c := range clients {
@@ -580,11 +580,11 @@ func TestRealWorldLatencySample(t *testing.T) {
 			}
 
 			type sample struct {
-				searchNs   int64
-				updateNs   int64
-				findNs     int64
+				searchNs    int64
+				updateNs    int64
+				findNs      int64
 				broadcastNs int64
-				recipients int
+				recipients  int
 			}
 			out := make([]sample, samples)
 

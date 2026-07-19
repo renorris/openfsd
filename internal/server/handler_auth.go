@@ -28,7 +28,7 @@ func (s *Server) handleAuthChallenge(client *session.Session, packet []byte) {
 
 func (s *Server) handleHandoff(client *session.Session, packet []byte) {
 	// Active >OBS ATC only
-	if !client.IsAtc || client.FacilityType <= 1 {
+	if !client.IsAtc || client.FacilityType.Load() <= 1 {
 		return
 	}
 

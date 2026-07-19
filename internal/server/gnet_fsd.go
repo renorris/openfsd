@@ -79,13 +79,13 @@ func newFSDEngine(srv *Server, parent context.Context, addrs []string, numLoops 
 		}
 	}
 	return &fsdEngine{
-		srv:     srv,
-		ctx:     ctx,
-		cancel:  cancel,
+		srv:      srv,
+		ctx:      ctx,
+		cancel:   cancel,
 		numLoops: numLoops,
-		addrs:   addrs,
-		bound:   bound,
-		runDone: make(chan error, 1),
+		addrs:    addrs,
+		bound:    bound,
+		runDone:  make(chan error, 1),
 	}
 }
 
@@ -423,4 +423,3 @@ func (g *gnetLoginConn) RemoteAddr() net.Addr               { return g.remote }
 func (g *gnetLoginConn) SetDeadline(t time.Time) error      { return nil }
 func (g *gnetLoginConn) SetReadDeadline(t time.Time) error  { return nil }
 func (g *gnetLoginConn) SetWriteDeadline(t time.Time) error { return nil }
-

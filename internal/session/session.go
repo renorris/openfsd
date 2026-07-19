@@ -55,11 +55,9 @@ type LatLon struct {
 // Writer: owning read loop only (eventLoop / packet handlers on this connection).
 // Concurrent readers without extra sync are allowed for the fields below where
 // noted; they may observe a torn value — acceptable for snapshot/privilege checks:
-//   - FacilityType — writer: read loop (handleATCPosition); concurrent readers
-//     (HTTP online-users snapshot, CQ ATC checks on other sessions) may observe a
-//     torn int; acceptable. Switch to atomic later if stronger consistency is needed.
 //   - SendFastEnabled, ClosestVelocityClientDistance — read-loop only; not read
-//     across sessions.
+//     across sessions (except ClosestVelocity, written by postoffice Search under
+//     sweatbox wireMu when host-originated).
 //   - Auth (Initialize / challenge handling) — read-loop only.
 //   - Scanner — owned exclusively by the read loop.
 //
@@ -68,8 +66,8 @@ type LatLon struct {
 // position updates):
 //   - LatLon / SetLatLon / SetGeo / VisRange / VisBox (non-boxing float atomics)
 //   - FlightPlan, AssignedBeaconCode
-//   - Frequency (ATC % position field 1; stored by handleATCPosition), Altitude,
-//     Groundspeed, Transponder, Heading, LastUpdated
+//   - Frequency (ATC % position field 1; stored by handleATCPosition), FacilityType,
+//     Altitude, Groundspeed, Transponder, Heading, LastUpdated
 //
 // Immutable after login (set during login; safe to read concurrently afterward):
 //   - LoginData fields (Callsign, CID, RealName, NetworkRating, ProtoRevision, …)
@@ -139,9 +137,9 @@ type Session struct {
 	Heading     atomic.Int32  // Pilot heading
 	LastUpdated atomic.Time   // Last position/state update time
 
-	// FacilityType is ATC facility type (ATC only). Writer: read loop.
-	// Concurrent snapshot readers may see a torn int; acceptable.
-	FacilityType int
+	// FacilityType is ATC facility type (ATC only). Writer: read loop
+	// (handleATCPosition); concurrent readers (HTTP online-users, CQ ATC).
+	FacilityType atomic.Int32
 	LoginData
 
 	Auth            Auth // Optional; set by server when client auth is used
