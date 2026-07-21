@@ -125,6 +125,11 @@ type Session struct {
 	boxMaxLatBits atomic.Uint64
 	boxMaxLonBits atomic.Uint64
 
+	// secVis holds secondary ATC visibility centers (SECPOS). Nil when none.
+	// Writer: owning read loop (ClearSecondaryVisCenters / SetSecondaryVisCenter).
+	// Concurrent Search readers load the pointer; may observe a stale snapshot.
+	secVis atomic.Pointer[secVisSnapshot]
+
 	ClosestVelocityClientDistance float64 // Closest Velocity-compatible client distance in meters
 
 	FlightPlan         atomic.String
@@ -355,26 +360,32 @@ func (s *Session) LatLon() [2]float64 {
 }
 
 // SetLatLon stores coordinates atomically and refreshes VisBox using current VisRange.
+// Secondary center boxes are recomputed with the current VisRange.
 func (s *Session) SetLatLon(lat, lon float64) {
 	s.latBits.Store(math.Float64bits(lat))
 	s.lonBits.Store(math.Float64bits(lon))
 	s.refreshVisBox(lat, lon, s.VisRange.Load())
+	s.recomputeSecondaryBoxes(s.VisRange.Load())
 }
 
 // SetVisRange stores visibility range (meters) and refreshes VisBox.
+// Also recomputes secondary center boxes (same range as primary).
 func (s *Session) SetVisRange(rangeM float64) {
 	s.VisRange.Store(rangeM)
 	ll := s.LatLon()
 	s.refreshVisBox(ll[0], ll[1], rangeM)
+	s.recomputeSecondaryBoxes(rangeM)
 }
 
 // SetGeo sets lat, lon, and visibility range together (single VisBox refresh).
 // Prefer this over separate SetLatLon + VisRange.Store on hot paths.
+// Recomputes secondary center boxes with the new range.
 func (s *Session) SetGeo(lat, lon, rangeM float64) {
 	s.latBits.Store(math.Float64bits(lat))
 	s.lonBits.Store(math.Float64bits(lon))
 	s.VisRange.Store(rangeM)
 	s.refreshVisBox(lat, lon, rangeM)
+	s.recomputeSecondaryBoxes(rangeM)
 }
 
 // VisBox returns the cached axis-aligned visibility box [min, max] in degrees.
@@ -395,15 +406,178 @@ func (s *Session) VisBox() (min, max [2]float64) {
 // refreshVisBox writes the equirectangular AABB for center/range into atomics.
 // Duplicates geo.BoundingBox math to avoid a session → geo import edge.
 func (s *Session) refreshVisBox(lat, lon, rangeM float64) {
+	minLat, minLon, maxLat, maxLon := aabbAround(lat, lon, rangeM)
+	s.boxMinLatBits.Store(math.Float64bits(minLat))
+	s.boxMaxLatBits.Store(math.Float64bits(maxLat))
+	s.boxMinLonBits.Store(math.Float64bits(minLon))
+	s.boxMaxLonBits.Store(math.Float64bits(maxLon))
+}
+
+// MaxSecondaryVisCenters is the maximum number of SECPOS secondary centers
+// stored per session (zero-based indices 0..Max-1). vatSys UI exposes 4 total
+// centers (1 primary + 3 secondary); 4 secondaries leaves headroom.
+const MaxSecondaryVisCenters = 4
+
+// secVisSnapshot is an immutable secondary-center set for lock-free Search.
+type secVisSnapshot struct {
+	// slots[i].valid when index i is set. Sparse indices allowed.
+	slots [MaxSecondaryVisCenters]secVisSlot
+}
+
+type secVisSlot struct {
+	valid          bool
+	lat, lon       float64
+	minLat, minLon float64
+	maxLat, maxLon float64
+}
+
+// ClearSecondaryVisCenters drops all SECPOS secondary centers.
+// Call on each ATC % position update before the client re-sends secondaries
+// (vatSys SendPosition order: % primary, then ' for each secondary).
+func (s *Session) ClearSecondaryVisCenters() {
+	s.secVis.Store(nil)
+}
+
+// SetSecondaryVisCenter stores or replaces secondary center at zero-based index.
+// index must be in [0, MaxSecondaryVisCenters). Returns false if out of range.
+// Box uses the session's current VisRange (same range as primary).
+func (s *Session) SetSecondaryVisCenter(index int, lat, lon float64) bool {
+	if index < 0 || index >= MaxSecondaryVisCenters {
+		return false
+	}
+	rangeM := s.VisRange.Load()
+	minLat, minLon, maxLat, maxLon := aabbAround(lat, lon, rangeM)
+
+	var next secVisSnapshot
+	if prev := s.secVis.Load(); prev != nil {
+		next = *prev
+	}
+	next.slots[index] = secVisSlot{
+		valid:  true,
+		lat:    lat,
+		lon:    lon,
+		minLat: minLat,
+		minLon: minLon,
+		maxLat: maxLat,
+		maxLon: maxLon,
+	}
+	s.secVis.Store(&next)
+	return true
+}
+
+// SecondaryVisCenterCount returns how many secondary slots are currently set.
+func (s *Session) SecondaryVisCenterCount() int {
+	snap := s.secVis.Load()
+	if snap == nil {
+		return 0
+	}
+	n := 0
+	for i := range snap.slots {
+		if snap.slots[i].valid {
+			n++
+		}
+	}
+	return n
+}
+
+// VisBoxesOverlap reports whether any visibility AABB of a overlaps any of b.
+// Primary boxes always participate; secondary SECPOS boxes are included when set.
+// This is the postoffice Search predicate (historical FSD mutual box overlap).
+func VisBoxesOverlap(a, b *Session) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	aMin, aMax := a.VisBox()
+	bMin, bMax := b.VisBox()
+	if aabbOverlap(aMin, aMax, bMin, bMax) {
+		return true
+	}
+	aSnap := a.secVis.Load()
+	bSnap := b.secVis.Load()
+	if aSnap != nil {
+		for i := range aSnap.slots {
+			if !aSnap.slots[i].valid {
+				continue
+			}
+			saMin := [2]float64{aSnap.slots[i].minLat, aSnap.slots[i].minLon}
+			saMax := [2]float64{aSnap.slots[i].maxLat, aSnap.slots[i].maxLon}
+			if aabbOverlap(saMin, saMax, bMin, bMax) {
+				return true
+			}
+			if bSnap != nil {
+				for j := range bSnap.slots {
+					if !bSnap.slots[j].valid {
+						continue
+					}
+					sbMin := [2]float64{bSnap.slots[j].minLat, bSnap.slots[j].minLon}
+					sbMax := [2]float64{bSnap.slots[j].maxLat, bSnap.slots[j].maxLon}
+					if aabbOverlap(saMin, saMax, sbMin, sbMax) {
+						return true
+					}
+				}
+			}
+		}
+	}
+	if bSnap != nil {
+		for j := range bSnap.slots {
+			if !bSnap.slots[j].valid {
+				continue
+			}
+			sbMin := [2]float64{bSnap.slots[j].minLat, bSnap.slots[j].minLon}
+			sbMax := [2]float64{bSnap.slots[j].maxLat, bSnap.slots[j].maxLon}
+			if aabbOverlap(aMin, aMax, sbMin, sbMax) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// recomputeSecondaryBoxes rebuilds secondary AABBs after VisRange changes.
+func (s *Session) recomputeSecondaryBoxes(rangeM float64) {
+	prev := s.secVis.Load()
+	if prev == nil {
+		return
+	}
+	var next secVisSnapshot
+	any := false
+	for i := range prev.slots {
+		if !prev.slots[i].valid {
+			continue
+		}
+		any = true
+		lat, lon := prev.slots[i].lat, prev.slots[i].lon
+		minLat, minLon, maxLat, maxLon := aabbAround(lat, lon, rangeM)
+		next.slots[i] = secVisSlot{
+			valid:  true,
+			lat:    lat,
+			lon:    lon,
+			minLat: minLat,
+			minLon: minLon,
+			maxLat: maxLat,
+			maxLon: maxLon,
+		}
+	}
+	if !any {
+		s.secVis.Store(nil)
+		return
+	}
+	s.secVis.Store(&next)
+}
+
+// aabbAround returns equirectangular AABB edges for center/range (degrees / meters).
+func aabbAround(lat, lon, rangeM float64) (minLat, minLon, maxLat, maxLon float64) {
 	const metersPerDegreeLat = (math.Pi * 6371000.0) / 180
 	latRad := lat * (math.Pi / 180)
 	deltaLat := rangeM / metersPerDegreeLat
 	metersPerDegreeLon := metersPerDegreeLat * math.Cos(latRad)
 	deltaLon := rangeM / metersPerDegreeLon
-	s.boxMinLatBits.Store(math.Float64bits(lat - deltaLat))
-	s.boxMaxLatBits.Store(math.Float64bits(lat + deltaLat))
-	s.boxMinLonBits.Store(math.Float64bits(lon - deltaLon))
-	s.boxMaxLonBits.Store(math.Float64bits(lon + deltaLon))
+	return lat - deltaLat, lon - deltaLon, lat + deltaLat, lon + deltaLon
+}
+
+func aabbOverlap(minA, maxA, minB, maxB [2]float64) bool {
+	return minA[0] <= maxB[0] && maxA[0] >= minB[0] &&
+		minA[1] <= maxB[1] && maxA[1] >= minB[1]
 }
 
 // DequeueOutbound non-blockingly takes one queued outbound packet.

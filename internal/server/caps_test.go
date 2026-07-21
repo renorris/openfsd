@@ -11,9 +11,10 @@ func TestServerCapabilitiesPayload(t *testing.T) {
 		t.Fatal("payload empty")
 	}
 	// Required tokens for vatSys CheckCompatabilityWithServer / feature gates
-	// that openfsd actually implements (no SECPOS).
+	// that openfsd actually implements (including SECPOS multi-center range).
 	for _, flag := range []string{
 		"VERSION=1",
+		"SECPOS=1",
 		"ATCINFO=1",
 		"NEWATIS=1",
 		"GLOBALDATA=1",
@@ -24,10 +25,6 @@ func TestServerCapabilitiesPayload(t *testing.T) {
 		if !strings.Contains(p, flag) {
 			t.Errorf("payload missing %q: %s", flag, p)
 		}
-	}
-	// Must not lie about secondary visibility centers.
-	if strings.Contains(p, "SECPOS") {
-		t.Errorf("payload must not include SECPOS: %s", p)
 	}
 	// Wire form is NAME=1 tokens joined by ':' with no empties.
 	for _, part := range strings.Split(p, ":") {

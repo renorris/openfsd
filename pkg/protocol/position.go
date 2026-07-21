@@ -195,3 +195,65 @@ func ParseATCPosition(line []byte) (ATCPosition, error) {
 		UnknownZero:     zero,
 	}, nil
 }
+
+// SecondaryVisCenter is a ' secondary ATC visibility center packet (SECPOS).
+//
+// Wire format (RossCarlson Vatsim.Network PDUSecondaryVisCenter / vPilot bm):
+//
+//	'CALLSIGN:INDEX:LAT:LON
+//
+// INDEX is zero-based among secondary centers only (primary is the % position).
+// vatSys SendPosition: primary = list[0] as %; secondaries list[i] as index i-1.
+// Lat/lon are formatted with five decimal places on the wire (#0.00000).
+type SecondaryVisCenter struct {
+	Callsign  string
+	Index     int // zero-based secondary center index
+	Latitude  float64
+	Longitude float64
+}
+
+// Marshal encodes the ' secondary visibility center packet.
+func (p SecondaryVisCenter) Marshal() []byte {
+	var b strings.Builder
+	b.Grow(48 + len(p.Callsign))
+	b.WriteByte('\'')
+	b.WriteString(p.Callsign)
+	b.WriteByte(':')
+	b.WriteString(strconv.Itoa(p.Index))
+	b.WriteByte(':')
+	// Match RossCarlson wire format: #0.00000 (InvariantCulture).
+	b.WriteString(strconv.FormatFloat(p.Latitude, 'f', 5, 64))
+	b.WriteByte(':')
+	b.WriteString(strconv.FormatFloat(p.Longitude, 'f', 5, 64))
+	b.WriteString("\r\n")
+	return []byte(b.String())
+}
+
+// ParseSecondaryVisCenter parses a ' line.
+func ParseSecondaryVisCenter(line []byte) (SecondaryVisCenter, error) {
+	if TypeOf(line) != PacketTypeSecondaryVisCenter {
+		return SecondaryVisCenter{}, errPacket("secondary vis center: wrong type")
+	}
+	if CountFields(line) < 4 {
+		return SecondaryVisCenter{}, errPacket("secondary vis center: too few fields")
+	}
+	callsign := strings.TrimPrefix(string(Field(line, 0)), "'")
+	idx, err := strconv.Atoi(string(Field(line, 1)))
+	if err != nil {
+		return SecondaryVisCenter{}, errPacket("secondary vis center: bad index")
+	}
+	lat, err := strconv.ParseFloat(string(Field(line, 2)), 64)
+	if err != nil {
+		return SecondaryVisCenter{}, errPacket("secondary vis center: bad latitude")
+	}
+	lon, err := strconv.ParseFloat(string(Field(line, 3)), 64)
+	if err != nil {
+		return SecondaryVisCenter{}, errPacket("secondary vis center: bad longitude")
+	}
+	return SecondaryVisCenter{
+		Callsign:  callsign,
+		Index:     idx,
+		Latitude:  lat,
+		Longitude: lon,
+	}, nil
+}

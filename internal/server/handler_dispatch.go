@@ -8,6 +8,8 @@ func (s *Server) getHandler(packetType PacketType) handlerFunc {
 		return s.handleTextMessage
 	case PacketTypeATCPosition:
 		return s.handleATCPosition
+	case PacketTypeSecondaryVisCenter:
+		return s.handleSecondaryVisCenter
 	case PacketTypePilotPosition:
 		return s.handlePilotPosition
 	case PacketTypePilotPositionFast, PacketTypePilotPositionSlow, PacketTypePilotPositionStopped:

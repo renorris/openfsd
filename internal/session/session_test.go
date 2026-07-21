@@ -26,6 +26,51 @@ func TestNew_ZeroCoords(t *testing.T) {
 	}
 }
 
+func TestSecondaryVisCenters_AndVisBoxesOverlap(t *testing.T) {
+	const rangeM = 40 * 1852 // 40 NM
+	atc := New(context.Background(), nil, nil, LoginData{Callsign: "CTR", IsAtc: true})
+	atc.SetGeo(34.0, -118.0, rangeM)
+	pilot := New(context.Background(), nil, nil, LoginData{Callsign: "N1"})
+	pilot.SetGeo(36.0, -118.0, 50*1852)
+
+	if VisBoxesOverlap(atc, pilot) {
+		t.Fatal("primary-only should not overlap at 2° separation with 40 NM range")
+	}
+	if !atc.SetSecondaryVisCenter(0, 36.0, -118.0) {
+		t.Fatal("SetSecondaryVisCenter")
+	}
+	if atc.SecondaryVisCenterCount() != 1 {
+		t.Fatalf("count=%d", atc.SecondaryVisCenterCount())
+	}
+	if !VisBoxesOverlap(atc, pilot) {
+		t.Fatal("expected overlap via secondary center")
+	}
+	if !VisBoxesOverlap(pilot, atc) {
+		t.Fatal("overlap must be symmetric")
+	}
+
+	// Range change recomputes secondary boxes. Shrink both ranges so the
+	// secondary slot at 36° no longer reaches a distant pilot.
+	atc.SetVisRange(100) // 100 m secondary box at 36.0
+	pilot.SetGeo(40.0, -118.0, 100)
+	if VisBoxesOverlap(atc, pilot) {
+		t.Fatal("tiny boxes far apart should not overlap")
+	}
+	atc.SetVisRange(rangeM)
+	pilot.SetGeo(36.0, -118.0, 50*1852)
+	if !VisBoxesOverlap(atc, pilot) {
+		t.Fatal("restored range should overlap again")
+	}
+
+	if atc.SetSecondaryVisCenter(MaxSecondaryVisCenters, 0, 0) {
+		t.Fatal("out-of-range index must fail")
+	}
+	atc.ClearSecondaryVisCenters()
+	if atc.SecondaryVisCenterCount() != 0 || VisBoxesOverlap(atc, pilot) {
+		t.Fatal("clear must drop secondaries")
+	}
+}
+
 func TestRemoteIP_NilSafe(t *testing.T) {
 	if got := (*Session)(nil).RemoteIP(); got != "" {
 		t.Fatalf("nil session RemoteIP = %q, want \"\"", got)

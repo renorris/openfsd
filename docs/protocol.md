@@ -272,10 +272,32 @@ Example:
 
 ## Secondary visibility centers
 
-- Sent after the primary `%` when the server advertised `SECPOS=1` in CAPS.
-- Carries an extra visibility center: callsign, zero-based index, latitude, longitude.
-- **Exact wire prefix and full line layout are unconfirmed** (not frozen in this documentation). Do not invent a prefix in implementations until confirmed by capture.
-- openfsd does **not** implement secondary centers and therefore does not advertise `SECPOS` ([capabilities.md](capabilities.md)).
+Sent after the primary `%` when the server advertised `SECPOS=1` in CAPS.
+
+| Field Name | Type | Description | Notes |
+|------------|------|-------------|-------|
+| From | string | Source callsign | |
+| Index | integer | Zero-based secondary center index | Primary is the `%` position; first secondary is `0` |
+| Latitude | floating-point | Center latitude (decimal degrees) | Wire format `#0.00000` (5 d.p.) |
+| Longitude | floating-point | Center longitude (decimal degrees) | Wire format `#0.00000` (5 d.p.) |
+
+Wire format (RossCarlson `PDUSecondaryVisCenter` / vPilot decompile; vatSys `Network.SendPosition`):
+
+```text
+'CALLSIGN:INDEX:LAT:LON
+```
+
+Example:
+
+```text
+'LAX_CTR:0:34.05200:-118.24300
+```
+
+- Prefix is a single apostrophe (`'`).
+- vatSys: `VisibilityCenters[0]` → `%` primary; `VisibilityCenters[i]` for `i≥1` → `'` with index `i-1`.
+- Up to four total centers in vatSys UI (one primary + three secondary).
+- Server applies each secondary to multi-box range search (union of AABBs with the same visibility range as primary). openfsd does **not** rebroadcast `'` packets (vatSys receive handler is empty).
+- openfsd advertises `SECPOS=1` and implements this path ([capabilities.md](capabilities.md)).
 
 <br>
 
@@ -427,13 +449,13 @@ $CQKSFO_TWR:SERVER:CAPS
 
 Response Example (openfsd — only flags with real server support):
 ```text
-$CRSERVER:KSFO_TWR:CAPS:VERSION=1:ATCINFO=1:NEWATIS=1:GLOBALDATA=1:ICAOEQ=1:ATCMULTI=1:FASTPOS=1
+$CRSERVER:KSFO_TWR:CAPS:VERSION=1:SECPOS=1:ATCINFO=1:NEWATIS=1:GLOBALDATA=1:ICAOEQ=1:ATCMULTI=1:FASTPOS=1
 ```
 
 Notes:
 
 - Wire form is `$CRSERVER:…` (no colon between `$CR` and `SERVER`), matching `$CRSERVER:…:ATC:…` / `$CRSERVER:…:IP:…`.
-- openfsd does **not** advertise `SECPOS=1` until secondary visibility centers are implemented.
+- openfsd advertises `SECPOS=1` (secondary visibility centers; multi-box range).
 - `$CR{callsign}:SERVER:CAPS:…` from clients is accepted and ignored (no error).
 
 #### Peer query (client → client)

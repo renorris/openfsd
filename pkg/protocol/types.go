@@ -11,6 +11,7 @@ const (
 	PacketTypePilotPositionSlow
 	PacketTypePilotPositionStopped
 	PacketTypeATCPosition
+	PacketTypeSecondaryVisCenter // ' CALLSIGN:INDEX:LAT:LON (SECPOS)
 	PacketTypeDeleteATC
 	PacketTypeDeletePilot
 	PacketTypeClientQuery

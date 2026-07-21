@@ -29,9 +29,10 @@ func ParseOpaque(line []byte) (OpaquePacket, error) {
 	case PacketTypePilotPosition:
 		// @MODE:CALLSIGN:... — no destination field
 		p.Source = string(SourceCallsign(raw, t))
-	case PacketTypeATCPosition, PacketTypePilotPositionFast,
-		PacketTypePilotPositionSlow, PacketTypePilotPositionStopped:
-		// prefix+CALLSIGN:rest — no destination
+	case PacketTypeATCPosition, PacketTypeSecondaryVisCenter,
+		PacketTypePilotPositionFast, PacketTypePilotPositionSlow,
+		PacketTypePilotPositionStopped:
+		// prefix+CALLSIGN:rest — no destination (SECPOS index is field 1, not dest)
 		p.Source = string(SourceCallsign(raw, t))
 	case PacketTypeServerIdent, PacketTypeError:
 		p.Source = string(SourceCallsign(raw, t))

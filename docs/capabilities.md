@@ -39,7 +39,7 @@ $CQKSFO_TWR:SERVER:CAPS
 Server → client:
 
 ```text
-$CRSERVER:KSFO_TWR:CAPS:VERSION=1:ATCINFO=1:NEWATIS=1:GLOBALDATA=1:ICAOEQ=1:ATCMULTI=1:FASTPOS=1
+$CRSERVER:KSFO_TWR:CAPS:VERSION=1:SECPOS=1:ATCINFO=1:NEWATIS=1:GLOBALDATA=1:ICAOEQ=1:ATCMULTI=1:FASTPOS=1
 ```
 
 Peer → peer (pilot or ATC advertising their client features):
@@ -150,12 +150,12 @@ $CRSERVER:{callsign}:CAPS:VERSION=1:ATCINFO=1:NEWATIS=1:GLOBALDATA=1:ICAOEQ=1:AT
 | `ICAOEQ=1` | **yes** | Flight plan store/forward is opaque; ICAO equipment strings preserved |
 | `ATCMULTI=1` | **yes** | Multiple simultaneous ATC sessions; registry supports many ATC |
 | `FASTPOS=1` | **yes** | `^` / `#SL` / `#ST` handlers + `$SF` send-fast enable/disable for proto 101 |
-| `SECPOS` | **no** | Secondary vis centers not implemented yet (would lie to clients that gate on it) |
+| `SECPOS` | **yes** | `'` secondary vis centers stored; multi-box range search (`session.VisBoxesOverlap`) |
 | `ESTIMATES` | **no** | Peer-to-peer only; not required as a server advertisement for basic operation |
 | `MODELDESC` / `ACCONFIG` / `VISUPDATE` / `RADARUPDATE` / `MUMBLE` | **no** | Client-local features; server only relays related packets where applicable |
 | `ONGOINGCOORD` and rarer flags | **no** | No proven openfsd support |
 
-**Rule:** never advertise a flag whose absence is how clients gate a feature the server cannot honor. Especially `SECPOS` — advertising it causes clients to emit secondary centers the server currently cannot apply to range.
+**Rule:** never advertise a flag whose absence is how clients gate a feature the server cannot honor.
 
 ### Peer CAPS (client ↔ client)
 

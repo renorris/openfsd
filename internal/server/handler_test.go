@@ -106,6 +106,7 @@ func TestGetHandlerRouting(t *testing.T) {
 	}{
 		{PacketTypeTextMessage, "handleTextMessage"},
 		{PacketTypeATCPosition, "handleATCPosition"},
+		{PacketTypeSecondaryVisCenter, "handleSecondaryVisCenter"},
 		{PacketTypePilotPosition, "handlePilotPosition"},
 		{PacketTypePilotPositionFast, "handleFastPilotPosition"},
 		{PacketTypePilotPositionSlow, "handleFastPilotPosition"},
@@ -245,6 +246,62 @@ func TestHandleATCPosition(t *testing.T) {
 	case <-obs.Ctx.Done():
 	default:
 		t.Fatal("expected Cancel after invalid position for rating")
+	}
+}
+
+func TestHandleSecondaryVisCenter(t *testing.T) {
+	srv, reg := newHandlerEnv(t)
+	atc := newSess("LAX_CTR", true, NetworkRatingController1)
+	if err := reg.Register(atc); err != nil {
+		t.Fatal(err)
+	}
+	// Primary position first (sets VisRange used by secondary boxes).
+	// Clears secondaries after broadcast (none yet).
+	srv.handleATCPosition(atc, []byte("%LAX_CTR:28550:6:40:5:34.0:-118.0:0\r\n"))
+	if atc.SecondaryVisCenterCount() != 0 {
+		t.Fatalf("expected no secondaries, got %d", atc.SecondaryVisCenterCount())
+	}
+
+	// Valid SECPOS secondary (index 0).
+	srv.handleSecondaryVisCenter(atc, []byte("'LAX_CTR:0:36.00000:-118.00000\r\n"))
+	if atc.SecondaryVisCenterCount() != 1 {
+		t.Fatalf("secondary count=%d want 1", atc.SecondaryVisCenterCount())
+	}
+
+	// Another index.
+	srv.handleSecondaryVisCenter(atc, []byte("'LAX_CTR:1:35.50000:-117.50000\r\n"))
+	if atc.SecondaryVisCenterCount() != 2 {
+		t.Fatalf("secondary count=%d want 2", atc.SecondaryVisCenterCount())
+	}
+
+	// Next % fans out with current secondaries, then clears (vatSys re-sends ').
+	srv.handleATCPosition(atc, []byte("%LAX_CTR:28550:6:40:5:34.0:-118.0:0\r\n"))
+	if atc.SecondaryVisCenterCount() != 0 {
+		t.Fatalf("expected clear after %% fan-out, got %d", atc.SecondaryVisCenterCount())
+	}
+
+	// Out-of-range index ignored.
+	srv.handleSecondaryVisCenter(atc, []byte("'LAX_CTR:99:36.0:-118.0\r\n"))
+	if atc.SecondaryVisCenterCount() != 0 {
+		t.Fatalf("out-of-range index should not set center, count=%d", atc.SecondaryVisCenterCount())
+	}
+
+	// Pilot emitting SECPOS: silent drop.
+	pilot := newSess("N1", false, NetworkRatingObserver)
+	if err := reg.Register(pilot); err != nil {
+		t.Fatal(err)
+	}
+	srv.handleSecondaryVisCenter(pilot, []byte("'N1:0:34.0:-118.0\r\n"))
+	if pilot.SecondaryVisCenterCount() != 0 {
+		t.Fatal("pilot must not store secondary centers")
+	}
+
+	// Bad parse → $ER
+	drain(atc)
+	srv.handleSecondaryVisCenter(atc, []byte("'LAX_CTR:0:bad:-118.0\r\n"))
+	out := drain(atc)
+	if !hasOutboundContaining(out, "$ER") {
+		t.Fatalf("expected $ER on bad lat, got %v", out)
 	}
 }
 
@@ -392,15 +449,15 @@ func TestHandleClientQuery(t *testing.T) {
 	srv.handleClientQuery(atc, []byte("$CQLAX_TWR:SERVER:ATC\r\n"))
 	_ = drain(atc)
 
-	// SERVER CAPS (query → advertised payload; no SECPOS)
+	// SERVER CAPS (query → advertised payload; includes SECPOS)
 	srv.handleClientQuery(atc, []byte("$CQLAX_TWR:SERVER:CAPS\r\n"))
 	outCAPS := drain(atc)
 	wantCAPS := "$CRSERVER:LAX_TWR:CAPS:" + ServerCapabilitiesPayload() + "\r\n"
 	if !hasOutboundContaining(outCAPS, wantCAPS) {
 		t.Fatalf("expected CAPS response %q, got %v", wantCAPS, outCAPS)
 	}
-	if hasOutboundContaining(outCAPS, "SECPOS=") {
-		t.Fatalf("server CAPS must not advertise SECPOS until multi-center lands, got %v", outCAPS)
+	if !hasOutboundContaining(outCAPS, "SECPOS=1") {
+		t.Fatalf("server CAPS must advertise SECPOS=1, got %v", outCAPS)
 	}
 	// SERVER CAPS client announce ($CR) is accepted and ignored (no reply, no $ER)
 	srv.handleClientQuery(atc, []byte("$CRLAX_TWR:SERVER:CAPS:VERSION=1:ATCINFO=1\r\n"))

@@ -310,7 +310,8 @@ func (p *PostOffice) UpdatePosition(s *session.Session, newCenter [2]float64, ne
 // Search calls callback for every other Session within geographical range of s.
 //
 // Range uses axis-aligned visibility-box overlap (historical FSD postoffice
-// semantics): searcher box vs each peer's box.
+// semantics): searcher box(es) vs each peer's box(es). SECPOS secondary ATC
+// centers participate via session.VisBoxesOverlap (any-vs-any).
 //
 // It resets Session.ClosestVelocityClientDistance to +Inf, then updates it to the
 // minimum equirectangular distance among non-self proto-101 pilot pairs discovered
@@ -365,7 +366,8 @@ func (p *PostOffice) SearchATC(s *session.Session, callback func(recipient *sess
 	}
 }
 
-// searchLinear lock-free scans live or atcLive slabs using cached VisBox AABBs.
+// searchLinear lock-free scans live or atcLive slabs using visibility AABBs.
+// Overlap includes primary VisBox and any SECPOS secondary centers (union search).
 func (p *PostOffice) searchLinear(s *session.Session, foundPtr *[]*session.Session, atcOnly bool) {
 	var slab *liveSlab
 	if atcOnly {
@@ -377,16 +379,13 @@ func (p *PostOffice) searchLinear(s *session.Session, foundPtr *[]*session.Sessi
 		return
 	}
 
-	// Cached VisBox AABBs (maintained by SetGeo / SetLatLon / SetVisRange).
-	sMin, sMax := s.VisBox()
-
 	for i := range slab.slots {
 		other := slab.slots[i].Load()
 		if other == nil || other == s {
 			continue
 		}
-		oMin, oMax := other.VisBox()
-		if !geo.AABBOverlap(sMin, sMax, oMin, oMax) {
+		// Primary + secondary multi-center mutual box overlap (SECPOS).
+		if !session.VisBoxesOverlap(s, other) {
 			continue
 		}
 		*foundPtr = append(*foundPtr, other)

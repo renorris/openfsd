@@ -279,7 +279,7 @@ func TestE2E_ATCLogin(t *testing.T) {
 }
 
 // TestE2E_ServerCAPS mirrors vatSys post-login $CQ {cs}:SERVER:CAPS and expects
-// $CRSERVER:{cs}:CAPS:… with the openfsd capability set (no SECPOS).
+// $CRSERVER:{cs}:CAPS:… with the openfsd capability set (includes SECPOS=1).
 func TestE2E_ServerCAPS(t *testing.T) {
 	ts := server.StartTestServer(t)
 	c := dial(t, ts)
@@ -306,8 +306,8 @@ func TestE2E_ServerCAPS(t *testing.T) {
 	if !strings.Contains(raw, server.ServerCapabilitiesPayload()) {
 		t.Fatalf("CAPS payload mismatch: got %q want contains %q", raw, server.ServerCapabilitiesPayload())
 	}
-	if strings.Contains(raw, "SECPOS=") {
-		t.Fatalf("server CAPS must not advertise SECPOS: %q", raw)
+	if !strings.Contains(raw, "SECPOS=1") {
+		t.Fatalf("server CAPS must advertise SECPOS=1: %q", raw)
 	}
 	// Pilot path also gets CAPS (vatSys-compatible for any client type)
 	c2 := dial(t, ts)
@@ -324,6 +324,92 @@ func TestE2E_ServerCAPS(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("wait pilot CAPS: %v (recorder=%v)", err, c2.Recorder().All())
+	}
+}
+
+// TestE2E_SECPOSMultiCenterVisibility mirrors vatSys SendPosition:
+//
+//	% primary, then 'CALLSIGN:INDEX:LAT:LON for each secondary (index = i-1).
+//
+// Pilot outside the primary box but inside a secondary box must see ATC %
+// and ATC must see pilot @.
+func TestE2E_SECPOSMultiCenterVisibility(t *testing.T) {
+	ts := server.StartTestServer(t)
+
+	const atcCS = "SEC_CTR"
+	const pilotCS = "SEC_PLT"
+
+	atc := dial(t, ts)
+	loginATC(t, atc, atcCS, ts.ATCCID, ts.ATCPassword, protocol.NetworkRatingController1)
+	waitMOTD(t, atc, atcCS)
+
+	pilot := dial(t, ts)
+	loginPilot(t, pilot, pilotCS, ts.PilotCID, ts.PilotPassword, protocol.NetworkRatingObserver)
+	waitMOTD(t, pilot, pilotCS)
+
+	// Primary ATC far south; pilot 2° north — outside 40 NM primary range.
+	// Facility 6 = CTR; rating C1 allows it.
+	primary := []byte("%" + atcCS + ":28550:6:40:5:34.00000:-118.00000:0\r\n")
+	if err := atc.Send(primary); err != nil {
+		t.Fatalf("send primary ATC position: %v", err)
+	}
+	// Pilot position at secondary location (no SECPOS yet → not in ATC range).
+	pilotPos := []byte("@S:" + pilotCS + ":1200:1:36.00000:-118.00000:5000:250:4261294148:0\r\n")
+	if err := pilot.Send(pilotPos); err != nil {
+		t.Fatalf("send pilot pos: %v", err)
+	}
+
+	// Without SECPOS, pilot should not receive ATC position. Give a short window.
+	time.Sleep(150 * time.Millisecond)
+	for _, r := range pilot.Recorder().All() {
+		if r.Type == protocol.PacketTypeATCPosition && bytes.Contains(r.Raw, []byte(atcCS)) {
+			t.Fatalf("pilot saw ATC position before secondary center: %q", r.Raw)
+		}
+	}
+
+	// Secondary center 0 at pilot lat/lon (vatSys index = listIndex-1).
+	sec := protocol.SecondaryVisCenter{
+		Callsign:  atcCS,
+		Index:     0,
+		Latitude:  36.0,
+		Longitude: -118.0,
+	}
+	if err := atc.Send(sec.Marshal()); err != nil {
+		t.Fatalf("send secondary: %v", err)
+	}
+
+	// Pilot @ with SECPOS armed → ATC should receive (multi-box search).
+	if err := pilot.Send(pilotPos); err != nil {
+		t.Fatalf("re-send pilot: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := atc.WaitFor(ctx, func(r fsdclient.Received) bool {
+		return r.Type == protocol.PacketTypePilotPosition &&
+			bytes.Contains(r.Raw, []byte(pilotCS))
+	})
+	if err != nil {
+		t.Fatalf("ATC wait pilot @ via SECPOS: %v (recorder=%v)", err, atc.Recorder().All())
+	}
+
+	// Next ATC position cycle: % fans out while previous secondaries still set,
+	// then clears and client re-sends ' (vatSys SendPosition order).
+	if err := atc.Send(primary); err != nil {
+		t.Fatalf("re-send primary: %v", err)
+	}
+	if err := atc.Send(sec.Marshal()); err != nil {
+		t.Fatalf("re-send secondary: %v", err)
+	}
+
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel2()
+	_, err = pilot.WaitFor(ctx2, func(r fsdclient.Received) bool {
+		return r.Type == protocol.PacketTypeATCPosition &&
+			bytes.Contains(r.Raw, []byte(atcCS)) &&
+			bytes.Contains(r.Raw, []byte("34.00000"))
+	})
+	if err != nil {
+		t.Fatalf("pilot wait ATC position via SECPOS: %v (recorder=%v)", err, pilot.Recorder().All())
 	}
 }
 

@@ -16,6 +16,7 @@ const (
 	PacketTypePilotPositionSlow    = protocol.PacketTypePilotPositionSlow
 	PacketTypePilotPositionStopped = protocol.PacketTypePilotPositionStopped
 	PacketTypeATCPosition          = protocol.PacketTypeATCPosition
+	PacketTypeSecondaryVisCenter   = protocol.PacketTypeSecondaryVisCenter
 	PacketTypeDeleteATC            = protocol.PacketTypeDeleteATC
 	PacketTypeDeletePilot          = protocol.PacketTypeDeletePilot
 	PacketTypeClientQuery          = protocol.PacketTypeClientQuery

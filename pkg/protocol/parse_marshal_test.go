@@ -332,6 +332,58 @@ func TestATCPositionGolden(t *testing.T) {
 	}
 }
 
+func TestSecondaryVisCenterGolden(t *testing.T) {
+	// Wire confirmed from vPilot decompile (RossCarlson bm / PDUSecondaryVisCenter):
+	// 'CALLSIGN:INDEX:LAT:LON with #0.00000 lat/lon.
+	line := loadFixture(t, "secondary_vis_center.txt")
+	p, err := ParseSecondaryVisCenter(line)
+	if err != nil {
+		t.Fatalf("ParseSecondaryVisCenter: %v", err)
+	}
+	if p.Callsign != "LAX_CTR" || p.Index != 0 ||
+		p.Latitude != 34.05200 || p.Longitude != -118.24300 {
+		t.Errorf("parsed = %+v", p)
+	}
+
+	got := p.Marshal()
+	want := []byte("'LAX_CTR:0:34.05200:-118.24300\r\n")
+	if !bytes.Equal(got, want) {
+		t.Errorf("Marshal = %q, want %q", got, want)
+	}
+
+	p2, err := ParseSecondaryVisCenter(got)
+	if err != nil {
+		t.Fatalf("round-trip: %v", err)
+	}
+	if p2 != p {
+		t.Errorf("round-trip %+v vs %+v", p, p2)
+	}
+
+	if _, err := ParseSecondaryVisCenter([]byte("%X:0:1:2\r\n")); err == nil {
+		t.Error("wrong type")
+	}
+	if _, err := ParseSecondaryVisCenter([]byte("'X:0:1\r\n")); err == nil {
+		t.Error("too few")
+	}
+	if _, err := ParseSecondaryVisCenter([]byte("'X:bad:1:2\r\n")); err == nil {
+		t.Error("bad index")
+	}
+	if _, err := ParseSecondaryVisCenter([]byte("'X:0:bad:2\r\n")); err == nil {
+		t.Error("bad lat")
+	}
+	if _, err := ParseSecondaryVisCenter([]byte("'X:0:1:bad\r\n")); err == nil {
+		t.Error("bad lon")
+	}
+
+	op, err := ParseOpaque(line)
+	if err != nil {
+		t.Fatalf("ParseOpaque: %v", err)
+	}
+	if op.Type != PacketTypeSecondaryVisCenter || op.Source != "LAX_CTR" || op.Dest != "" {
+		t.Errorf("opaque = %+v", op)
+	}
+}
+
 func TestOpaquePacket(t *testing.T) {
 	tm := loadFixture(t, "text_message.txt")
 	op, err := ParseOpaque(tm)

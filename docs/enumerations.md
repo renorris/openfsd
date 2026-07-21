@@ -95,7 +95,7 @@ JWT payloads on the public network carry a numeric `pilot_rating` claim ([authen
 
 `VERSION=1:ATCINFO=1:NEWATIS=1:GLOBALDATA=1:ICAOEQ=1:ATCMULTI=1:FASTPOS=1`
 
-`SECPOS` is intentionally omitted until secondary visibility centers are implemented.
+`SECPOS` is advertised (`SECPOS=1`) now that secondary visibility centers are implemented.
 
 ## Simulator Types
 

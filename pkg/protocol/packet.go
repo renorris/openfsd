@@ -16,6 +16,10 @@ func TypeOf(packet []byte) PacketType {
 		return PacketTypePilotPosition
 	case '%':
 		return PacketTypeATCPosition
+	case '\'':
+		// Secondary visibility center (SECPOS). Confirmed from RossCarlson
+		// Vatsim.Network (vPilot decompile: bm.u / aa switch case '\'').
+		return PacketTypeSecondaryVisCenter
 	case '#':
 		if len(packet) < 3 {
 			return PacketTypeUnknown
@@ -88,6 +92,8 @@ func Prefix(t PacketType) string {
 		return "@"
 	case PacketTypeATCPosition:
 		return "%"
+	case PacketTypeSecondaryVisCenter:
+		return "'"
 	case PacketTypeDeleteATC:
 		return "#DA"
 	case PacketTypeDeletePilot:
@@ -147,6 +153,8 @@ func MinFields(t PacketType) int {
 		return 7
 	case PacketTypeATCPosition:
 		return 7
+	case PacketTypeSecondaryVisCenter:
+		return 4 // CALLSIGN:INDEX:LAT:LON
 	case PacketTypeDeleteATC, PacketTypeDeletePilot:
 		return 1
 	case PacketTypeTextMessage:

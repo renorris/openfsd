@@ -112,6 +112,66 @@ func TestUpdatePosition(t *testing.T) {
 	}
 }
 
+// TestSearch_SecondaryVisCenter ensures SECPOS multi-center boxes participate
+// in range search (pilot outside primary, inside secondary).
+func TestSearch_SecondaryVisCenter(t *testing.T) {
+	p := New()
+	// 40 NM range ≈ 74 km ≈ 0.67°. Place pilot 2° north of primary (outside).
+	const rangeM = 40 * 1852
+	atc := newTestClient("LAX_CTR", 34.0, -118.0, rangeM)
+	atc.IsAtc = true
+	if err := p.Register(atc); err != nil {
+		t.Fatal(err)
+	}
+	pilot := newTestClient("N100", 36.0, -118.0, 50*1852)
+	if err := p.Register(pilot); err != nil {
+		t.Fatal(err)
+	}
+
+	// Without secondary: no mutual visibility.
+	var found []*session.Session
+	p.Search(atc, func(recipient *session.Session) bool {
+		found = append(found, recipient)
+		return true
+	})
+	if len(found) != 0 {
+		t.Fatalf("expected no overlap without SECPOS, found %d", len(found))
+	}
+
+	// Secondary center at pilot location → mutual box overlap.
+	if !atc.SetSecondaryVisCenter(0, 36.0, -118.0) {
+		t.Fatal("SetSecondaryVisCenter failed")
+	}
+	found = nil
+	p.Search(atc, func(recipient *session.Session) bool {
+		found = append(found, recipient)
+		return true
+	})
+	if len(found) != 1 || found[0] != pilot {
+		t.Fatalf("expected pilot via secondary center, got %v", found)
+	}
+	// Symmetric: pilot search finds ATC.
+	found = nil
+	p.Search(pilot, func(recipient *session.Session) bool {
+		found = append(found, recipient)
+		return true
+	})
+	if len(found) != 1 || found[0] != atc {
+		t.Fatalf("expected ATC via secondary center from pilot, got %v", found)
+	}
+
+	// Clear secondaries → out of range again.
+	atc.ClearSecondaryVisCenters()
+	found = nil
+	p.Search(atc, func(recipient *session.Session) bool {
+		found = append(found, recipient)
+		return true
+	})
+	if len(found) != 0 {
+		t.Fatalf("expected no overlap after clear, found %d", len(found))
+	}
+}
+
 // TestUpdatePosition_NoopKeepsIndexed covers the early-return path when the
 // cell footprint does not change, and asserts the client remains searchable.
 func TestUpdatePosition_NoopKeepsIndexed(t *testing.T) {

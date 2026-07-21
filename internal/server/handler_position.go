@@ -5,6 +5,7 @@ import (
 	"unsafe"
 
 	"github.com/renorris/openfsd/internal/session"
+	"github.com/renorris/openfsd/pkg/protocol"
 )
 
 // btoa returns a string view of b without allocation. b must not be mutated
@@ -47,12 +48,40 @@ func (s *Server) handleATCPosition(client *session.Session, packet []byte) {
 		return
 	}
 
-	// Update registry position
+	// Update registry position (primary center).
 	s.registry.UpdatePosition(client, [2]float64{lat, lon}, visRange)
 
-	// Broadcast position update
+	// Broadcast using current multi-box geometry: previous cycle's SECPOS
+	// secondaries remain until after this fan-out so large CTR % updates
+	// still reach pilots under secondary centers. vatSys order is % then
+	// ' for each secondary (Network.SendPosition); we clear after broadcast
+	// and re-apply when ' packets arrive.
 	broadcastRanged(s.registry, client, packet)
+	client.ClearSecondaryVisCenters()
 
+	client.LastUpdated.Store(s.clock.Now())
+}
+
+// handleSecondaryVisCenter handles SECPOS ' CALLSIGN:INDEX:LAT:LON packets.
+//
+// Wire confirmed from RossCarlson Vatsim.Network (vPilot decompile bm) and
+// vatSys Network.SendPosition (index = listIndex-1 among VisibilityCenters).
+// Server stores the center for multi-box range search; does not rebroadcast
+// (vatSys VATSIM_SecondaryVisCenterReceived is a no-op).
+func (s *Server) handleSecondaryVisCenter(client *session.Session, packet []byte) {
+	if !client.IsAtc {
+		// Pilots should not emit SECPOS; drop without $ER.
+		return
+	}
+	p, err := protocol.ParseSecondaryVisCenter(packet)
+	if err != nil {
+		client.SendError(SyntaxError, "Invalid secondary visibility center")
+		return
+	}
+	if !client.SetSecondaryVisCenter(p.Index, p.Latitude, p.Longitude) {
+		// Out-of-range index: ignore (do not $ER — clients may probe caps).
+		return
+	}
 	client.LastUpdated.Store(s.clock.Now())
 }
 
