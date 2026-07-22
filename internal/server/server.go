@@ -44,6 +44,11 @@ type Server struct {
 	httpDone chan struct{}
 	// sweatbox is the integrated simulator host (nil when disabled).
 	sweatbox *SweatboxHost
+
+	// limits tracks concurrent connections and per-CID session counts.
+	limits *connLimits
+	// authFails rate-limits failed password/JWT logons per IP.
+	authFails *authFailLimiter
 }
 
 // New constructs a Server from injected Deps.
@@ -92,6 +97,8 @@ func New(d Deps) (*Server, error) {
 		fsdBound:      d.FSDBound,
 		httpListen:    d.HTTPListen,
 		httpDone:      make(chan struct{}),
+		limits:        newConnLimits(),
+		authFails:     newAuthFailLimiter(d.Config.AuthFailMax, d.Config.AuthFailWindow),
 	}
 	// Two-phase: Server exists so SweatboxHost can hold a back-ref for
 	// unexported broadcast helpers, registry, clock, and logger.
@@ -382,6 +389,11 @@ func (s *Server) listenLoop(ctx context.Context, addr string, errCh chan<- error
 			}
 			// Log or handle non-fatal accept errors
 			continue
+		}
+		// Optional TCP keepalive for half-open detection.
+		if tc, ok := conn.(*net.TCPConn); ok {
+			_ = tc.SetKeepAlive(true)
+			_ = tc.SetKeepAlivePeriod(60 * time.Second)
 		}
 		// Handle the connection in another goroutine
 		go s.handleConn(ctx, conn)

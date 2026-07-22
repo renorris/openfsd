@@ -22,6 +22,6 @@ func (s *Server) handleKillRequest(client *session.Session, packet []byte) {
 		return
 	}
 
-	// Closing the context of the victim client will eventually cause it to disconnect
-	victim.Cancel()
+	// Closing the context + transport forces disconnect on classic and gnet.
+	victim.Disconnect()
 }

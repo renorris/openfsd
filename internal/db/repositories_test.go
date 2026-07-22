@@ -122,5 +122,6 @@ func TestGenerateJwtSecretKey(t *testing.T) {
 	k2, err := GenerateJwtSecretKey()
 	require.NoError(t, err)
 	require.NotEqual(t, k1, k2)
-	require.NotZero(t, k1)
+	require.Len(t, k1, 64) // 32 bytes hex-encoded
+	require.Len(t, k2, 64)
 }

@@ -98,3 +98,39 @@ func TestCoalesceOutbound_CloseWakesSend(t *testing.T) {
 	_ = o.Close()
 	close(blockWrite)
 }
+
+func TestCoalesceOutbound_TrySend(t *testing.T) {
+	var mu sync.Mutex
+	var got []byte
+	o := NewCoalesceOutbound(func(p []byte) error {
+		mu.Lock()
+		got = append(got, p...)
+		mu.Unlock()
+		return nil
+	}, nil, CoalesceOutboundConfig{ReliableCap: 4})
+
+	if err := o.TrySend("one\r\n"); err != nil {
+		t.Fatalf("TrySend: %v", err)
+	}
+	mu.Lock()
+	if !bytes.Contains(got, []byte("one\r\n")) {
+		t.Fatalf("got %q", got)
+	}
+	mu.Unlock()
+
+	if err := o.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.TrySend("two\r\n"); err == nil {
+		t.Fatal("TrySend after Close must fail")
+	}
+}
+
+func TestCoalesceOutbound_TrySendClosed(t *testing.T) {
+	o := NewCoalesceOutbound(func(p []byte) error { return nil }, nil, CoalesceOutboundConfig{})
+	_ = o.Close()
+	err := o.TrySend("x")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}

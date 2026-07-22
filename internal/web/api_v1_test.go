@@ -452,6 +452,15 @@ func TestConfigCreateToken(t *testing.T) {
 
 	w = env.doJSON(t, http.MethodGet, "/api/v1/config/load", nil, tokenBody.Token)
 	assert.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	// Expiry beyond 90 days must be rejected.
+	w = env.doJSON(t, http.MethodPost, "/api/v1/config/createtoken", map[string]any{
+		"expiry_date_time": time.Now().UTC().Add(100 * 24 * time.Hour).Format(time.RFC3339),
+	}, adminAccess)
+	assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+	res = decodeAPIV1(t, w)
+	require.NotNil(t, res.Err)
+	assert.Contains(t, *res.Err, "90")
 }
 
 func TestDataStatusJSONUnauthenticated(t *testing.T) {

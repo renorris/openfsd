@@ -10,6 +10,9 @@ import (
 	"github.com/renorris/openfsd/pkg/protocol"
 )
 
+// maxAPITokenTTL caps long-lived admin API tokens (no protocol impact).
+const maxAPITokenTTL = 90 * 24 * time.Hour
+
 func (s *Server) handleCreateNewAPIToken(c *gin.Context) {
 	claims := getJwtContext(c)
 	if claims.NetworkRating < protocol.NetworkRatingAdministator {
@@ -35,6 +38,11 @@ func (s *Server) handleCreateNewAPIToken(c *gin.Context) {
 	}
 
 	validityDuration := reqBody.ExpiryDateTime.Sub(now)
+	if validityDuration > maxAPITokenTTL {
+		res := newAPIV1Failure("expiry_date_time cannot be more than 90 days from now")
+		writeAPIV1Response(c, http.StatusBadRequest, &res)
+		return
+	}
 
 	accessToken, err := auth.MakeJwtToken(&auth.CustomFields{
 		TokenType:     "access",

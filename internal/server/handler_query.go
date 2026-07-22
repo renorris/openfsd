@@ -8,6 +8,9 @@ import (
 
 // handleSquawkbox handles logic for Squawkbox `#SB` packets
 func (s *Server) handleSquawkbox(client *session.Session, packet []byte) {
+	if !s.rateOK(&client.LastQueryRateNs, minQueryInterval) {
+		return
+	}
 	// Forward packet to recipient
 	recipient := getField(packet, 1)
 	sendDirectOrErr(s.registry, client, recipient, packet)

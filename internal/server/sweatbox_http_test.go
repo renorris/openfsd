@@ -71,7 +71,7 @@ func TestSweatboxHTTP_AuthRequired(t *testing.T) {
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/sweatbox/state", nil)
 	e.ServeHTTP(w, req)
-	require.Equal(t, http.StatusBadRequest, w.Code)
+	require.Equal(t, http.StatusUnauthorized, w.Code)
 
 	// Observer forbidden
 	tokObs := mintServiceToken(t, TestJWTSecret, protocol.NetworkRatingObserver)

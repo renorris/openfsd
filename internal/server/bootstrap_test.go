@@ -28,6 +28,14 @@ func TestLoadConfigDefaults(t *testing.T) {
 	require.NotEmpty(t, cfg.FsdListenAddrs)
 	require.Equal(t, "sqlite", cfg.DatabaseDriver)
 	require.NotZero(t, cfg.NumMetarWorkers)
+	require.Equal(t, "127.0.0.1:13618", cfg.ServiceHTTPListenAddr)
+	require.Equal(t, 5000, cfg.FsdMaxConnections)
+	require.Equal(t, 50, cfg.FsdMaxConnectionsPerIP)
+	require.Equal(t, 5, cfg.FsdMaxSessionsPerCID)
+	require.Equal(t, 1500.0, cfg.FsdMaxAtcVisRangeNM)
+	require.True(t, cfg.FsdEnableRateLimits)
+	require.Equal(t, 30*time.Second, cfg.FsdLoginTimeout)
+	require.Equal(t, 120*time.Second, cfg.FsdIdleTimeout)
 }
 
 func TestNewDefaultCreatesAdmin(t *testing.T) {
@@ -99,14 +107,14 @@ func TestServiceHTTPAuthAndKick(t *testing.T) {
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/online_users", nil)
 	e.ServeHTTP(w, req)
-	require.Equal(t, http.StatusBadRequest, w.Code)
+	require.Equal(t, http.StatusUnauthorized, w.Code)
 
 	// Bad token
 	w = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodGet, "/online_users", nil)
 	req.Header.Set("Authorization", "Bearer not-a-jwt")
 	e.ServeHTTP(w, req)
-	require.Equal(t, http.StatusBadRequest, w.Code)
+	require.Equal(t, http.StatusUnauthorized, w.Code)
 
 	// Valid fsd_service admin token
 	tok := mintServiceToken(t, TestJWTSecret, protocol.NetworkRatingAdministator)

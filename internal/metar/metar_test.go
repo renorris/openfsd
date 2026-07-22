@@ -472,6 +472,48 @@ func TestRequest_CancelledBeforeQueue(t *testing.T) {
 	}
 }
 
+// TestRequest_FullQueueDoesNotBlock ensures METAR spam cannot stall the FSD loop.
+// Workers are not started so the buffered channel fills; the next Request must
+// return immediately and soft-fail with a weather $ER.
+func TestRequest_FullQueueDoesNotBlock(t *testing.T) {
+	svc := New(1, &fakeDoer{fn: func(req *http.Request) (*http.Response, error) {
+		t.Error("should not fetch when queue full / no workers")
+		return nil, errors.New("nope")
+	}})
+	// Do not call Run — queue never drains.
+	fill := cap(svc.requests)
+	if fill < 1 {
+		t.Fatal("expected buffered requests channel")
+	}
+	// Fill with dummy senders (invalid ICAO still occupies a queue slot until worker runs).
+	for i := 0; i < fill; i++ {
+		s := &recordingSender{callsign: "FILL"}
+		svc.Request(context.Background(), s, "KJFK")
+	}
+	sender := &recordingSender{callsign: "PILOT"}
+	done := make(chan struct{})
+	go func() {
+		svc.Request(context.Background(), sender, "KJFK")
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Request blocked when queue full")
+	}
+	// Soft-fail $ER should be enqueued to sender.
+	pkts := sender.all()
+	if len(pkts) == 0 {
+		t.Fatal("expected soft-fail error packet on full queue")
+	}
+	if !strings.Contains(pkts[0], "$ER") && !strings.Contains(strings.ToLower(pkts[0]), "metar") {
+		// FormatError uses $ER prefix
+		if !strings.HasPrefix(pkts[0], "$ER") {
+			t.Fatalf("unexpected soft-fail packet %q", pkts[0])
+		}
+	}
+}
+
 func TestWorker_ExitsOnContextCancel(t *testing.T) {
 	svc := New(1, &fakeDoer{fn: func(req *http.Request) (*http.Response, error) {
 		return okResponse("a\nb\n"), nil

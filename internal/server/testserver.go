@@ -109,6 +109,22 @@ type TestServer struct {
 	done   <-chan error
 }
 
+// TestServerOptions customizes StartTestServer for security/limit e2e cases.
+// Zero values keep historical unlimited-connection e2e behaviour.
+type TestServerOptions struct {
+	// MaxSessionsPerCID is FsdMaxSessionsPerCID (0 = unlimited).
+	MaxSessionsPerCID int
+	// MaxConnections is FsdMaxConnections (0 = unlimited).
+	MaxConnections int
+	// MaxConnectionsPerIP is FsdMaxConnectionsPerIP (0 = unlimited).
+	MaxConnectionsPerIP int
+	// EnableRateLimits sets FsdEnableRateLimits.
+	EnableRateLimits bool
+	// LoginTimeout / IdleTimeout override FSD timeouts (0 = disabled).
+	LoginTimeout time.Duration
+	IdleTimeout  time.Duration
+}
+
 // StartTestServer mirrors NewDefault essentials for tests:
 //   - SQLite temp file, migrate, InitDefaultConfig
 //   - Seed users with known passwords
@@ -120,6 +136,11 @@ type TestServer struct {
 //
 // Returns FSD/HTTP addresses and registers t.Cleanup for shutdown.
 func StartTestServer(t testing.TB) *TestServer {
+	return StartTestServerOpts(t, TestServerOptions{})
+}
+
+// StartTestServerOpts is StartTestServer with security limit overrides.
+func StartTestServerOpts(t testing.TB, opts TestServerOptions) *TestServer {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 
@@ -229,13 +250,19 @@ func StartTestServer(t testing.TB) *TestServer {
 	fsdAddrCh := make(chan string, 2)
 
 	cfg := &Config{
-		FsdListenAddrs:        []string{"127.0.0.1:0"},
-		FsdNumEventLoop:       2,
-		NumMetarWorkers:       2,
-		ServiceHTTPListenAddr: httpAddr,
-		DatabaseDriver:        "sqlite",
-		DatabaseSourceName:    dsn,
-		DatabaseMaxConns:      4,
+		FsdListenAddrs:         []string{"127.0.0.1:0"},
+		FsdNumEventLoop:        2,
+		NumMetarWorkers:        2,
+		ServiceHTTPListenAddr:  httpAddr,
+		DatabaseDriver:         "sqlite",
+		DatabaseSourceName:     dsn,
+		DatabaseMaxConns:       4,
+		FsdMaxSessionsPerCID:   opts.MaxSessionsPerCID,
+		FsdMaxConnections:      opts.MaxConnections,
+		FsdMaxConnectionsPerIP: opts.MaxConnectionsPerIP,
+		FsdEnableRateLimits:    opts.EnableRateLimits,
+		FsdLoginTimeout:        opts.LoginTimeout,
+		FsdIdleTimeout:         opts.IdleTimeout,
 	}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))

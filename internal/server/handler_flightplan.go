@@ -3,6 +3,10 @@ package server
 import "github.com/renorris/openfsd/internal/session"
 
 func (s *Server) handleFileFlightplan(client *session.Session, packet []byte) {
+	if !s.rateOK(&client.LastFPLRateNs, minFPLInterval) {
+		return
+	}
+
 	fplInfo := extractFlightplanInfoSection(packet)
 	client.FlightPlan.Store(fplInfo)
 
@@ -12,6 +16,9 @@ func (s *Server) handleFileFlightplan(client *session.Session, packet []byte) {
 
 func (s *Server) handleAmendFlightplan(client *session.Session, packet []byte) {
 	if !client.IsAtc || client.FacilityType.Load() <= 0 {
+		return
+	}
+	if !s.rateOK(&client.LastFPLRateNs, minFPLInterval) {
 		return
 	}
 

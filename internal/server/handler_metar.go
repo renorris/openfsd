@@ -11,5 +11,9 @@ func (s *Server) handleMetarRequest(client *session.Session, packet []byte) {
 		return
 	}
 
+	if !s.rateOK(&client.LastMetarRateNs, minMetarInterval) {
+		return
+	}
+
 	s.metar.Request(client.Ctx, client, string(icaoCode))
 }

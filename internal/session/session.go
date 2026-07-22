@@ -162,6 +162,16 @@ type Session struct {
 	// Prevents double leave notifications. Any goroutine may CAS it.
 	DisconnectNotified atomic.Bool
 
+	// Inbound rate-limit timestamps (UnixNano). Concurrent-safe atomics.
+	LastPosRateNs    atomic.Int64
+	LastTextRateNs   atomic.Int64
+	LastMetarRateNs  atomic.Int64
+	LastFPLRateNs    atomic.Int64
+	LastWallopRateNs atomic.Int64
+	LastQueryRateNs  atomic.Int64
+	// LastInboundNs is updated on every post-login packet (idle timeout).
+	LastInboundNs atomic.Int64
+
 	// sendEnqueueObs is an optional test/stress hook invoked after a successful
 	// enqueue on sendChan (not under any postoffice lock). nil is a no-op.
 	sendEnqueueObs SendEnqueueObserver
@@ -277,6 +287,74 @@ func (s *Session) Send(packet string) error {
 		return nil
 	case <-s.Ctx.Done():
 		return s.Ctx.Err()
+	}
+}
+
+// TrySend queues a reliable packet without blocking.
+// Returns false if the outbound queue is full, the session is done, or the
+// sink is closed. Used by fan-out so a slow peer cannot stall gnet event loops.
+func (s *Session) TrySend(packet string) bool {
+	if err := s.Ctx.Err(); err != nil {
+		return false
+	}
+	if o := s.outbound; o != nil {
+		if ts, ok := o.(trySender); ok {
+			if err := ts.TrySend(packet); err != nil {
+				return false
+			}
+			s.fireEnqueueObs()
+			return true
+		}
+		// Fallback: non-blocking path unavailable — drop rather than block.
+		return false
+	}
+	select {
+	case s.sendChan <- packet:
+		s.fireEnqueueObs()
+		return true
+	case <-s.Ctx.Done():
+		return false
+	default:
+		return false
+	}
+}
+
+// trySender is implemented by CoalesceOutbound for non-blocking reliable enqueue.
+type trySender interface {
+	TrySend(packet string) error
+}
+
+// Disconnect cancels the session and closes transport sinks.
+// Safe from any goroutine; used by kick/kill and limit enforcement.
+func (s *Session) Disconnect() {
+	if s == nil {
+		return
+	}
+	s.Cancel()
+	if o := s.outbound; o != nil {
+		_ = o.Close()
+	}
+	if s.Conn != nil {
+		_ = s.Conn.Close()
+	}
+}
+
+// AllowRate returns true if minInterval has elapsed since the last success
+// stored in lastNs (UnixNano atomic). On success, stores now.
+func AllowRate(lastNs *atomic.Int64, minInterval time.Duration, now time.Time) bool {
+	if lastNs == nil || minInterval <= 0 {
+		return true
+	}
+	nowNs := now.UnixNano()
+	minNs := int64(minInterval)
+	for {
+		prev := lastNs.Load()
+		if prev != 0 && nowNs-prev < minNs {
+			return false
+		}
+		if lastNs.CompareAndSwap(prev, nowNs) {
+			return true
+		}
 	}
 }
 
