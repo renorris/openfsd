@@ -108,7 +108,7 @@ func (s *Server) handleResetSecretKey(c *gin.Context) {
 		return
 	}
 
-	if err = s.dbRepo.ConfigRepo.Set(db.ConfigJwtSecretKey, string(secretKey[:])); err != nil {
+	if err = s.dbRepo.ConfigRepo.Set(db.ConfigJwtSecretKey, secretKey); err != nil {
 		writeAPIV1Response(c, http.StatusInternalServerError, &genericAPIV1InternalServerError)
 		return
 	}

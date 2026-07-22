@@ -121,7 +121,7 @@ func (s *Server) handleFrontendConfigResetSecret(c *gin.Context) {
 		s.writeTemplate(c, "configeditor", page)
 		return
 	}
-	if err = s.dbRepo.ConfigRepo.Set(db.ConfigJwtSecretKey, string(secretKey[:])); err != nil {
+	if err = s.dbRepo.ConfigRepo.Set(db.ConfigJwtSecretKey, secretKey); err != nil {
 		page := s.newConfigEditorPage(c)
 		page.FlashError = "Unable to store secret key"
 		s.writeTemplate(c, "configeditor", page)
@@ -153,7 +153,8 @@ func (s *Server) handleFrontendConfigCreateToken(c *gin.Context) {
 	expiryStr := strings.TrimSpace(c.PostForm("expiry_date"))
 	var expiry time.Time
 	if expiryStr == "" {
-		expiry = time.Now().UTC().AddDate(1, 0, 0)
+		// Default 90 days (max allowed long-lived API token TTL).
+		expiry = time.Now().UTC().Add(maxAPITokenTTL)
 	} else {
 		parsed, err := time.Parse("2006-01-02", expiryStr)
 		if err != nil {
@@ -173,6 +174,11 @@ func (s *Server) handleFrontendConfigCreateToken(c *gin.Context) {
 	}
 
 	validityDuration := expiry.Sub(now)
+	if validityDuration > maxAPITokenTTL {
+		page.FlashError = "Token expiry cannot exceed 90 days"
+		s.writeTemplate(c, "configeditor", page)
+		return
+	}
 	accessToken, err := auth.MakeJwtToken(&auth.CustomFields{
 		TokenType:     "access",
 		CID:           claims.CID,

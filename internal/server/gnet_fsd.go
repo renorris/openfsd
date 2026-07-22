@@ -47,6 +47,12 @@ type fsdConnCtx struct {
 	registered bool
 	// disconnect broadcast deferred until OnClose after successful register
 	// (mirrors handleConn defer broadcastDisconnectPacket).
+
+	remoteIP   string
+	connHeld   bool // limits.tryAcquireConn succeeded
+	cidHeld    bool // limits.tryAcquireCID succeeded
+	openedAt   time.Time
+	lastActive time.Time
 }
 
 // fsdEngine is the gnet EventHandler for the FSD TCP plane.
@@ -117,7 +123,29 @@ func (e *fsdEngine) OnShutdown(_ gnet.Engine) {
 }
 
 func (e *fsdEngine) OnOpen(c gnet.Conn) (out []byte, action gnet.Action) {
-	cc := &fsdConnCtx{phase: fsdPhaseOpen, lineBuf: make([]byte, 0, 256)}
+	now := e.srv.clock.Now()
+	ip := ""
+	if ra := c.RemoteAddr(); ra != nil {
+		host, _, err := net.SplitHostPort(ra.String())
+		if err != nil {
+			host = ra.String()
+		}
+		ip = host
+	}
+
+	if !e.srv.limits.tryAcquireConn(ip, e.srv.cfg.FsdMaxConnections, e.srv.cfg.FsdMaxConnectionsPerIP) {
+		e.srv.logger.Debug("gnet connection rejected: connection limit", "ip", ip)
+		return nil, gnet.Close
+	}
+
+	cc := &fsdConnCtx{
+		phase:      fsdPhaseOpen,
+		lineBuf:    make([]byte, 0, 256),
+		remoteIP:   ip,
+		connHeld:   true,
+		openedAt:   now,
+		lastActive: now,
+	}
 	c.SetContext(cc)
 
 	// Server ident (same bytes as sendServerIdent).
@@ -143,7 +171,15 @@ func (e *fsdEngine) OnClose(c gnet.Conn, _ error) (action gnet.Action) {
 			e.srv.registry.Release(cc.client)
 			cc.registered = false
 		}
+		if cc.cidHeld {
+			e.srv.limits.releaseCID(cc.client.CID)
+			cc.cidHeld = false
+		}
 		cc.client.Cancel()
+	}
+	if cc.connHeld {
+		e.srv.limits.releaseConn(cc.remoteIP)
+		cc.connHeld = false
 	}
 	return gnet.None
 }
@@ -154,10 +190,28 @@ func (e *fsdEngine) OnTraffic(c gnet.Conn) (action gnet.Action) {
 		return gnet.Close
 	}
 
+	now := e.srv.clock.Now()
+	// Login-phase timeout.
+	if cc.phase == fsdPhaseIdent && e.srv.cfg.FsdLoginTimeout > 0 {
+		if now.Sub(cc.openedAt) > e.srv.cfg.FsdLoginTimeout {
+			return gnet.Close
+		}
+	}
+	// Post-login idle timeout.
+	if cc.phase == fsdPhaseActive && e.srv.cfg.FsdIdleTimeout > 0 {
+		if now.Sub(cc.lastActive) > e.srv.cfg.FsdIdleTimeout {
+			return gnet.Close
+		}
+	}
+
 	// Append inbound bytes into line buffer (must copy — gnet reuses buffers).
 	for {
 		buf, err := c.Next(-1)
 		if len(buf) > 0 {
+			// Cap growth while framing to avoid multi-line amplification.
+			if len(cc.lineBuf)+len(buf) > fsdMaxLine*4 {
+				return gnet.Close
+			}
 			cc.lineBuf = append(cc.lineBuf, buf...)
 		}
 		if err != nil || len(buf) == 0 {
@@ -169,6 +223,9 @@ func (e *fsdEngine) OnTraffic(c gnet.Conn) (action gnet.Action) {
 		line, ok := popLine(&cc.lineBuf)
 		if !ok {
 			break
+		}
+		if len(line) > fsdMaxLine {
+			return gnet.Close
 		}
 		if len(cc.lineBuf) > fsdMaxLine*4 {
 			// Runaway buffer without delimiters.
@@ -185,6 +242,7 @@ func (e *fsdEngine) OnTraffic(c gnet.Conn) (action gnet.Action) {
 }
 
 func (e *fsdEngine) handleLine(c gnet.Conn, cc *fsdConnCtx, line []byte) gnet.Action {
+	cc.lastActive = e.srv.clock.Now()
 	switch cc.phase {
 	case fsdPhaseIdent:
 		if cc.idPacket == nil {
@@ -217,13 +275,17 @@ func (e *fsdEngine) finishLogin(c gnet.Conn, cc *fsdConnCtx, idPacket, addPacket
 
 	client := session.New(e.ctx, nil, nil, data)
 	client.Auth = &auth.AuthState{}
-	if ra := c.RemoteAddr(); ra != nil {
+	if cc.remoteIP != "" {
+		client.SetRemoteIP(cc.remoteIP)
+	} else if ra := c.RemoteAddr(); ra != nil {
 		host, _, splitErr := net.SplitHostPort(ra.String())
 		if splitErr != nil {
 			host = ra.String()
 		}
 		client.SetRemoteIP(host)
+		cc.remoteIP = host
 	}
+	client.LastInboundNs.Store(e.srv.clock.Now().UnixNano())
 
 	// Wire coalescing AsyncWrite outbound (no SenderWorker).
 	gc := c
@@ -246,23 +308,33 @@ func (e *fsdEngine) finishLogin(c gnet.Conn, cc *fsdConnCtx, idPacket, addPacket
 		return gnet.Close
 	}
 
+	if !e.srv.limits.tryAcquireCID(client.CID, e.srv.cfg.FsdMaxSessionsPerCID) {
+		_ = writeLoginError(c, ServerFullError, "Too many sessions for this CID")
+		_ = out.Close()
+		return gnet.Close
+	}
+	cc.cidHeld = true
+
 	if err = e.srv.registry.Register(client); err != nil {
 		if errors.Is(err, ErrCallsignInUse) {
 			_ = writeLoginError(c, CallsignInUseError, "Callsign already in use")
 		}
+		e.srv.limits.releaseCID(client.CID)
+		cc.cidHeld = false
 		_ = out.Close()
 		return gnet.Close
 	}
 	cc.registered = true
 
 	if err = e.srv.sendMotd(client); err != nil {
-		client.Cancel()
+		client.Disconnect()
 		return gnet.Close
 	}
 
 	e.srv.broadcastAddPacket(client)
 	cc.phase = fsdPhaseActive
 	cc.idPacket = nil
+	cc.lastActive = e.srv.clock.Now()
 	return gnet.None
 }
 
@@ -289,6 +361,8 @@ func (e *fsdEngine) dispatchActive(cc *fsdConnCtx, line []byte) gnet.Action {
 	packet[len(line)] = '\r'
 	packet[len(line)+1] = '\n'
 
+	client.LastInboundNs.Store(e.srv.clock.Now().UnixNano())
+
 	packetType, ok := verifyPacket(packet, client)
 	if !ok {
 		return gnet.None
@@ -314,6 +388,7 @@ func (e *fsdEngine) run() error {
 		gnet.WithNumEventLoop(e.numLoops),
 		gnet.WithReuseAddr(true),
 		gnet.WithTCPNoDelay(gnet.TCPNoDelay),
+		gnet.WithTCPKeepAlive(60 * time.Second),
 		gnet.WithReadBufferCap(fsdMaxLine * 2),
 		gnet.WithWriteBufferCap(64 * 1024),
 	}

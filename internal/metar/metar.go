@@ -112,6 +112,12 @@ func (s *Service) Request(ctx context.Context, sender session.Sender, icao strin
 		sender:   sender,
 		icaoCode: icao,
 	}:
+	default:
+		// Queue full: do not block the FSD reader / gnet event loop.
+		// Soft-fail with a weather error if the session is still live.
+		if ctx.Err() == nil {
+			sendError(sender, icao)
+		}
 	}
 }
 

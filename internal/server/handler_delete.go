@@ -2,11 +2,12 @@ package server
 
 import "github.com/renorris/openfsd/internal/session"
 
-// handleDelete handles logic for Delete ATC `#DA` and Delete Pilot `#DP` packets
+// handleDelete handles logic for Delete ATC `#DA` and Delete Pilot `#DP` packets.
+// Always emits a server-built leave notification (session IsAtc + CID) rather than
+// rebroadcasting the client packet (which may forge leave type or CID).
 func (s *Server) handleDelete(client *session.Session, packet []byte) {
-	// Broadcast delete packet
-	broadcastAll(s.registry, client, packet)
-
-	// Cancel context. Writer worker will close the connection
-	client.Cancel()
+	_ = packet
+	// broadcastDisconnectPacket is idempotent via DisconnectNotified CAS.
+	s.broadcastDisconnectPacket(client)
+	client.Disconnect()
 }

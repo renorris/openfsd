@@ -31,7 +31,13 @@ func (s *Server) runServiceHTTP(ctx context.Context) {
 		return
 	}
 
-	httpSrv := &http.Server{Handler: e}
+	httpSrv := &http.Server{
+		Handler:           e,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -45,6 +51,7 @@ func (s *Server) runServiceHTTP(ctx context.Context) {
 
 func (s *Server) setupRoutes() (e *gin.Engine) {
 	e = gin.New()
+	e.Use(gin.Recovery())
 
 	// Verify administrator service JWT
 	e.Use(s.authMiddleware)
@@ -60,10 +67,23 @@ func (s *Server) setupRoutes() (e *gin.Engine) {
 	return
 }
 
+// cutBearerToken extracts a Bearer token from Authorization, case-insensitive scheme.
+func cutBearerToken(header string) (token string, ok bool) {
+	const prefix = "bearer "
+	if len(header) < len(prefix) {
+		return "", false
+	}
+	if !strings.EqualFold(header[:len(prefix)], prefix) {
+		return "", false
+	}
+	token = strings.TrimSpace(header[len(prefix):])
+	return token, token != ""
+}
+
 func (s *Server) authMiddleware(c *gin.Context) {
-	authHeader, found := strings.CutPrefix(c.GetHeader("Authorization"), "Bearer ")
+	authHeader, found := cutBearerToken(c.GetHeader("Authorization"))
 	if !found {
-		c.AbortWithStatus(http.StatusBadRequest)
+		c.AbortWithStatus(http.StatusUnauthorized)
 		return
 	}
 
@@ -76,7 +96,7 @@ func (s *Server) authMiddleware(c *gin.Context) {
 
 	accessToken, err := auth.ParseJwtToken(authHeader, []byte(jwtSecret))
 	if err != nil {
-		c.AbortWithStatus(http.StatusBadRequest)
+		c.AbortWithStatus(http.StatusUnauthorized)
 		return
 	}
 
@@ -205,8 +225,8 @@ func (s *Server) handleKickUser(c *gin.Context) {
 		return
 	}
 
-	// Cancelling the context will cause the client's event loop to close
-	client.Cancel()
+	// Disconnect cancels context and closes gnet/classic transports.
+	client.Disconnect()
 
 	c.AbortWithStatus(http.StatusNoContent)
 }

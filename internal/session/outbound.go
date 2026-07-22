@@ -14,11 +14,19 @@ import (
 // Contracts (same as Session.Send / SendPosition):
 //   - Send may block under backpressure; returns error when closed / session done.
 //   - SendPosition is non-blocking from the broadcaster’s perspective (may drop).
+//   - TrySend (optional via type assert) is non-blocking reliable enqueue.
 type Outbound interface {
 	Send(packet string) error
 	SendPosition(packet string) error
 	Close() error
 }
+
+// errOutboundFull is returned by TrySend when the reliable ring is full.
+var errOutboundFull = errFull{}
+
+type errFull struct{}
+
+func (errFull) Error() string { return "session: outbound full" }
 
 // AsyncWriteFunc writes a complete buffer to the peer asynchronously.
 // The buffer must not be retained by the caller after return; the implementation
@@ -123,6 +131,34 @@ func (o *CoalesceOutbound) Send(packet string) error {
 		o.mu.Unlock()
 		return errOutboundClosed
 	}
+	o.enqueueRelLocked(packet)
+	// Control / reliable traffic flushes immediately so $ER / #TM are not delayed.
+	o.drainToBufLocked()
+	err := o.flushBufLocked()
+	o.mu.Unlock()
+	return err
+}
+
+// TrySend enqueues a reliable packet without blocking.
+// Returns errOutboundFull if the ring is full, errOutboundClosed if closed.
+func (o *CoalesceOutbound) TrySend(packet string) error {
+	o.mu.Lock()
+	if o.closed {
+		o.mu.Unlock()
+		return errOutboundClosed
+	}
+	if o.relN >= o.relCap {
+		o.mu.Unlock()
+		return errOutboundFull
+	}
+	o.enqueueRelLocked(packet)
+	o.drainToBufLocked()
+	err := o.flushBufLocked()
+	o.mu.Unlock()
+	return err
+}
+
+func (o *CoalesceOutbound) enqueueRelLocked(packet string) {
 	o.rel[o.relW] = packet
 	o.relW++
 	if o.relW >= o.relCap {
@@ -132,11 +168,6 @@ func (o *CoalesceOutbound) Send(packet string) error {
 	if o.onEnqueue != nil {
 		o.onEnqueue()
 	}
-	// Control / reliable traffic flushes immediately so $ER / #TM are not delayed.
-	o.drainToBufLocked()
-	err := o.flushBufLocked()
-	o.mu.Unlock()
-	return err
 }
 
 // SendPosition stores the latest position packet (droppable, non-blocking).

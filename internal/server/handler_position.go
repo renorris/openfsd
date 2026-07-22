@@ -18,6 +18,11 @@ func btoa(b []byte) string {
 }
 
 func (s *Server) handleATCPosition(client *session.Session, packet []byte) {
+	if !client.IsAtc {
+		// Pilots must not emit ATC position streams.
+		return
+	}
+
 	// Verify and set facility type
 	facilityType, err := strconv.ParseInt(string(getField(packet, 2)), 10, 32)
 	if err != nil {
@@ -27,7 +32,11 @@ func (s *Server) handleATCPosition(client *session.Session, packet []byte) {
 
 	if !isAllowedFacilityType(client.NetworkRating, int(facilityType)) {
 		client.SendError(InvalidPositionForRatingError, "Invalid position for rating")
-		client.Cancel()
+		client.Disconnect()
+		return
+	}
+
+	if !s.rateOK(&client.LastPosRateNs, minPositionInterval) {
 		return
 	}
 
@@ -42,7 +51,7 @@ func (s *Server) handleATCPosition(client *session.Session, packet []byte) {
 		client.SendError(SyntaxError, "Invalid latitude/longitude")
 		return
 	}
-	visRange, ok := parseVisRange(packet, 3)
+	visRange, ok := parseVisRange(packet, 3, s.cfg.maxAtcVisRangeNM())
 	if !ok {
 		client.SendError(SyntaxError, "Invalid visibility range")
 		return
@@ -51,12 +60,15 @@ func (s *Server) handleATCPosition(client *session.Session, packet []byte) {
 	// Update registry position (primary center).
 	s.registry.UpdatePosition(client, [2]float64{lat, lon}, visRange)
 
+	// Rewrite rating field (index 4) from authenticated session rating for peer integrity.
+	out := rewriteField(packet, 4, strconv.Itoa(int(client.NetworkRating)))
+
 	// Broadcast using current multi-box geometry: previous cycle's SECPOS
 	// secondaries remain until after this fan-out so large CTR % updates
 	// still reach pilots under secondary centers. vatSys order is % then
 	// ' for each secondary (Network.SendPosition); we clear after broadcast
 	// and re-apply when ' packets arrive.
-	broadcastRanged(s.registry, client, packet)
+	broadcastRanged(s.registry, client, out)
 	client.ClearSecondaryVisCenters()
 
 	client.LastUpdated.Store(s.clock.Now())
@@ -64,7 +76,7 @@ func (s *Server) handleATCPosition(client *session.Session, packet []byte) {
 
 // handleSecondaryVisCenter handles SECPOS ' CALLSIGN:INDEX:LAT:LON packets.
 //
-// Wire confirmed from RossCarlson Vatsim.Network (vPilot decompile bm) and
+// Wire confirmed from RossCarlson Vatsim.Network (v1 decompile bm) and
 // vatSys Network.SendPosition (index = listIndex-1 among VisibilityCenters).
 // Server stores the center for multi-box range search; does not rebroadcast
 // (vatSys VATSIM_SecondaryVisCenterReceived is a no-op).
@@ -75,6 +87,10 @@ func (s *Server) handleSecondaryVisCenter(client *session.Session, packet []byte
 	}
 	p, err := protocol.ParseSecondaryVisCenter(packet)
 	if err != nil {
+		client.SendError(SyntaxError, "Invalid secondary visibility center")
+		return
+	}
+	if !validLatLon(p.Latitude, p.Longitude) {
 		client.SendError(SyntaxError, "Invalid secondary visibility center")
 		return
 	}
@@ -90,10 +106,19 @@ func (s *Server) handleSecondaryVisCenter(client *session.Session, packet []byte
 // Wire format: @MODE:CALLSIGN:XPDR:RATING:LAT:LON:ALT:GS:PBH:CORR...
 // Fields are scanned once (amortized) instead of repeated getField walks.
 func (s *Server) handlePilotPosition(client *session.Session, packet []byte) {
+	if client.IsAtc {
+		// ATC sessions must not emit pilot position streams.
+		return
+	}
+
 	// Need fields 2,4,5,6,7,8 — walk once up to index 8.
 	var fields [9][]byte
 	if !splitFieldsN(packet, fields[:]) {
 		client.SendError(SyntaxError, "Invalid position packet")
+		return
+	}
+
+	if !s.rateOK(&client.LastPosRateNs, minPositionInterval) {
 		return
 	}
 
@@ -107,13 +132,20 @@ func (s *Server) handlePilotPosition(client *session.Session, packet []byte) {
 		client.SendError(SyntaxError, "Invalid latitude/longitude")
 		return
 	}
+	if !validLatLon(lat, lon) {
+		client.SendError(SyntaxError, "Invalid latitude/longitude")
+		return
+	}
 
 	const pilotVisRange = 50.0 * 1852.0 // 50 nautical miles
 
 	// Update registry position then fan-out (hot path).
 	// packet is an owned immutable copy (eventLoop / gnet dispatch).
 	s.registry.UpdatePosition(client, [2]float64{lat, lon}, pilotVisRange)
-	broadcastRanged(s.registry, client, packet)
+
+	// Rewrite rating field (index 3) from authenticated session rating.
+	out := rewriteField(packet, 3, strconv.Itoa(int(client.NetworkRating)))
+	broadcastRanged(s.registry, client, out)
 
 	// Update state from the same field split (copy for atomics that store string).
 	client.Transponder.Store(string(fields[2]))
@@ -149,6 +181,12 @@ func (s *Server) handlePilotPosition(client *session.Session, packet []byte) {
 
 // handleFastPilotPosition handles logic for fast `^`, stopped `#ST`, and slow `#SL` pilot position updates
 func (s *Server) handleFastPilotPosition(client *session.Session, packet []byte) {
+	if client.IsAtc {
+		return
+	}
+	if !s.rateOK(&client.LastPosRateNs, minPositionInterval) {
+		return
+	}
 	// Broadcast position update
 	broadcastRangedVelocity(s.registry, client, packet)
 }

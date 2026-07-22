@@ -1,15 +1,18 @@
 package session
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/renorris/openfsd/pkg/protocol"
+	uberatomic "go.uber.org/atomic"
 )
 
 func TestNew_ZeroCoords(t *testing.T) {
@@ -326,5 +329,96 @@ func TestSendPosition_DoesNotBlockWhenFull(t *testing.T) {
 		}
 	case <-time.After(500 * time.Millisecond):
 		t.Fatal("SendPosition blocked on full channel")
+	}
+}
+
+func TestTrySend_ChannelPath(t *testing.T) {
+	s := New(context.Background(), nil, nil, LoginData{Callsign: "T1"})
+	if !s.TrySend("a\r\n") {
+		t.Fatal("first TrySend should succeed")
+	}
+	pkt, ok := s.DequeueOutbound()
+	if !ok || pkt != "a\r\n" {
+		t.Fatalf("dequeued %q %v", pkt, ok)
+	}
+	// Fill buffer
+	for i := 0; i < sendChanCap; i++ {
+		if !s.TrySend("x") {
+			t.Fatalf("fill TrySend #%d failed", i)
+		}
+	}
+	if s.TrySend("overflow") {
+		t.Fatal("TrySend on full channel must return false")
+	}
+	s.Cancel()
+	if s.TrySend("after-cancel") {
+		t.Fatal("TrySend after cancel must return false")
+	}
+}
+
+func TestTrySend_OutboundPath(t *testing.T) {
+	var wrote []byte
+	o := NewCoalesceOutbound(func(p []byte) error {
+		wrote = append(wrote, p...)
+		return nil
+	}, func() error { return nil }, CoalesceOutboundConfig{})
+	s := New(context.Background(), nil, nil, LoginData{Callsign: "T2"})
+	s.SetOutbound(o)
+	if !s.TrySend("hi\r\n") {
+		t.Fatal("TrySend via outbound")
+	}
+	if !bytes.Contains(wrote, []byte("hi\r\n")) {
+		t.Fatalf("write = %q", wrote)
+	}
+	_ = o.Close()
+	if s.TrySend("after-close") {
+		t.Fatal("TrySend after outbound close must fail")
+	}
+}
+
+func TestDisconnect_CancelsAndClosesOutbound(t *testing.T) {
+	closed := false
+	o := NewCoalesceOutbound(func(p []byte) error { return nil }, func() error {
+		closed = true
+		return nil
+	}, CoalesceOutboundConfig{})
+	s := New(context.Background(), nil, nil, LoginData{Callsign: "T3"})
+	s.SetOutbound(o)
+	s.Disconnect()
+	select {
+	case <-s.Ctx.Done():
+	default:
+		t.Fatal("Disconnect must cancel context")
+	}
+	if !closed {
+		t.Fatal("Disconnect must close outbound")
+	}
+	// Idempotent
+	s.Disconnect()
+}
+
+func TestDisconnect_NilSafe(t *testing.T) {
+	(*Session)(nil).Disconnect()
+	s := New(context.Background(), nil, nil, LoginData{})
+	s.Disconnect()
+}
+
+func TestAllowRate_Concurrent(t *testing.T) {
+	var last uberatomic.Int64
+	now := time.Unix(1_000, 0)
+	var okCount int32
+	var wg sync.WaitGroup
+	for i := 0; i < 32; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if AllowRate(&last, time.Second, now) {
+				atomic.AddInt32(&okCount, 1)
+			}
+		}()
+	}
+	wg.Wait()
+	if okCount != 1 {
+		t.Fatalf("exactly one concurrent AllowRate should win, got %d", okCount)
 	}
 }

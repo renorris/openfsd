@@ -34,17 +34,16 @@ const (
 
 var ErrConfigKeyNotFound = errors.New("config: key not found")
 
-const secretKeyBits = 256
+// secretKeyBytes is the number of random bytes used for HS256 secrets (256-bit entropy).
+const secretKeyBytes = 32
 
-func GenerateJwtSecretKey() (key [secretKeyBits / 8]byte, err error) {
-	secretKey := make([]byte, (secretKeyBits/8)/2)
+// GenerateJwtSecretKey returns a hex-encoded 256-bit secret (64 hex chars).
+func GenerateJwtSecretKey() (key string, err error) {
+	secretKey := make([]byte, secretKeyBytes)
 	if _, err = io.ReadFull(rand.Reader, secretKey); err != nil {
 		return
 	}
-
-	hex.Encode(key[:], secretKey)
-
-	return
+	return hex.EncodeToString(secretKey), nil
 }
 
 // GetWelcomeMessage returns any configured welcome message.
@@ -61,7 +60,7 @@ func InitDefaultConfig(r ConfigRepository) (err error) {
 	}
 
 	defaultConfig := map[string]string{
-		ConfigJwtSecretKey:      string(secretKey[:]),
+		ConfigJwtSecretKey:      secretKey,
 		ConfigWelcomeMessage:    "Connected to openfsd",
 		ConfigFsdServerHostname: "localhost",
 		ConfigFsdServerIdent:    "OPENFSD",

@@ -40,13 +40,13 @@ func TestInitDefaultConfig(t *testing.T) {
 		t.Errorf("expected no error, got %v", err)
 	}
 
-	// Verify the key exists and is a 32-character hex string
+	// Verify the key exists and is a 64-character hex string (32 random bytes).
 	value, err := repo.Get(ConfigJwtSecretKey)
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
 	}
-	if len(value) != 32 {
-		t.Errorf("expected 32-character hex string, got %s", value)
+	if len(value) != 64 {
+		t.Errorf("expected 64-character hex string, got %s", value)
 	}
 
 	// Call InitDefaultConfig again

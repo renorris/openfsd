@@ -73,7 +73,7 @@ func parseLoginPackets(idPacket, addPacket []byte, now time.Time) (data session.
 	}
 
 	if data.IsAtc {
-		data.RealName = string(getField(addPacket, 2))
+		data.RealName = sanitizeRealName(string(getField(addPacket, 2)))
 		if data.CID, err = strconv.Atoi(string(getField(addPacket, 3))); err != nil {
 			err = ErrInvalidAddPacket
 			errCode = SyntaxError
@@ -117,7 +117,7 @@ func parseLoginPackets(idPacket, addPacket []byte, now time.Time) (data session.
 			errMsg = "Invalid protocol revision in pilot add packet"
 			return
 		}
-		data.RealName = string(getField(addPacket, 7))
+		data.RealName = sanitizeRealName(string(getField(addPacket, 7)))
 	}
 
 	if data.ProtoRevision < 100 || data.ProtoRevision > 101 {

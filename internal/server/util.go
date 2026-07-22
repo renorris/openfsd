@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -61,7 +62,8 @@ func getField(packet []byte, index int) []byte {
 	return protocol.Field(packet, index)
 }
 
-// mostLikelyJwt returns whether a given byte slice is most likely a JWT token
+// mostLikelyJwt returns whether a given byte slice is most likely a JWT token.
+// Accepts standard and base64url header encodings (JWT uses base64url).
 func mostLikelyJwt(token []byte) bool {
 	tmp := token
 	dotCount := 0
@@ -82,8 +84,20 @@ func mostLikelyJwt(token []byte) bool {
 
 	rawJwtHeader := token[:bytes.IndexByte(token, '.')]
 
-	buf := make([]byte, 0, 256)
-	buf, err := base64.StdEncoding.AppendDecode(buf, rawJwtHeader)
+	decode := func(enc *base64.Encoding) ([]byte, error) {
+		buf := make([]byte, 0, 256)
+		return enc.AppendDecode(buf, rawJwtHeader)
+	}
+	buf, err := decode(base64.RawURLEncoding)
+	if err != nil {
+		buf, err = decode(base64.URLEncoding)
+	}
+	if err != nil {
+		buf, err = decode(base64.RawStdEncoding)
+	}
+	if err != nil {
+		buf, err = decode(base64.StdEncoding)
+	}
 	if err != nil {
 		return false
 	}
@@ -103,6 +117,45 @@ func mostLikelyJwt(token []byte) bool {
 	}
 
 	return true
+}
+
+// sanitizeRealName strips delimiters that would break colon-framed FSD packets.
+func sanitizeRealName(name string) string {
+	if name == "" {
+		return name
+	}
+	name = strings.ReplaceAll(name, ":", " ")
+	name = strings.ReplaceAll(name, "\r", "")
+	name = strings.ReplaceAll(name, "\n", "")
+	return name
+}
+
+// rewriteField replaces colon-delimited field index with value and returns a new packet.
+// Preserves trailing CRLF if present. Returns original packet if index is missing.
+func rewriteField(packet []byte, index int, value string) []byte {
+	if index < 0 || len(packet) == 0 {
+		return packet
+	}
+	body := packet
+	suffix := []byte(nil)
+	if bytes.HasSuffix(body, []byte("\r\n")) {
+		suffix = []byte("\r\n")
+		body = body[:len(body)-2]
+	} else if bytes.HasSuffix(body, []byte("\n")) {
+		suffix = []byte("\n")
+		body = body[:len(body)-1]
+	}
+
+	fields := bytes.Split(body, []byte(":"))
+	if index >= len(fields) {
+		return packet
+	}
+	fields[index] = []byte(value)
+	out := bytes.Join(fields, []byte(":"))
+	if len(suffix) > 0 {
+		out = append(out, suffix...)
+	}
+	return out
 }
 
 func isValidCallsignLength(callsign []byte) bool {
@@ -163,7 +216,8 @@ func isAllowedFacilityType(rating NetworkRating, facilityType int) bool {
 	return rating >= minRating
 }
 
-// parseLatLon extracts two base-10-encoded float64 values from a packet at the specified field indices
+// parseLatLon extracts two base-10-encoded float64 values from a packet at the specified field indices.
+// Rejects NaN, Inf, and coordinates outside lat∈[-90,90], lon∈[-180,180].
 func parseLatLon(packet []byte, latIndex, lonIndex int) (lat float64, lon float64, ok bool) {
 	rawLat := getField(packet, latIndex)
 	rawLon := getField(packet, lonIndex)
@@ -175,16 +229,38 @@ func parseLatLon(packet []byte, latIndex, lonIndex int) (lat float64, lon float6
 	if err != nil {
 		return
 	}
-
+	if !validLatLon(lat, lon) {
+		return 0, 0, false
+	}
 	ok = true
 	return
 }
 
-// parseVisRange parses an FSD-encoded visibility range and returns the distance in meters
-func parseVisRange(packet []byte, index int) (visRange float64, ok bool) {
+func validLatLon(lat, lon float64) bool {
+	if math.IsNaN(lat) || math.IsInf(lat, 0) || math.IsNaN(lon) || math.IsInf(lon, 0) {
+		return false
+	}
+	if lat < -90 || lat > 90 || lon < -180 || lon > 180 {
+		return false
+	}
+	return true
+}
+
+// parseVisRange parses an FSD-encoded visibility range and returns the distance in meters.
+// maxNM caps the range (≤0 means 1500 NM). Non-finite / non-positive values fail.
+func parseVisRange(packet []byte, index int, maxNM float64) (visRange float64, ok bool) {
 	visRangeNauticalMiles, err := strconv.ParseFloat(btoa(getField(packet, index)), 64)
 	if err != nil {
 		return
+	}
+	if math.IsNaN(visRangeNauticalMiles) || math.IsInf(visRangeNauticalMiles, 0) || visRangeNauticalMiles <= 0 {
+		return
+	}
+	if maxNM <= 0 {
+		maxNM = 1500
+	}
+	if visRangeNauticalMiles > maxNM {
+		visRangeNauticalMiles = maxNM
 	}
 
 	// Convert to meters
@@ -257,6 +333,7 @@ func broadcastRangedVelocity(reg Registry, client *session.Session, packet []byt
 
 // broadcastRangedAtcOnly broadcasts a packet to all ATC clients in range.
 // Skips Synthetic recipients (sweatbox; belt-and-suspenders with IsAtc filter).
+// Uses TrySend so a slow peer cannot stall the sender / gnet event loop.
 func broadcastRangedAtcOnly(reg Registry, client *session.Session, packet []byte) {
 	packetStr := string(packet)
 	fn := func(recipient *session.Session) bool {
@@ -266,7 +343,7 @@ func broadcastRangedAtcOnly(reg Registry, client *session.Session, packet []byte
 		if !recipient.IsAtc {
 			return true
 		}
-		_ = recipient.Send(packetStr)
+		_ = recipient.TrySend(packetStr)
 		return true
 	}
 	if as, ok := reg.(atcRangeSearcher); ok {
@@ -274,7 +351,7 @@ func broadcastRangedAtcOnly(reg Registry, client *session.Session, packet []byte
 			if recipient.Synthetic {
 				return true
 			}
-			_ = recipient.Send(packetStr)
+			_ = recipient.TrySend(packetStr)
 			return true
 		})
 		return
@@ -283,20 +360,20 @@ func broadcastRangedAtcOnly(reg Registry, client *session.Session, packet []byte
 }
 
 // broadcastAll broadcasts a packet to the entire server.
-// Skips Synthetic recipients (sweatbox).
+// Skips Synthetic recipients (sweatbox). Uses non-blocking TrySend.
 func broadcastAll(reg Registry, client *session.Session, packet []byte) {
 	packetStr := string(packet)
 	reg.All(client, func(recipient *session.Session) bool {
 		if recipient.Synthetic {
 			return true
 		}
-		recipient.Send(packetStr)
+		_ = recipient.TrySend(packetStr)
 		return true
 	})
 }
 
 // broadcastAllATC broadcasts a packet to all ATC on entire server.
-// Skips Synthetic recipients (sweatbox).
+// Skips Synthetic recipients (sweatbox). Uses non-blocking TrySend.
 func broadcastAllATC(reg Registry, client *session.Session, packet []byte) {
 	packetStr := string(packet)
 	reg.All(client, func(recipient *session.Session) bool {
@@ -306,13 +383,13 @@ func broadcastAllATC(reg Registry, client *session.Session, packet []byte) {
 		if !recipient.IsAtc {
 			return true
 		}
-		recipient.Send(packetStr)
+		_ = recipient.TrySend(packetStr)
 		return true
 	})
 }
 
 // broadcastAllSupervisors broadcasts a packet to all supervisors on the server.
-// Skips Synthetic recipients (sweatbox).
+// Skips Synthetic recipients (sweatbox). Uses non-blocking TrySend.
 func broadcastAllSupervisors(reg Registry, client *session.Session, packet []byte) {
 	packetStr := string(packet)
 	reg.All(client, func(recipient *session.Session) bool {
@@ -322,7 +399,7 @@ func broadcastAllSupervisors(reg Registry, client *session.Session, packet []byt
 		if recipient.NetworkRating < NetworkRatingSupervisor {
 			return true
 		}
-		recipient.Send(packetStr)
+		_ = recipient.TrySend(packetStr)
 		return true
 	})
 }
@@ -330,9 +407,15 @@ func broadcastAllSupervisors(reg Registry, client *session.Session, packet []byt
 // sendDirectOrErr attempts to send a packet directly to a recipient.
 // If the registry responds with ErrCallsignDoesNotExist, the client
 // is notified with a NoSuchCallsignError.
+// Uses TrySend via Find so fan-out does not block on a slow peer.
 func sendDirectOrErr(reg Registry, client *session.Session, recipient []byte, packet []byte) {
-	if err := reg.Send(string(recipient), string(packet)); err != nil {
+	target, err := reg.Find(string(recipient))
+	if err != nil {
 		client.SendError(NoSuchCallsignError, "No such callsign")
+		return
+	}
+	if !target.TrySend(string(packet)) {
+		// Queue full or disconnecting — soft drop for abuse resistance.
 		return
 	}
 }

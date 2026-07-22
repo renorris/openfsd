@@ -87,11 +87,11 @@ func TestParseLatLonVisRange(t *testing.T) {
 	if _, _, ok := parseLatLon([]byte("a:b:c"), 0, 1); ok {
 		t.Fatal("expected fail")
 	}
-	vr, ok := parseVisRange(pkt, 3)
+	vr, ok := parseVisRange(pkt, 3, 1500)
 	if !ok || vr != 40*1852 {
 		t.Fatalf("visRange = %v ok=%v", vr, ok)
 	}
-	if _, ok := parseVisRange([]byte("a:b:c:xx"), 3); ok {
+	if _, ok := parseVisRange([]byte("a:b:c:xx"), 3, 1500); ok {
 		t.Fatal("expected vis fail")
 	}
 }

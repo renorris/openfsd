@@ -7,6 +7,10 @@ import (
 )
 
 func (s *Server) handleTextMessage(client *session.Session, packet []byte) {
+	if !s.rateOK(&client.LastTextRateNs, minTextInterval) {
+		return
+	}
+
 	recipient := getField(packet, 1)
 
 	// ATC chat
@@ -24,8 +28,11 @@ func (s *Server) handleTextMessage(client *session.Session, packet []byte) {
 		return
 	}
 
-	// Wallop
+	// Wallop — rate-limited to reduce supervisor spam
 	if string(recipient) == "*S" {
+		if !s.rateOK(&client.LastWallopRateNs, minWallopInterval) {
+			return
+		}
 		broadcastAllSupervisors(s.registry, client, packet)
 		return
 	}
