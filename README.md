@@ -30,6 +30,7 @@ internal/geo/         # Pure haversine / bounding box
 internal/auth/        # JWT + VATSIM client auth
 internal/metar/       # METAR worker pool (injectable HTTP)
 internal/db/          # Shared repositories + migrations
+internal/serviceapi/  # Pure JSON DTOs for FSD service HTTP (shared by server + web)
 internal/web/         # Gin MPA + /api/v1
 ```
 

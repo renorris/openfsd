@@ -13,7 +13,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/renorris/openfsd/internal/server"
+	"github.com/renorris/openfsd/internal/serviceapi"
 	"github.com/renorris/openfsd/pkg/protocol"
 )
 
@@ -153,7 +153,7 @@ func TestSweatboxCommandEmptyRedirectsErrorFlash(t *testing.T) {
 // sweatboxMock tracks FSD service HTTP interactions for instructor UI tests.
 type sweatboxMock struct {
 	paused          bool
-	lastCommand     server.SweatboxCommandRequest
+	lastCommand     serviceapi.SweatboxCommandRequest
 	airportBody     string
 	airportPath     string
 	scenarioBody    string
@@ -169,13 +169,13 @@ func (m *sweatboxMock) handler() http.Handler {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		st := server.SweatboxStateJSON{
+		st := serviceapi.SweatboxStateJSON{
 			ICAO:     "KBTV",
 			Paused:   m.paused,
 			Elapsed:  65,
 			ArrCount: 1,
 			DepCount: 2,
-			Aircraft: []server.SweatboxAircraftJSON{
+			Aircraft: []serviceapi.SweatboxAircraftJSON{
 				{
 					Callsign:    "AAL123",
 					Type:        "B738",
@@ -212,7 +212,7 @@ func (m *sweatboxMock) handler() http.Handler {
 			_, _ = w.Write([]byte("not-json"))
 			return
 		}
-		_ = json.NewEncoder(w).Encode(server.SweatboxScenarioResponse{
+		_ = json.NewEncoder(w).Encode(serviceapi.SweatboxScenarioResponse{
 			Loaded: 3,
 			Errors: []string{"line 9: skipped"},
 		})
@@ -220,13 +220,13 @@ func (m *sweatboxMock) handler() http.Handler {
 	mux.HandleFunc("/sweatbox/command", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&m.lastCommand)
 		if m.commandSoftFail {
-			_ = json.NewEncoder(w).Encode(server.SweatboxCommandResponse{
+			_ = json.NewEncoder(w).Encode(serviceapi.SweatboxCommandResponse{
 				OK:      false,
 				Message: "Unknown command: xyz",
 			})
 			return
 		}
-		_ = json.NewEncoder(w).Encode(server.SweatboxCommandResponse{
+		_ = json.NewEncoder(w).Encode(serviceapi.SweatboxCommandResponse{
 			OK:      true,
 			Message: "ok: " + m.lastCommand.Command,
 		})
@@ -539,9 +539,9 @@ func TestSweatboxDisabledMessagingWhenFSD404(t *testing.T) {
 func TestSweatboxXSSEscapedInFlashAndTable(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/sweatbox/state", func(w http.ResponseWriter, r *http.Request) {
-		st := server.SweatboxStateJSON{
+		st := serviceapi.SweatboxStateJSON{
 			ICAO: "KBTV",
-			Aircraft: []server.SweatboxAircraftJSON{
+			Aircraft: []serviceapi.SweatboxAircraftJSON{
 				{
 					Callsign:    `"><script>alert(1)</script>`,
 					Type:        `B738"><img src=x>`,
@@ -553,7 +553,7 @@ func TestSweatboxXSSEscapedInFlashAndTable(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(st)
 	})
 	mux.HandleFunc("/sweatbox/command", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(server.SweatboxCommandResponse{
+		_ = json.NewEncoder(w).Encode(serviceapi.SweatboxCommandResponse{
 			OK:      true,
 			Message: `<script>alert("xss")</script>`,
 		})
@@ -616,10 +616,10 @@ func TestSweatboxFlashMsgTruncated(t *testing.T) {
 	// Integration: oversized FSD command message is truncated in redirect.
 	mux := http.NewServeMux()
 	mux.HandleFunc("/sweatbox/state", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(server.SweatboxStateJSON{ICAO: "KBTV", Aircraft: []server.SweatboxAircraftJSON{}})
+		_ = json.NewEncoder(w).Encode(serviceapi.SweatboxStateJSON{ICAO: "KBTV", Aircraft: []serviceapi.SweatboxAircraftJSON{}})
 	})
 	mux.HandleFunc("/sweatbox/command", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(server.SweatboxCommandResponse{
+		_ = json.NewEncoder(w).Encode(serviceapi.SweatboxCommandResponse{
 			OK:      true,
 			Message: strings.Repeat("x", 500),
 		})

@@ -20,6 +20,7 @@ Operational rules for agents and humans changing this repository. This file is t
 | `internal/sweatbox` | Pure sim (apt/air parse, taxi, engine, kinematics) | **stdlib + `internal/geo` only**; no protocol/session/server |
 | `internal/server` | TCP accept, login, handlers, service HTTP | DI via `server.New` / `server.NewDefault` |
 | `internal/db` | Shared repositories + migrations | Used by FSD and web |
+| `internal/serviceapi` | Pure JSON DTOs for FSD service-HTTP (online users, sweatbox) | No I/O; shared by server + web |
 | `internal/web` | Gin MPA + progressive enhancement + `/api/v1` | boring-web mandatory |
 | `cmd/openfsd` | Process entry | Binary `openfsd`; `-fsd` / `-web` (default both) |
 
@@ -31,13 +32,14 @@ Operational rules for agents and humans changing this repository. This file is t
 
 ```
 cmd/openfsd       → internal/server, internal/web, …
-internal/server   → session, postoffice, protocol, auth, metar, db, sweatbox
+internal/server   → session, postoffice, protocol, auth, metar, db, sweatbox, serviceapi
 internal/postoffice → geo, session
 internal/metar    → protocol, session
 internal/sweatbox → geo
-internal/web      → auth, db, protocol
-                    (and server only for service-HTTP DTOs until those move;
-                     never sweatbox — control plane is service HTTP)
+internal/serviceapi → (stdlib only; no session/postoffice/server/web)
+internal/web      → auth, db, protocol, serviceapi
+                    (never server/session/postoffice/metar/sweatbox —
+                     control plane is service HTTP + serviceapi DTOs)
 pkg/fsdclient     → protocol
 internal/auth     → protocol
 internal/session  → protocol
@@ -55,7 +57,8 @@ Enforce with `scripts/check-import-graph.sh`.
 | `pkg/fsdclient` | `internal/*` |
 | `internal/session` | `postoffice`, `server`, `web`, `metar` |
 | `internal/geo` | Any non-stdlib import |
-| `internal/web` | `session`, `postoffice`, `metar`, `sweatbox` |
+| `internal/web` | `session`, `postoffice`, `metar`, `sweatbox`, `server` |
+| `internal/serviceapi` | `server`, `session`, `postoffice`, `web`, `sweatbox` |
 | `internal/db` | `server`, `session`, `web`, `fsdclient` |
 | `internal/auth` | `server`, `session`, `web` |
 | `internal/sweatbox` | `server`, `web`, `postoffice`, `session`, `db`, `auth`, `metar`, `fsdclient`, `protocol` |
@@ -64,7 +67,7 @@ Stdlib heuristic: first path element contains no `.` (e.g. `fmt`, `net/http`). T
 
 **Cycle rule:** `session` never imports `postoffice`. Postoffice depends on a narrow participant/send port. Shared errors like `ErrCallsignInUse` live next to the registry, not in `pkg/protocol`.
 
-**Note:** `internal/web` currently imports `internal/server` for online-user DTO types over the service HTTP API. Prefer moving those DTOs (or a thin shared contract) out of `server` rather than growing that edge. The import-graph script still flags `web` → `server` if re-enabled as a hard fail on that pair — keep coupling minimal.
+**Service-HTTP contract:** JSON DTOs for `GET /online_users`, kick, and sweatbox control plane live in `internal/serviceapi`. `internal/web` must not import `internal/server` (hard-fail in `scripts/check-import-graph.sh`).
 
 ---
 
@@ -126,7 +129,7 @@ Before adding a frontend framework, client router, global store, or hydration la
 - [ ] `gofmt -l .` clean
 - [ ] `bash scripts/check-coverage.sh 80` (or rely on CI)
 - [ ] `bash scripts/check-hygiene.sh`
-- [ ] `bash scripts/check-import-graph.sh` (note §2 web→server DTO coupling)
+- [ ] `bash scripts/check-import-graph.sh`
 - [ ] No `reflect` in `pkg/protocol`
 - [ ] If web: boring-web checklist (§6)
 - [ ] If protocol/handler: e2e green

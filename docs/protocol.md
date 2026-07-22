@@ -45,7 +45,7 @@ Auth challenges (`$ZC`/`$ZR`) run throughout the session ([vatsim-auth.md](vatsi
 | [Temperature Data](#temperature-data-td) | `#TD` | Temperature data (legacy weather profile) |
 | [Handoff Request](#handoff-request-ho) | `$HO` | Initiate ATC handoff |
 | [Handoff Accept](#handoff-accept-ha) | `$HA` | Accept ATC handoff |
-| [Handoff Cancel](#handoff-cancel) | *(see section)* | Cancel handoff |
+| [Handoff Cancel](#handoff-cancel-hc) | `$HC` | Cancel handoff |
 | [Weather Profile Request](#weather-profile-request-wx) | `#WX` | Request weather profile (**legacy**; modern clients use `$AX` METAR) |
 | [Flight Plan](#flight-plan-fp) | `$FP` | File / distribute flight plan |
 | [Flight Plan Amendment](#flight-plan-amendment-am) | `$AM` | Amend flight plan |
@@ -1532,12 +1532,17 @@ _"Hello SAN_APP, this is LAX_35_CTR. I accept your handoff request. I will now t
 
 <br>
 
-## Handoff Cancel
+## Handoff Cancel (`$HC`)
 
-Two related mechanisms appear in the wild; exact exclusive use is **not fully settled**:
+Two related mechanisms appear in the wild:
 
-1. **Shared state** — `#PC{from}:{to}:CCP:HC:{target}` (relayed by openfsd as privileged ATC shared state; often to `@94835` for range broadcast).
-2. **Dedicated cancel PDU** — some client stacks expose a distinct handoff-cancelled type parallel to `$HO`/`$HA`. **Wire prefix unconfirmed** in this documentation; openfsd does not currently type a separate cancel packet beyond `#PC HC`.
+1. **Dedicated cancel PDU** — `$HC{from}:{to}:{target}` (parallel to `$HO`/`$HA`). vatSys / RossCarlson `PDUHandoffCancelled`. openfsd types and forwards this for active ATC (facility > OBS).
+2. **Shared state** — `#PC{from}:{to}:CCP:HC:{target}` (relayed as privileged ATC shared state; often to `@94835` for range broadcast).
+
+Example (dedicated form):
+```text
+$HCSAN_APP:LAX_35_CTR:ROU1887
+```
 
 Example (shared-state form):
 ```text

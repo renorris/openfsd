@@ -27,8 +27,9 @@ func (s *Server) handleAuthChallenge(client *session.Session, packet []byte) {
 }
 
 func (s *Server) handleHandoff(client *session.Session, packet []byte) {
-	// Active >OBS ATC only
-	if !client.IsAtc || client.FacilityType.Load() <= 1 {
+	// Active ATC above OBS facility (FSS=1 and higher may $HO/$HA/$HC).
+	// Gate is FacilityType <= 0, matching other privileged ATC paths.
+	if !client.IsAtc || client.FacilityType.Load() <= 0 {
 		return
 	}
 

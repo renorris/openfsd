@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/renorris/openfsd/internal/server"
+	"github.com/renorris/openfsd/internal/serviceapi"
 	"github.com/renorris/openfsd/pkg/fsdclient"
 	"github.com/renorris/openfsd/pkg/protocol"
 )
@@ -116,7 +117,7 @@ func serviceClient() *http.Client {
 }
 
 // waitOnlinePilot polls GET /online_users until callsign appears (predicate, no bare sleep-assert).
-func waitOnlinePilot(t *testing.T, ts *server.TestServer, callsign string, wantCID int) server.OnlineUserPilot {
+func waitOnlinePilot(t *testing.T, ts *server.TestServer, callsign string, wantCID int) serviceapi.OnlineUserPilot {
 	t.Helper()
 	tok, err := ts.MakeServiceJWT()
 	if err != nil {
@@ -136,7 +137,7 @@ func waitOnlinePilot(t *testing.T, ts *server.TestServer, callsign string, wantC
 			time.Sleep(20 * time.Millisecond)
 			continue
 		}
-		var data server.OnlineUsersResponseData
+		var data serviceapi.OnlineUsersResponseData
 		err = json.NewDecoder(resp.Body).Decode(&data)
 		_ = resp.Body.Close()
 		if err != nil {
@@ -151,7 +152,7 @@ func waitOnlinePilot(t *testing.T, ts *server.TestServer, callsign string, wantC
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("pilot %s (cid=%d) not in online_users within timeout", callsign, wantCID)
-	return server.OnlineUserPilot{}
+	return serviceapi.OnlineUserPilot{}
 }
 
 // nearKJFK returns a pilot position near KJFK.
@@ -379,18 +380,39 @@ func TestE2E_SECPOSMultiCenterVisibility(t *testing.T) {
 	}
 
 	// Pilot @ with SECPOS armed → ATC should receive (multi-box search).
-	if err := pilot.Send(pilotPos); err != nil {
-		t.Fatalf("re-send pilot: %v", err)
-	}
+	// Re-send until observed: gnet can apply ' after the first @ arrives.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_, err := atc.WaitFor(ctx, func(r fsdclient.Received) bool {
-		return r.Type == protocol.PacketTypePilotPosition &&
-			bytes.Contains(r.Raw, []byte(pilotCS))
-	})
-	if err != nil {
-		t.Fatalf("ATC wait pilot @ via SECPOS: %v (recorder=%v)", err, atc.Recorder().All())
+	hit := make(chan struct{}, 1)
+	go func() {
+		_, err := atc.WaitFor(ctx, func(r fsdclient.Received) bool {
+			return r.Type == protocol.PacketTypePilotPosition &&
+				bytes.Contains(r.Raw, []byte(pilotCS))
+		})
+		if err == nil {
+			select {
+			case hit <- struct{}{}:
+			default:
+			}
+		}
+	}()
+	ticker := time.NewTicker(40 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-hit:
+			goto secposSeen
+		case <-ctx.Done():
+			t.Fatalf("ATC wait pilot @ via SECPOS: %v (recorder=%v)", ctx.Err(), atc.Recorder().All())
+		case <-ticker.C:
+			if err := pilot.Send(pilotPos); err != nil {
+				t.Fatalf("re-send pilot: %v", err)
+			}
+			// Periodically re-arm secondary in case % clear raced us.
+			_ = atc.Send(sec.Marshal())
+		}
 	}
+secposSeen:
 
 	// Next ATC position cycle: % fans out while previous secondaries still set,
 	// then clears and client re-sends ' (vatSys SendPosition order).
@@ -403,7 +425,7 @@ func TestE2E_SECPOSMultiCenterVisibility(t *testing.T) {
 
 	ctx2, cancel2 := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel2()
-	_, err = pilot.WaitFor(ctx2, func(r fsdclient.Received) bool {
+	_, err := pilot.WaitFor(ctx2, func(r fsdclient.Received) bool {
 		return r.Type == protocol.PacketTypeATCPosition &&
 			bytes.Contains(r.Raw, []byte(atcCS)) &&
 			bytes.Contains(r.Raw, []byte("34.00000"))
@@ -495,7 +517,7 @@ func TestE2E_InRangeVisibility(t *testing.T) {
 			time.Sleep(20 * time.Millisecond)
 			continue
 		}
-		var data server.OnlineUsersResponseData
+		var data serviceapi.OnlineUsersResponseData
 		_ = json.NewDecoder(resp.Body).Decode(&data)
 		_ = resp.Body.Close()
 		for _, pl := range data.Pilots {
@@ -673,8 +695,7 @@ func TestE2E_Disconnect(t *testing.T) {
 	waitMOTD(t, b, "DISCB")
 
 	// openfsd verifyPacket requires ≥3 fields; wire #DP with SERVER + CID.
-	// Note: handleDelete broadcasts then Cancel; defer broadcastDisconnectPacket may
-	// emit a second #DP — peer WaitFor accepts the first matching delete.
+	// Single leave path: client #DP is the only disconnect broadcast (no double #DP).
 	if err := a.Send([]byte("#DPDISCA:SERVER:" + strconv.Itoa(ts.PilotCID))); err != nil {
 		t.Fatal(err)
 	}
@@ -686,6 +707,30 @@ func TestE2E_Disconnect(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("B did not see disconnect: %v (recorder=%v)", err, b.Recorder().All())
+	}
+
+	// Brief window: no second #DP for the same callsign after the first.
+	deadline := time.Now().Add(300 * time.Millisecond)
+	dpCount := 0
+	for _, r := range b.Recorder().All() {
+		if r.Type == protocol.PacketTypeDeletePilot && bytes.Contains(r.Raw, []byte("DISCA")) {
+			dpCount++
+		}
+	}
+	for time.Now().Before(deadline) {
+		// drain a bit more without failing on timeout
+		rctx, rcancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		r, err := b.Next(rctx)
+		rcancel()
+		if err != nil {
+			continue
+		}
+		if r.Type == protocol.PacketTypeDeletePilot && bytes.Contains(r.Raw, []byte("DISCA")) {
+			dpCount++
+		}
+	}
+	if dpCount != 1 {
+		t.Fatalf("expected exactly one #DP for DISCA, got %d (recorder=%v)", dpCount, b.Recorder().All())
 	}
 }
 
@@ -779,7 +824,7 @@ func TestE2E_ServiceHTTPOnlineUsersAndKick(t *testing.T) {
 	}
 	client := serviceClient()
 	deadline := time.Now().Add(5 * time.Second)
-	var pilot server.OnlineUserPilot
+	var pilot serviceapi.OnlineUserPilot
 	found := false
 	for time.Now().Before(deadline) {
 		_ = c.SendPilotPosition(protocol.PilotPosition{
@@ -802,7 +847,7 @@ func TestE2E_ServiceHTTPOnlineUsersAndKick(t *testing.T) {
 			time.Sleep(20 * time.Millisecond)
 			continue
 		}
-		var data server.OnlineUsersResponseData
+		var data serviceapi.OnlineUsersResponseData
 		err = json.NewDecoder(resp.Body).Decode(&data)
 		_ = resp.Body.Close()
 		if err != nil {

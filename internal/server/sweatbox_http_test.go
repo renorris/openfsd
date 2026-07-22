@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/renorris/openfsd/internal/serviceapi"
 	"io"
 	"log/slog"
 	"net/http"
@@ -96,7 +97,7 @@ func TestSweatboxHTTP_Lifecycle(t *testing.T) {
 	{
 		w := doService(t, e, tok, http.MethodGet, "/sweatbox/state", nil, "")
 		require.Equal(t, http.StatusOK, w.Code)
-		var st SweatboxStateJSON
+		var st serviceapi.SweatboxStateJSON
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &st))
 		require.Empty(t, st.ICAO)
 		require.True(t, st.Paused)
@@ -115,7 +116,7 @@ func TestSweatboxHTTP_Lifecycle(t *testing.T) {
 		w := doService(t, e, tok, http.MethodPost, "/sweatbox/command",
 			[]byte(`{"command":"add I L J -90 5 3000 B738"}`), "application/json")
 		require.Equal(t, http.StatusConflict, w.Code)
-		var resp SweatboxCommandResponse
+		var resp serviceapi.SweatboxCommandResponse
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 		require.False(t, resp.OK)
 		require.Contains(t, resp.Message, "No airport")
@@ -135,7 +136,7 @@ func TestSweatboxHTTP_Lifecycle(t *testing.T) {
 	{
 		w := doService(t, e, tok, http.MethodGet, "/sweatbox/ops", nil, "")
 		require.Equal(t, http.StatusOK, w.Code)
-		var ops SweatboxOpsJSON
+		var ops serviceapi.SweatboxOpsJSON
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &ops))
 		require.Equal(t, 0, ops.ArrCount)
 		require.Contains(t, ops.Message, "Elapsed:")
@@ -151,7 +152,7 @@ func TestSweatboxHTTP_Lifecycle(t *testing.T) {
 	{
 		w := doService(t, e, tok, http.MethodPost, "/sweatbox/scenario", air, "text/plain")
 		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-		var res SweatboxScenarioResponse
+		var res serviceapi.SweatboxScenarioResponse
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &res))
 		require.Greater(t, res.Loaded, 0)
 		require.True(t, h.Engine().Paused())
@@ -162,7 +163,7 @@ func TestSweatboxHTTP_Lifecycle(t *testing.T) {
 	{
 		w := doService(t, e, tok, http.MethodGet, "/sweatbox/state", nil, "")
 		require.Equal(t, http.StatusOK, w.Code)
-		var st SweatboxStateJSON
+		var st serviceapi.SweatboxStateJSON
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &st))
 		require.Equal(t, "KBTV", st.ICAO)
 		require.NotEmpty(t, st.Aircraft)
@@ -174,7 +175,7 @@ func TestSweatboxHTTP_Lifecycle(t *testing.T) {
 		w := doService(t, e, tok, http.MethodPost, "/sweatbox/command",
 			[]byte(`{"command":"notacommand"}`), "application/json")
 		require.Equal(t, http.StatusOK, w.Code)
-		var resp SweatboxCommandResponse
+		var resp serviceapi.SweatboxCommandResponse
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 		require.False(t, resp.OK)
 	}
@@ -222,7 +223,7 @@ func TestSweatboxHTTP_Lifecycle(t *testing.T) {
 	{
 		w := doService(t, e, tok, http.MethodPost, "/sweatbox/scenario", air, "text/plain")
 		require.Equal(t, http.StatusOK, w.Code)
-		var res SweatboxScenarioResponse
+		var res serviceapi.SweatboxScenarioResponse
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &res))
 		require.Greater(t, res.Loaded, 0)
 
@@ -244,7 +245,7 @@ func TestSweatboxHTTP_Lifecycle(t *testing.T) {
 		w := doService(t, e, tok, http.MethodPost, "/sweatbox/command",
 			[]byte(`{"command":"add I L J -90 5 3000 B738"}`), "application/json")
 		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-		var cmd SweatboxCommandResponse
+		var cmd serviceapi.SweatboxCommandResponse
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &cmd))
 		require.True(t, cmd.OK)
 
@@ -316,7 +317,7 @@ func TestSweatboxHTTP_CommandWithSelectedCallsign(t *testing.T) {
 	body := []byte(`{"callsign":"` + cs + `","command":"sq 1234"}`)
 	w = doService(t, e, tok, http.MethodPost, "/sweatbox/command", body, "application/json")
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-	var resp SweatboxCommandResponse
+	var resp serviceapi.SweatboxCommandResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	require.True(t, resp.OK, resp.Message)
 

@@ -65,6 +65,8 @@ func TypeOf(packet []byte) PacketType {
 			return PacketTypeHandoffRequest
 		case "$HA":
 			return PacketTypeHandoffAccept
+		case "$HC":
+			return PacketTypeHandoffCancel
 		case "$FP":
 			return PacketTypeFlightPlan
 		case "$AM":
@@ -122,6 +124,8 @@ func Prefix(t PacketType) string {
 		return "$HO"
 	case PacketTypeHandoffAccept:
 		return "$HA"
+	case PacketTypeHandoffCancel:
+		return "$HC"
 	case PacketTypeFlightPlan:
 		return "$FP"
 	case PacketTypeFlightPlanAmendment:
@@ -173,7 +177,7 @@ func MinFields(t PacketType) int {
 		return 3
 	case PacketTypeAuthChallenge:
 		return 3
-	case PacketTypeHandoffRequest, PacketTypeHandoffAccept:
+	case PacketTypeHandoffRequest, PacketTypeHandoffAccept, PacketTypeHandoffCancel:
 		return 3
 	case PacketTypeFlightPlan:
 		return 17

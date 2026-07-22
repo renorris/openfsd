@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/renorris/openfsd/internal/auth"
 	"github.com/renorris/openfsd/internal/db"
+	"github.com/renorris/openfsd/internal/serviceapi"
 )
 
 // runServiceHTTP starts the admin service HTTP server used for
@@ -89,56 +90,17 @@ func (s *Server) authMiddleware(c *gin.Context) {
 	c.Next()
 }
 
-// OnlineUserGeneralData is shared identity/position state for online users.
-type OnlineUserGeneralData struct {
-	Callsign         string    `json:"callsign"`
-	CID              int       `json:"cid"`
-	Name             string    `json:"name"`
-	NetworkRating    int       `json:"network_rating"`
-	MaxNetworkRating int       `json:"max_network_rating"`
-	Latitude         float64   `json:"latitude"`
-	Longitude        float64   `json:"longitude"`
-	LogonTime        time.Time `json:"logon_time"`
-	LastUpdated      time.Time `json:"last_updated"`
-}
-
-// OnlineUserPilot is a pilot entry in the online-users snapshot.
-type OnlineUserPilot struct {
-	OnlineUserGeneralData
-	Altitude    int    `json:"altitude"`
-	Groundspeed int    `json:"groundspeed"`
-	Heading     int    `json:"heading"`
-	Transponder string `json:"transponder"`
-	// Synthetic is true for in-process sweatbox pilots (no TCP client).
-	// Omitted from JSON when false so human pilots stay compact.
-	Synthetic bool `json:"synthetic,omitempty"`
-}
-
-// OnlineUserATC is an ATC entry in the online-users snapshot.
-type OnlineUserATC struct {
-	OnlineUserGeneralData
-	Frequency string `json:"frequency"`
-	Facility  int    `json:"facility"`
-	VisRange  int    `json:"visual_range"`
-}
-
-// OnlineUsersResponseData is the JSON body for GET /online_users.
-type OnlineUsersResponseData struct {
-	Pilots []OnlineUserPilot `json:"pilots"`
-	ATC    []OnlineUserATC   `json:"atc"`
-}
-
 func (s *Server) handleGetOnlineUsers(c *gin.Context) {
 	clients := s.registry.Snapshot()
 
-	resData := OnlineUsersResponseData{
-		Pilots: make([]OnlineUserPilot, 0, 512),
-		ATC:    make([]OnlineUserATC, 0, 128),
+	resData := serviceapi.OnlineUsersResponseData{
+		Pilots: make([]serviceapi.OnlineUserPilot, 0, 512),
+		ATC:    make([]serviceapi.OnlineUserATC, 0, 128),
 	}
 
 	for _, client := range clients {
 		latLon := client.LatLon()
-		genData := OnlineUserGeneralData{
+		genData := serviceapi.OnlineUserGeneralData{
 			Callsign:         client.Callsign,
 			CID:              client.CID,
 			Name:             client.RealName,
@@ -151,7 +113,7 @@ func (s *Server) handleGetOnlineUsers(c *gin.Context) {
 		}
 
 		if client.IsAtc {
-			atc := OnlineUserATC{
+			atc := serviceapi.OnlineUserATC{
 				OnlineUserGeneralData: genData,
 				Frequency:             client.Frequency.Load(),
 				Facility:              int(client.FacilityType.Load()),
@@ -159,7 +121,7 @@ func (s *Server) handleGetOnlineUsers(c *gin.Context) {
 			}
 			resData.ATC = append(resData.ATC, atc)
 		} else {
-			pilot := OnlineUserPilot{
+			pilot := serviceapi.OnlineUserPilot{
 				OnlineUserGeneralData: genData,
 				Altitude:              int(client.Altitude.Load()),
 				Groundspeed:           int(client.Groundspeed.Load()),

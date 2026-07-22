@@ -121,6 +121,7 @@ func TestGetHandlerRouting(t *testing.T) {
 		{PacketTypeAuthChallenge, "handleAuthChallenge"},
 		{PacketTypeHandoffRequest, "handleHandoff"},
 		{PacketTypeHandoffAccept, "handleHandoff"},
+		{PacketTypeHandoffCancel, "handleHandoff"},
 		{PacketTypeMetarRequest, "handleMetarRequest"},
 		{PacketTypeFlightPlan, "handleFileFlightplan"},
 		{PacketTypeFlightPlanAmendment, "handleAmendFlightplan"},
@@ -398,8 +399,16 @@ func TestHandleDeleteSquawkboxProcontroller(t *testing.T) {
 	// Privileged with facility + range ATC
 	atc.FacilityType.Store(4)
 	srv.handleProcontroller(atc, []byte("#PCLAX_TWR:@94835:CCP:SC:ABC\r\n"))
-	// Privileged direct
+	// Privileged direct + beacon store
 	srv.handleProcontroller(atc, []byte("#PCLAX_TWR:N200:CCP:BC:N200:1200\r\n"))
+	if got := other.AssignedBeaconCode.Load(); got != "1200" {
+		t.Fatalf("AssignedBeaconCode after #PC BC = %q, want 1200", got)
+	}
+	// Invalid beacon ignored (not stored, no $ER)
+	srv.handleProcontroller(atc, []byte("#PCLAX_TWR:N200:CCP:BC:N200:9999\r\n"))
+	if got := other.AssignedBeaconCode.Load(); got != "1200" {
+		t.Fatalf("invalid beacon should not overwrite, got %q", got)
+	}
 }
 
 func TestHandleClientQuery(t *testing.T) {
@@ -434,7 +443,18 @@ func TestHandleClientQuery(t *testing.T) {
 	if !hasOutboundContaining(outATC, "ATC:Y:") {
 		t.Fatalf("expected ATC:Y response, got %v", outATC)
 	}
-	// SERVER ATC query — OBS facility → N
+	// SERVER ATC query — pre-position race: controller rating > OBS, FacilityType 0 → Y
+	raceATC := newSess("RACE_TWR", true, NetworkRatingController1)
+	raceATC.FacilityType.Store(0)
+	if err := reg.Register(raceATC); err != nil {
+		t.Fatal(err)
+	}
+	srv.handleClientQuery(raceATC, []byte("$CQRACE_TWR:SERVER:ATC:RACE_TWR\r\n"))
+	outRace := drain(raceATC)
+	if !hasOutboundContaining(outRace, "ATC:Y:") {
+		t.Fatalf("pre-position self ATC query should be Y, got %v", outRace)
+	}
+	// SERVER ATC query — OBS facility + OBS rating → N
 	srv.handleClientQuery(atc, []byte("$CQLAX_TWR:SERVER:ATC:OBS1\r\n"))
 	outATC = drain(atc)
 	if !hasOutboundContaining(outATC, "ATC:N:") {
@@ -502,6 +522,17 @@ func TestHandleClientQuery(t *testing.T) {
 	}
 	// Privileged OK
 	srv.handleClientQuery(atc, []byte("$CQLAX_TWR:N200:IT\r\n"))
+	// $CQ BC stores assigned beacon
+	srv.handleClientQuery(atc, []byte("$CQLAX_TWR:@94835:BC:N200:7032\r\n"))
+	if got := target.AssignedBeaconCode.Load(); got != "7032" {
+		t.Fatalf("AssignedBeaconCode after $CQ BC = %q, want 7032", got)
+	}
+	// SERVER FP returns stored beacon
+	srv.handleClientQuery(atc, []byte("$CQLAX_TWR:SERVER:FP:N200\r\n"))
+	outFP := drain(atc)
+	if !hasOutboundContaining(outFP, "BC:N200:7032") {
+		t.Fatalf("FP re-request should include assigned beacon, got %v", outFP)
+	}
 	// ACC from any
 	srv.handleClientQuery(pilot, []byte("$CQN100:N200:ACC\r\n"))
 	// INF interrogation without SUP
@@ -576,11 +607,16 @@ func TestHandleMetarKillAuthHandoffFlightplan(t *testing.T) {
 		t.Fatalf("expected $ZR, got %v", out)
 	}
 
-	// Handoff low facility ignored
+	// Handoff OBS facility ignored
 	atc.FacilityType.Store(0)
+	srv.handleHandoff(atc, []byte("$HOLAX_TWR:N100:CS\r\n"))
+	// FSS (facility 1) allowed for $HO
+	atc.FacilityType.Store(1)
 	srv.handleHandoff(atc, []byte("$HOLAX_TWR:N100:CS\r\n"))
 	atc.FacilityType.Store(4)
 	srv.handleHandoff(atc, []byte("$HOLAX_TWR:N100:CS\r\n"))
+	// $HC handoff cancel
+	srv.handleHandoff(atc, []byte("$HCLAX_TWR:N100:CS\r\n"))
 	// pilot handoff ignored
 	srv.handleHandoff(pilot, []byte("$HON100:LAX_TWR:CS\r\n"))
 
@@ -609,9 +645,20 @@ func TestVerifyPacket(t *testing.T) {
 	if _, ok := verifyPacket([]byte("a:b\r\n"), s); ok {
 		t.Fatal("expected fail short")
 	}
-	// unknown type (login-like)
+	_ = drain(s) // clear Packet too short $ER
+	// unknown type (login-like) — soft-drop, no $ER
 	if _, ok := verifyPacket([]byte("#APN100:SERVER:1:pass:1:1:1\r\n"), s); ok {
 		t.Fatal("expected unknown for add pilot")
+	}
+	if outs := drain(s); hasOutboundContaining(outs, "$ER") {
+		t.Fatalf("unknown packet must not $ER, got %v", outs)
+	}
+	// weather / untyped prefixes also soft-drop
+	if _, ok := verifyPacket([]byte("#WXN100:SERVER:KJFK\r\n"), s); ok {
+		t.Fatal("expected soft-drop for #WX")
+	}
+	if outs := drain(s); hasOutboundContaining(outs, "$ER") {
+		t.Fatalf("#WX must not $ER, got %v", outs)
 	}
 	// source invalid
 	if _, ok := verifyPacket([]byte("@OTHER:1:1200:1:34.0:-118.0:5000:250:0:0\r\n"), s); ok {

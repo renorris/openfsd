@@ -10,7 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/renorris/openfsd/internal/db"
-	"github.com/renorris/openfsd/internal/server"
+	"github.com/renorris/openfsd/internal/serviceapi"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -149,17 +149,17 @@ func TestGenerateDatafeedWithStubOnline(t *testing.T) {
 
 	// Manually build datafeed conversion path via a fake cache from empty OnlineUsers
 	// by unit-testing the loop logic through a local helper reconstruction:
-	ou := &server.OnlineUsersResponseData{
-		Pilots: []server.OnlineUserPilot{{
-			OnlineUserGeneralData: server.OnlineUserGeneralData{Callsign: "N1", CID: 1},
+	ou := &serviceapi.OnlineUsersResponseData{
+		Pilots: []serviceapi.OnlineUserPilot{{
+			OnlineUserGeneralData: serviceapi.OnlineUserGeneralData{Callsign: "N1", CID: 1},
 			Altitude:              1000,
 		}, {
-			OnlineUserGeneralData: server.OnlineUserGeneralData{Callsign: "SBX1", CID: 900001},
+			OnlineUserGeneralData: serviceapi.OnlineUserGeneralData{Callsign: "SBX1", CID: 900001},
 			Altitude:              2000,
 			Synthetic:             true,
 		}},
-		ATC: []server.OnlineUserATC{{
-			OnlineUserGeneralData: server.OnlineUserGeneralData{Callsign: "TWR", CID: 2},
+		ATC: []serviceapi.OnlineUserATC{{
+			OnlineUserGeneralData: serviceapi.OnlineUserGeneralData{Callsign: "TWR", CID: 2},
 			Frequency:             "118.7",
 		}},
 	}

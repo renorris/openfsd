@@ -9,41 +9,12 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/renorris/openfsd/internal/serviceapi"
 	"github.com/renorris/openfsd/internal/sweatbox"
 )
 
 // Max body size for sweatbox airport/scenario/command payloads (design: 2 MiB).
 const sweatboxMaxBodyBytes = 2 << 20
-
-// SweatboxCommandRequest is the JSON body for POST /sweatbox/command.
-type SweatboxCommandRequest struct {
-	// Callsign is optional UI-selected aircraft for aircraft-scoped verbs.
-	Callsign string `json:"callsign"`
-	// Command is the instructor text command (required).
-	Command string `json:"command"`
-}
-
-// SweatboxCommandResponse is returned for POST /sweatbox/command.
-// Soft validation failures use HTTP 200 with OK=false (TWRTrainer-style).
-type SweatboxCommandResponse struct {
-	OK      bool   `json:"ok"`
-	Message string `json:"message"`
-}
-
-// SweatboxScenarioResponse is returned for POST /sweatbox/scenario.
-type SweatboxScenarioResponse struct {
-	Loaded int      `json:"loaded"`
-	Errors []string `json:"errors"`
-}
-
-// SweatboxOpsJSON is returned for GET /sweatbox/ops.
-type SweatboxOpsJSON struct {
-	ElapsedSec float64 `json:"elapsed_sec"`
-	ArrCount   int     `json:"arr_count"`
-	DepCount   int     `json:"dep_count"`
-	OpsPerMin  float64 `json:"ops_per_min"`
-	Message    string  `json:"message,omitempty"`
-}
 
 // registerSweatboxRoutes mounts /sweatbox/* when the host is allocated.
 // Call only when s.sweatbox != nil (gated by SWEATBOX_ENABLED).
@@ -67,14 +38,14 @@ func (s *Server) registerSweatboxRoutes(e *gin.Engine) {
 func (s *Server) handleSweatboxState(c *gin.Context) {
 	st := s.sweatbox.State()
 	if st.Aircraft == nil {
-		st.Aircraft = []SweatboxAircraftJSON{}
+		st.Aircraft = []serviceapi.SweatboxAircraftJSON{}
 	}
 	writeJSON(c, http.StatusOK, st)
 }
 
 func (s *Server) handleSweatboxOps(c *gin.Context) {
 	ops := s.sweatbox.Ops()
-	writeJSON(c, http.StatusOK, SweatboxOpsJSON{
+	writeJSON(c, http.StatusOK, serviceapi.SweatboxOpsJSON{
 		ElapsedSec: ops.Elapsed.Seconds(),
 		ArrCount:   ops.ArrCount,
 		DepCount:   ops.DepCount,
@@ -149,14 +120,14 @@ func (s *Server) handleSweatboxScenario(c *gin.Context) {
 	}
 	// No airport → 409 (design).
 	if s.sweatbox.Engine() == nil || s.sweatbox.Engine().Airport() == nil {
-		writeJSON(c, http.StatusConflict, SweatboxScenarioResponse{
+		writeJSON(c, http.StatusConflict, serviceapi.SweatboxScenarioResponse{
 			Loaded: 0,
 			Errors: []string{"No airport loaded."},
 		})
 		return
 	}
 	loaded, errs := s.sweatbox.LoadScenario(body)
-	out := SweatboxScenarioResponse{
+	out := serviceapi.SweatboxScenarioResponse{
 		Loaded: loaded,
 		Errors: make([]string, 0, len(errs)),
 	}
@@ -177,7 +148,7 @@ func (s *Server) handleSweatboxCommand(c *gin.Context) {
 	// Enforce body size even for JSON commands.
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, sweatboxMaxBodyBytes)
 
-	var req SweatboxCommandRequest
+	var req serviceapi.SweatboxCommandRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) || isMaxBytes(err) {
@@ -195,13 +166,13 @@ func (s *Server) handleSweatboxCommand(c *gin.Context) {
 	// Soft "no airport" for add-style commands → 409 when engine has no airport.
 	result := s.sweatbox.ApplyCommandSelected(req.Callsign, cmd)
 	if !result.OK && strings.Contains(result.Message, "No airport") {
-		writeJSON(c, http.StatusConflict, SweatboxCommandResponse{
+		writeJSON(c, http.StatusConflict, serviceapi.SweatboxCommandResponse{
 			OK:      false,
 			Message: result.Message,
 		})
 		return
 	}
-	writeJSON(c, http.StatusOK, SweatboxCommandResponse{
+	writeJSON(c, http.StatusOK, serviceapi.SweatboxCommandResponse{
 		OK:      result.OK,
 		Message: result.Message,
 	})

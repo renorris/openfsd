@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"github.com/renorris/openfsd/internal/serviceapi"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -184,7 +185,7 @@ func TestOnlineUsersSyntheticBadge(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 
 	body := w.Body.String()
-	var data OnlineUsersResponseData
+	var data serviceapi.OnlineUsersResponseData
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &data))
 	var sawHuman, sawSynth bool
 	for _, p := range data.Pilots {

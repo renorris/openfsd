@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/renorris/openfsd/internal/server"
+	"github.com/renorris/openfsd/internal/serviceapi"
 	"github.com/renorris/openfsd/pkg/protocol"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -42,7 +42,7 @@ func TestAPISweatboxStateProxiesFSD(t *testing.T) {
 	w := env.doJSON(t, http.MethodGet, "/api/v1/sweatbox/state", nil, access)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 
-	var st server.SweatboxStateJSON
+	var st serviceapi.SweatboxStateJSON
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &st))
 	assert.Equal(t, "KBTV", st.ICAO)
 	require.Len(t, st.Aircraft, 1)
@@ -67,7 +67,7 @@ func TestAPISweatboxStateCookieSession(t *testing.T) {
 	ts.engine.ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 
-	var st server.SweatboxStateJSON
+	var st serviceapi.SweatboxStateJSON
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &st))
 	assert.Equal(t, "KBTV", st.ICAO)
 }
@@ -105,7 +105,7 @@ func TestAPISweatboxOpsProxiesFSD(t *testing.T) {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(server.SweatboxOpsJSON{
+		_ = json.NewEncoder(w).Encode(serviceapi.SweatboxOpsJSON{
 			ElapsedSec: 12,
 			ArrCount:   3,
 			DepCount:   1,

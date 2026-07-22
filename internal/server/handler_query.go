@@ -59,6 +59,11 @@ func (s *Server) handleProcontroller(client *session.Session, packet []byte) {
 			client.SendError(InvalidControlError, "Invalid control")
 			return
 		}
+		// Persist assigned beacon for late joiners / $CQ SERVER:FP re-request.
+		// Wire: #PC{src}:{to}:CCP:BC:{target}:{code}
+		if string(pcType) == "BC" {
+			s.storeAssignedBeacon(string(getField(packet, 4)), string(getField(packet, 5)))
+		}
 		if recipient[0] == '@' {
 			broadcastRangedAtcOnly(s.registry, client, packet)
 		} else {
@@ -128,6 +133,10 @@ func (s *Server) handleClientQuery(client *session.Session, packet []byte) {
 			client.SendError(InvalidControlError, "Invalid control")
 			return
 		}
+		// Persist assigned beacon: $CQ{src}:@94835:BC:{target}:{code}
+		if string(queryType) == "BC" && countFields(packet) >= 5 {
+			s.storeAssignedBeacon(string(getField(packet, 3)), string(getField(packet, 4)))
+		}
 		forwardClientQuery(s.registry, client, packet)
 
 	// Allow aircraft configuration queries from any client
@@ -165,12 +174,55 @@ func (s *Server) handleClientQueryATCRequest(client *session.Session, packet []b
 	}
 
 	var p string
-	if targetClient.FacilityType.Load() > 0 {
+	if isValidATC(targetClient) {
 		p = fmt.Sprintf("$CRSERVER:%s:ATC:Y:%s\r\n", client.Callsign, targetCallsign)
 	} else {
 		p = fmt.Sprintf("$CRSERVER:%s:ATC:N:%s\r\n", client.Callsign, targetCallsign)
 	}
 	client.Send(p)
+}
+
+// isValidATC reports whether target should answer Y on $CQ SERVER:ATC.
+//
+// FacilityType > 0 is the normal post-position case. Before the first %,
+// FacilityType is still 0 (vatSys order: self ATC query then position). Controllers
+// with NetworkRating > OBS are treated as valid ATC in that window so ValidATC
+// does not stick false. Privileged mutations still require FacilityType > 0.
+// OBS-rated clients remain N until they publish a non-OBS facility.
+func isValidATC(target *session.Session) bool {
+	if target == nil || !target.IsAtc {
+		return false
+	}
+	if target.FacilityType.Load() > 0 {
+		return true
+	}
+	return target.NetworkRating > NetworkRatingObserver
+}
+
+// storeAssignedBeacon records a privileged BC assignment on the target session.
+// Invalid codes (empty or non-octal SSR) are ignored; no $ER (packet still forwarded).
+func (s *Server) storeAssignedBeacon(targetCallsign, code string) {
+	if targetCallsign == "" || !isValidBeaconCode(code) {
+		return
+	}
+	target, err := s.registry.Find(targetCallsign)
+	if err != nil {
+		return
+	}
+	target.AssignedBeaconCode.Store(code)
+}
+
+// isValidBeaconCode accepts 1–4 octal digits (standard Mode A / SSR).
+func isValidBeaconCode(code string) bool {
+	if n := len(code); n < 1 || n > 4 {
+		return false
+	}
+	for _, r := range code {
+		if r < '0' || r > '7' {
+			return false
+		}
+	}
+	return true
 }
 
 // handleClientQueryCAPSRequest answers $CQ{callsign}:SERVER:CAPS with the
@@ -221,6 +273,4 @@ func (s *Server) handleClientQueryFlightplanRequest(client *session.Session, pac
 	// Send assigned beacon code
 	bcPacket := buildBeaconCodePacket("server", client.Callsign, targetCallsign, beaconCode)
 	client.Send(bcPacket)
-
-	// TODO: research any other data that should be sent here
 }

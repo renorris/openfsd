@@ -39,13 +39,16 @@ func (s *Server) handleTextMessage(client *session.Session, packet []byte) {
 		return
 	}
 
+	// FP is a pseudo-recipient used by ATC clients for flight-plan/track
+	// acknowledgements (e.g. vatSys drop-track "#TM …:FP:{cs} release").
+	// No server-side consumer; drop silently.
 	if string(recipient) == "FP" {
-		// TODO: handle FP
 		return
 	}
 
+	// SERVER text: openfsd has no interactive server chat/commands over #TM.
+	// MOTD is pushed at login. Drop silently (do not $ER).
 	if string(recipient) == "SERVER" {
-		// TODO: handle SERVER
 		return
 	}
 

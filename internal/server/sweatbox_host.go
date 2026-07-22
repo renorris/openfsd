@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/renorris/openfsd/internal/serviceapi"
 	"github.com/renorris/openfsd/internal/session"
 	"github.com/renorris/openfsd/internal/sweatbox"
 	"github.com/renorris/openfsd/pkg/protocol"
@@ -674,55 +675,22 @@ func mapXPDRMode(ac sweatbox.AircraftSnapshot) string {
 // Snapshot (merged engine + session wire fields)
 // ---------------------------------------------------------------------------
 
-// SweatboxAircraftJSON is one aircraft in State(), with session wire overrides.
-type SweatboxAircraftJSON struct {
-	Callsign    string  `json:"callsign"`
-	Type        string  `json:"type"`
-	Rules       string  `json:"rules"`
-	Squawk      string  `json:"squawk"`
-	XPDRMode    string  `json:"xpdr_mode"`
-	Lat         float64 `json:"lat"`
-	Lon         float64 `json:"lon"`
-	Alt         float64 `json:"alt"`
-	Speed       float64 `json:"speed"`
-	Heading     float64 `json:"heading"`
-	Status      string  `json:"status"`
-	Instruction string  `json:"instruction"`
-	// FlightPlan is the live wire info section from the session (ATC $AM wins).
-	FlightPlan string `json:"flight_plan"`
-	Dep        string `json:"dep"`
-	Arr        string `json:"arr"`
-	CruiseAlt  int    `json:"cruise_alt"`
-	Route      string `json:"route"`
-	Remarks    string `json:"remarks"`
-}
-
-// SweatboxStateJSON is the instructor/UI snapshot (no HTTP surface in PR 6).
-type SweatboxStateJSON struct {
-	ICAO     string                 `json:"icao"`
-	Paused   bool                   `json:"paused"`
-	Elapsed  float64                `json:"elapsed_sec"`
-	ArrCount int                    `json:"arr_count"`
-	DepCount int                    `json:"dep_count"`
-	Aircraft []SweatboxAircraftJSON `json:"aircraft"`
-}
-
 // State merges engine domain snapshot with session FlightPlan and wire atomics.
-func (h *SweatboxHost) State() SweatboxStateJSON {
+func (h *SweatboxHost) State() serviceapi.SweatboxStateJSON {
 	if h == nil {
-		return SweatboxStateJSON{Aircraft: []SweatboxAircraftJSON{}}
+		return serviceapi.SweatboxStateJSON{Aircraft: []serviceapi.SweatboxAircraftJSON{}}
 	}
 	eng := h.eng.Snapshot()
-	out := SweatboxStateJSON{
+	out := serviceapi.SweatboxStateJSON{
 		ICAO:     eng.ICAO,
 		Paused:   eng.Paused,
 		Elapsed:  eng.Elapsed.Seconds(),
 		ArrCount: eng.ArrCount,
 		DepCount: eng.DepCount,
-		Aircraft: make([]SweatboxAircraftJSON, 0, len(eng.Aircraft)),
+		Aircraft: make([]serviceapi.SweatboxAircraftJSON, 0, len(eng.Aircraft)),
 	}
 	for _, ac := range eng.Aircraft {
-		row := SweatboxAircraftJSON{
+		row := serviceapi.SweatboxAircraftJSON{
 			Callsign:    ac.Callsign,
 			Type:        ac.Type,
 			Rules:       ac.Rules,

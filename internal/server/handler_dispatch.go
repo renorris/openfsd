@@ -26,7 +26,7 @@ func (s *Server) getHandler(packetType PacketType) handlerFunc {
 		return s.handleKillRequest
 	case PacketTypeAuthChallenge:
 		return s.handleAuthChallenge
-	case PacketTypeHandoffRequest, PacketTypeHandoffAccept:
+	case PacketTypeHandoffRequest, PacketTypeHandoffAccept, PacketTypeHandoffCancel:
 		return s.handleHandoff
 	case PacketTypeMetarRequest:
 		return s.handleMetarRequest

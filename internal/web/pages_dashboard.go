@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/renorris/openfsd/internal/server"
+	"github.com/renorris/openfsd/internal/serviceapi"
 )
 
 // handleFrontendDashboard renders the dashboard with a server-side connection
@@ -58,7 +58,7 @@ func (s *Server) handleFrontendDashboard(c *gin.Context) {
 
 // fetchOnlineUsers queries the FSD HTTP service for the live connection list.
 // Used by the dashboard HTML summary and by the datafeed cache worker.
-func (s *Server) fetchOnlineUsers() (*server.OnlineUsersResponseData, error) {
+func (s *Server) fetchOnlineUsers() (*serviceapi.OnlineUsersResponseData, error) {
 	client := http.Client{Timeout: 3 * time.Second}
 	defer client.CloseIdleConnections()
 
@@ -76,7 +76,7 @@ func (s *Server) fetchOnlineUsers() (*server.OnlineUsersResponseData, error) {
 		return nil, fmt.Errorf("FSD HTTP service status %d", res.StatusCode)
 	}
 
-	var online server.OnlineUsersResponseData
+	var online serviceapi.OnlineUsersResponseData
 	if err := json.NewDecoder(res.Body).Decode(&online); err != nil {
 		return nil, err
 	}

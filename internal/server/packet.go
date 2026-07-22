@@ -1,6 +1,8 @@
 package server
 
 import (
+	"log/slog"
+
 	"github.com/renorris/openfsd/internal/session"
 	"github.com/renorris/openfsd/pkg/protocol"
 )
@@ -28,6 +30,7 @@ const (
 	PacketTypeAuthChallenge        = protocol.PacketTypeAuthChallenge
 	PacketTypeHandoffRequest       = protocol.PacketTypeHandoffRequest
 	PacketTypeHandoffAccept        = protocol.PacketTypeHandoffAccept
+	PacketTypeHandoffCancel        = protocol.PacketTypeHandoffCancel
 	PacketTypeFlightPlan           = protocol.PacketTypeFlightPlan
 	PacketTypeFlightPlanAmendment  = protocol.PacketTypeFlightPlanAmendment
 )
@@ -77,7 +80,15 @@ func verifyPacket(packet []byte, client *session.Session) (packetType PacketType
 
 	packetType = getPacketType(packet)
 	if packetType == PacketTypeUnknown {
-		client.SendError(SyntaxError, "Unknown packet type")
+		// Soft-ignore unrecognized prefixes (weather #WX/#WD, $PI/$PO, future PDUs).
+		// Clients often set IgnoreUnknownPackets; server $ER spam is worse than a silent drop.
+		prefix := packet
+		if len(prefix) > 3 {
+			prefix = prefix[:3]
+		}
+		slog.Debug("fsd: dropping unknown packet type",
+			"callsign", client.Callsign,
+			"prefix", string(prefix))
 		return
 	}
 

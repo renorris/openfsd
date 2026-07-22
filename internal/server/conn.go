@@ -285,6 +285,11 @@ func (s *Server) broadcastAddPacket(client *session.Session) {
 }
 
 func (s *Server) broadcastDisconnectPacket(client *session.Session) {
+	// Single leave notification: skip if handleDelete (or another path) already broadcast.
+	if !client.DisconnectNotified.CompareAndSwap(false, true) {
+		return
+	}
+
 	packet := strings.Builder{}
 	if client.IsAtc {
 		packet.WriteString("#DA")

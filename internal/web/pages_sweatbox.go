@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/renorris/openfsd/internal/server"
+	"github.com/renorris/openfsd/internal/serviceapi"
 )
 
 // Max body for airport/scenario form payloads (mirrors FSD service HTTP 2 MiB).
@@ -108,7 +108,7 @@ func (s *Server) populateSweatboxState(c *gin.Context, page *sweatboxPage) {
 		return
 	}
 
-	var st server.SweatboxStateJSON
+	var st serviceapi.SweatboxStateJSON
 	if err := json.Unmarshal(body, &st); err != nil {
 		page.Unavailable = true
 		page.StatusMsg = "Unable to parse sweatbox state from FSD"
@@ -229,7 +229,7 @@ func (s *Server) handleFrontendSweatboxScenario(c *gin.Context) {
 	}
 	switch status {
 	case http.StatusOK:
-		var res server.SweatboxScenarioResponse
+		var res serviceapi.SweatboxScenarioResponse
 		if err := json.Unmarshal(respBody, &res); err != nil {
 			s.redirectSweatboxFlash(c, "err", "Unable to parse scenario response")
 			return
@@ -269,7 +269,7 @@ func (s *Server) handleFrontendSweatboxCommand(c *gin.Context) {
 		return
 	}
 
-	payload, err := json.Marshal(server.SweatboxCommandRequest{
+	payload, err := json.Marshal(serviceapi.SweatboxCommandRequest{
 		Callsign: callsign,
 		Command:  cmd,
 	})
@@ -285,7 +285,7 @@ func (s *Server) handleFrontendSweatboxCommand(c *gin.Context) {
 	}
 	switch status {
 	case http.StatusOK:
-		var res server.SweatboxCommandResponse
+		var res serviceapi.SweatboxCommandResponse
 		if err := json.Unmarshal(respBody, &res); err != nil {
 			s.redirectSweatboxFlash(c, "err", "Unable to parse command response")
 			return

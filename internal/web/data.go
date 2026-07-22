@@ -11,7 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/renorris/openfsd/internal/auth"
 	"github.com/renorris/openfsd/internal/db"
-	"github.com/renorris/openfsd/internal/server"
+	"github.com/renorris/openfsd/internal/serviceapi"
 	"github.com/renorris/openfsd/pkg/protocol"
 	"go.uber.org/atomic"
 	"io"
@@ -285,7 +285,7 @@ type DatafeedGeneral struct {
 }
 
 type DatafeedPilot struct {
-	server.OnlineUserPilot
+	serviceapi.OnlineUserPilot
 	Server         string              `json:"server"`
 	PilotRating    int                 `json:"pilot_rating"`          // INOP placeholder
 	MilitaryRating int                 `json:"military_rating"`       // INOP placeholder
@@ -312,7 +312,7 @@ type DatafeedFlightplan struct {
 }
 
 type DatafeedATC struct {
-	server.OnlineUserATC
+	serviceapi.OnlineUserATC
 	Server   string   `json:"server"`
 	TextATIS []string `json:"text_atis"` // INOP placeholder
 }

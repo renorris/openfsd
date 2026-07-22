@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/renorris/openfsd/internal/server"
+	"github.com/renorris/openfsd/internal/serviceapi"
 	"github.com/renorris/openfsd/pkg/fsdclient"
 	"github.com/renorris/openfsd/pkg/protocol"
 )
@@ -95,7 +96,7 @@ func loadKBTVScenario(t *testing.T, ts *server.TestServer) int {
 	if code != http.StatusOK {
 		t.Fatalf("load scenario status %d body %s", code, body)
 	}
-	var res server.SweatboxScenarioResponse
+	var res serviceapi.SweatboxScenarioResponse
 	if err := json.Unmarshal(body, &res); err != nil {
 		t.Fatalf("scenario response: %v body %s", err, body)
 	}
@@ -105,14 +106,14 @@ func loadKBTVScenario(t *testing.T, ts *server.TestServer) int {
 	return res.Loaded
 }
 
-func sweatboxCommand(t *testing.T, ts *server.TestServer, cmd string) server.SweatboxCommandResponse {
+func sweatboxCommand(t *testing.T, ts *server.TestServer, cmd string) serviceapi.SweatboxCommandResponse {
 	t.Helper()
 	payload, _ := json.Marshal(map[string]string{"command": cmd})
 	code, body := doServiceHTTP(t, ts, http.MethodPost, "/sweatbox/command", payload, "application/json")
 	if code != http.StatusOK && code != http.StatusConflict {
 		t.Fatalf("command %q status %d body %s", cmd, code, body)
 	}
-	var res server.SweatboxCommandResponse
+	var res serviceapi.SweatboxCommandResponse
 	if err := json.Unmarshal(body, &res); err != nil {
 		t.Fatalf("command response: %v body %s", err, body)
 	}
@@ -135,30 +136,30 @@ func sweatboxUnpause(t *testing.T, ts *server.TestServer) {
 	}
 }
 
-func getSweatboxState(t *testing.T, ts *server.TestServer) server.SweatboxStateJSON {
+func getSweatboxState(t *testing.T, ts *server.TestServer) serviceapi.SweatboxStateJSON {
 	t.Helper()
 	code, body := doServiceHTTP(t, ts, http.MethodGet, "/sweatbox/state", nil, "")
 	if code != http.StatusOK {
 		t.Fatalf("state status %d body %s", code, body)
 	}
-	var st server.SweatboxStateJSON
+	var st serviceapi.SweatboxStateJSON
 	if err := json.Unmarshal(body, &st); err != nil {
 		t.Fatalf("state decode: %v body %s", err, body)
 	}
 	return st
 }
 
-func aircraftFromState(st server.SweatboxStateJSON, callsign string) (server.SweatboxAircraftJSON, bool) {
+func aircraftFromState(st serviceapi.SweatboxStateJSON, callsign string) (serviceapi.SweatboxAircraftJSON, bool) {
 	cs := strings.ToUpper(callsign)
 	for _, ac := range st.Aircraft {
 		if strings.EqualFold(ac.Callsign, cs) {
 			return ac, true
 		}
 	}
-	return server.SweatboxAircraftJSON{}, false
+	return serviceapi.SweatboxAircraftJSON{}, false
 }
 
-func waitSweatboxAircraft(t *testing.T, ts *server.TestServer, callsign string) server.SweatboxAircraftJSON {
+func waitSweatboxAircraft(t *testing.T, ts *server.TestServer, callsign string) serviceapi.SweatboxAircraftJSON {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
@@ -169,7 +170,7 @@ func waitSweatboxAircraft(t *testing.T, ts *server.TestServer, callsign string) 
 		time.Sleep(30 * time.Millisecond)
 	}
 	t.Fatalf("aircraft %s not in sweatbox state", callsign)
-	return server.SweatboxAircraftJSON{}
+	return serviceapi.SweatboxAircraftJSON{}
 }
 
 func waitOnlineCallsignGone(t *testing.T, ts *server.TestServer, callsign string) {
@@ -188,7 +189,7 @@ func waitOnlineCallsignGone(t *testing.T, ts *server.TestServer, callsign string
 			time.Sleep(20 * time.Millisecond)
 			continue
 		}
-		var data server.OnlineUsersResponseData
+		var data serviceapi.OnlineUsersResponseData
 		err = json.NewDecoder(resp.Body).Decode(&data)
 		_ = resp.Body.Close()
 		if err != nil {
@@ -271,7 +272,7 @@ func sendATCGeo(t *testing.T, ts *server.TestServer, c *fsdclient.Client, cs str
 			time.Sleep(20 * time.Millisecond)
 			continue
 		}
-		var data server.OnlineUsersResponseData
+		var data serviceapi.OnlineUsersResponseData
 		_ = json.NewDecoder(resp.Body).Decode(&data)
 		_ = resp.Body.Close()
 		for _, a := range data.ATC {
@@ -440,7 +441,7 @@ func TestE2E_Sweatbox_PauseFreezesMotion(t *testing.T) {
 	// Wait until position moves from the parking snap.
 	base := waitSweatboxAircraft(t, ts, cs)
 	deadline := time.Now().Add(12 * time.Second)
-	var moved server.SweatboxAircraftJSON
+	var moved serviceapi.SweatboxAircraftJSON
 	for time.Now().Before(deadline) {
 		ac := waitSweatboxAircraft(t, ts, cs)
 		if math.Abs(ac.Lat-base.Lat) > 1e-5 || math.Abs(ac.Lon-base.Lon) > 1e-5 {
@@ -641,7 +642,7 @@ func TestE2E_Sweatbox_HumanPilotRangedPos(t *testing.T) {
 			time.Sleep(20 * time.Millisecond)
 			continue
 		}
-		var data server.OnlineUsersResponseData
+		var data serviceapi.OnlineUsersResponseData
 		_ = json.NewDecoder(resp.Body).Decode(&data)
 		_ = resp.Body.Close()
 		for _, p := range data.Pilots {

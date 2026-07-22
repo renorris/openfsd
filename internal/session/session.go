@@ -157,6 +157,11 @@ type Session struct {
 	// and is drained by SenderWorker (drop when Conn is nil).
 	Synthetic bool
 
+	// DisconnectNotified is set when a leave broadcast (#DA/#DP) has already been
+	// sent for this session (client-sent delete or connection-exit path).
+	// Prevents double leave notifications. Any goroutine may CAS it.
+	DisconnectNotified atomic.Bool
+
 	// sendEnqueueObs is an optional test/stress hook invoked after a successful
 	// enqueue on sendChan (not under any postoffice lock). nil is a no-op.
 	sendEnqueueObs SendEnqueueObserver

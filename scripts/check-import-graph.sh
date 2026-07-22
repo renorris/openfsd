@@ -161,13 +161,25 @@ check_no_imports "internal/session" "${MODULE}/internal/session/..." \
 # internal/geo — stdlib only
 check_stdlib_only "internal/geo" "${MODULE}/internal/geo/..."
 
-# internal/web — must not import session, postoffice, metar, sweatbox
-# (server is allowed only for service-HTTP DTOs; keep that coupling minimal)
+# internal/web — must not import session, postoffice, metar, sweatbox, server
+# (service-HTTP DTOs live in internal/serviceapi; web talks to FSD over HTTP only)
 check_no_imports "internal/web" "${MODULE}/internal/web/..." \
   "${MODULE}/internal/session" \
   "${MODULE}/internal/postoffice" \
   "${MODULE}/internal/metar" \
-  "${MODULE}/internal/sweatbox"
+  "${MODULE}/internal/sweatbox" \
+  "${MODULE}/internal/server"
+
+# internal/serviceapi — pure DTOs: no orchestration packages
+check_no_imports "internal/serviceapi" "${MODULE}/internal/serviceapi/..." \
+  "${MODULE}/internal/server" \
+  "${MODULE}/internal/session" \
+  "${MODULE}/internal/postoffice" \
+  "${MODULE}/internal/web" \
+  "${MODULE}/internal/sweatbox" \
+  "${MODULE}/internal/metar" \
+  "${MODULE}/internal/db" \
+  "${MODULE}/internal/auth"
 
 # internal/db — must not import server, session, web, fsdclient
 check_no_imports "internal/db" "${MODULE}/internal/db/..." \

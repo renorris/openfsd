@@ -23,6 +23,7 @@ const (
 	PacketTypeAuthChallenge
 	PacketTypeHandoffRequest
 	PacketTypeHandoffAccept
+	PacketTypeHandoffCancel // $HC — dedicated handoff cancel (parallel to $HO/$HA)
 	PacketTypeFlightPlan
 	PacketTypeFlightPlanAmendment
 
