@@ -70,19 +70,22 @@ func (s *Server) handleFrontendAirportEditorDownloadAIR(c *gin.Context) {
 // handleAirportEditorDownload is the shared pure-echo download path.
 // bodyField is apt_text or air_text; defaultName/requiredExt define disposition.
 func (s *Server) handleAirportEditorDownload(c *gin.Context, bodyField, defaultName, requiredExt string) {
-	// Cap before CSRF form parse so oversized bodies fail closed early.
+	// Cap before form parse so oversized bodies fail closed early.
+	// Parse form first (not validateCSRF-first) so a pure oversize wire body
+	// surfaces as the size flash rather than a misleading 403: validateCSRF
+	// would call PostForm, hit MaxBytesReader, and look like a CSRF miss.
+	// Form contents are not trusted until CSRF succeeds below.
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, airportEditorWebMaxBody+4096)
-	if !s.validateCSRF(c) {
-		c.AbortWithStatus(http.StatusForbidden)
-		return
-	}
-
 	if err := c.Request.ParseForm(); err != nil {
 		if isRequestTooLarge(err) {
 			s.redirectAirportEditorFlash(c, "err", "Payload too large (max 2 MiB)")
 			return
 		}
 		s.redirectAirportEditorFlash(c, "err", "Invalid form")
+		return
+	}
+	if !s.validateCSRF(c) {
+		c.AbortWithStatus(http.StatusForbidden)
 		return
 	}
 
@@ -99,12 +102,12 @@ func (s *Server) handleAirportEditorDownload(c *gin.Context, bodyField, defaultN
 
 	filename := safeAirportEditorFilename(c.PostForm("filename"), defaultName, requiredExt)
 
-	// slog allowlist only — never log body text.
+	// slog allowlist only — never log body text. Debug per design observability table.
 	cid := 0
 	if claims := getJwtContext(c); claims != nil {
 		cid = claims.CID
 	}
-	slog.Info("airport-editor echo-download",
+	slog.Debug("airport-editor echo-download",
 		"cid", cid,
 		"path", c.Request.URL.Path,
 		"content_length", len(text),

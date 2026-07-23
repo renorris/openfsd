@@ -123,6 +123,51 @@ func TestAirportEditorDownloadRequiresCSRF(t *testing.T) {
 	}
 }
 
+func TestAirportEditorDownloadUnauthRedirect(t *testing.T) {
+	ts := newTestServer(t)
+	form := url.Values{}
+	form.Set("apt_text", "icao=KBTV\n")
+	form.Set("filename", "test.apt")
+	form.Set("csrf_token", "not-a-real-token")
+	req := httptest.NewRequest(http.MethodPost, "/airport-editor/download-apt", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	ts.engine.ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status %d want 303", w.Code)
+	}
+	if loc := w.Header().Get("Location"); loc != "/login" {
+		t.Fatalf("Location=%q want /login", loc)
+	}
+	if cd := w.Header().Get("Content-Disposition"); strings.Contains(cd, "attachment") {
+		t.Fatalf("unauth must not get attachment, Content-Disposition=%q", cd)
+	}
+}
+
+func TestAirportEditorDownloadObserverRedirect(t *testing.T) {
+	ts := newTestServer(t)
+	obs := createTestUser(t, ts, "pw", int(protocol.NetworkRatingObserver))
+	cookies := formLogin(t, ts, obs.CID, "pw")
+
+	form := url.Values{}
+	form.Set("apt_text", "icao=KBTV\n")
+	form.Set("filename", "test.apt")
+	// formPOST injects CSRF when present; observer should still be rating-gated.
+	w, _ := formPOST(t, ts, "/airport-editor/download-apt", form, cookies)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status %d want 303", w.Code)
+	}
+	if loc := w.Header().Get("Location"); loc != "/dashboard" {
+		t.Fatalf("Location=%q want /dashboard", loc)
+	}
+	if cd := w.Header().Get("Content-Disposition"); strings.Contains(cd, "attachment") {
+		t.Fatalf("observer must not get attachment, Content-Disposition=%q", cd)
+	}
+	if strings.Contains(w.Body.String(), "icao=KBTV") {
+		t.Fatal("observer must not receive echo body")
+	}
+}
+
 func TestAirportEditorDownloadAPTContentDisposition(t *testing.T) {
 	ts := newTestServer(t)
 	admin := createTestUser(t, ts, "pw", int(protocol.NetworkRatingAdministator))
@@ -172,13 +217,72 @@ func TestAirportEditorDownloadAIRContentDisposition(t *testing.T) {
 		t.Fatalf("status %d want 200 body %s", w.Code, w.Body.String())
 	}
 	cd := w.Header().Get("Content-Disposition")
-	if !strings.Contains(cd, `filename="scenario.air"`) {
+	if !strings.Contains(cd, `attachment`) || !strings.Contains(cd, `filename="scenario.air"`) {
 		t.Fatalf("Content-Disposition=%q", cd)
 	}
 	if got := w.Body.String(); got != payload {
 		t.Fatalf("body mismatch")
 	}
 	assertWorkdirUnchanged(t, before, after)
+}
+
+func TestAirportEditorDownloadOversizedBody(t *testing.T) {
+	ts := newTestServer(t)
+	admin := createTestUser(t, ts, "pw", int(protocol.NetworkRatingAdministator))
+	cookies := formLogin(t, ts, admin.CID, "pw")
+
+	// Wire body exceeds MaxBytesReader (2 MiB + 4 KiB slack). Fail closed with size flash.
+	oversized := strings.Repeat("A", airportEditorWebMaxBody+8192)
+	form := url.Values{}
+	form.Set("apt_text", oversized)
+	form.Set("filename", "big.apt")
+
+	before := workdirSnapshot(t)
+	w, cookies := formPOST(t, ts, "/airport-editor/download-apt", form, cookies)
+	after := workdirSnapshot(t)
+
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status %d want 303 (size flash), body=%s", w.Code, clip(w.Body.String(), 200))
+	}
+	loc := w.Header().Get("Location")
+	if !strings.Contains(loc, "flash=err") {
+		t.Fatalf("Location=%q want flash=err", loc)
+	}
+	if cd := w.Header().Get("Content-Disposition"); strings.Contains(cd, "attachment") {
+		t.Fatalf("oversized must not attach, Content-Disposition=%q", cd)
+	}
+	w, _ = authedGET(t, ts, loc, cookies)
+	if w.Code != http.StatusOK {
+		t.Fatalf("follow flash status %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "Payload too large") {
+		t.Fatalf("expected size flash, body=%s", clip(w.Body.String(), 500))
+	}
+	assertWorkdirUnchanged(t, before, after)
+}
+
+func TestAirportEditorDownloadLargeButUnderLimit(t *testing.T) {
+	ts := newTestServer(t)
+	admin := createTestUser(t, ts, "pw", int(protocol.NetworkRatingAdministator))
+	cookies := formLogin(t, ts, admin.CID, "pw")
+
+	// Comfortably under 2 MiB after form encoding; exercises large-payload success path.
+	payload := strings.Repeat("icao=TEST\n", 32*1024) // ~288 KiB
+	form := url.Values{}
+	form.Set("apt_text", payload)
+	form.Set("filename", "large.apt")
+
+	w, _ := formPOST(t, ts, "/airport-editor/download-apt", form, cookies)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d want 200 body %s", w.Code, clip(w.Body.String(), 200))
+	}
+	cd := w.Header().Get("Content-Disposition")
+	if !strings.Contains(cd, `attachment`) || !strings.Contains(cd, `filename="large.apt"`) {
+		t.Fatalf("Content-Disposition=%q", cd)
+	}
+	if got := w.Body.String(); got != payload {
+		t.Fatalf("body length mismatch: got %d want %d", len(got), len(payload))
+	}
 }
 
 func TestAirportEditorDownloadUnsafeFilenameFallsBack(t *testing.T) {
