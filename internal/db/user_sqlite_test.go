@@ -527,6 +527,33 @@ func TestListUsersAndCount(t *testing.T) {
 		}
 	})
 
+	t.Run("count with query", func(t *testing.T) {
+		n, err := repo.CountUsers(UserListFilter{Query: "smith"})
+		if err != nil {
+			t.Fatalf("CountUsers: %v", err)
+		}
+		if n != 2 {
+			t.Fatalf("count smith=%d want 2", n)
+		}
+	})
+
+	t.Run("count ignores limit and offset", func(t *testing.T) {
+		n, err := repo.CountUsers(UserListFilter{Limit: 1, Offset: 100})
+		if err != nil {
+			t.Fatalf("CountUsers: %v", err)
+		}
+		if n != 4 {
+			t.Fatalf("count with Limit/Offset=%d want 4 (full total)", n)
+		}
+		n, err = repo.CountUsers(UserListFilter{Query: "smith", Limit: 1, Offset: 50})
+		if err != nil {
+			t.Fatalf("CountUsers: %v", err)
+		}
+		if n != 2 {
+			t.Fatalf("count smith with Limit/Offset=%d want 2", n)
+		}
+	})
+
 	t.Run("filter by rating", func(t *testing.T) {
 		r := 1
 		users, err := repo.ListUsers(UserListFilter{Rating: &r, Sort: "cid"})
@@ -610,13 +637,15 @@ func TestListUsersAndCount(t *testing.T) {
 	})
 
 	t.Run("like metacharacters escaped", func(t *testing.T) {
-		// Query with % should not match everything
-		users, err := repo.ListUsers(UserListFilter{Query: "%"})
-		if err != nil {
-			t.Fatalf("ListUsers: %v", err)
-		}
-		if len(users) != 0 {
-			t.Fatalf("literal %% should match none, got %d", len(users))
+		// Literal metacharacters must not act as wildcards against existing names
+		for _, q := range []string{"%", "_", `\`} {
+			users, err := repo.ListUsers(UserListFilter{Query: q})
+			if err != nil {
+				t.Fatalf("ListUsers Query=%q: %v", q, err)
+			}
+			if len(users) != 0 {
+				t.Fatalf("literal %q should match none among seed names, got %d", q, len(users))
+			}
 		}
 	})
 
@@ -730,6 +759,102 @@ func TestListUsersAndCount(t *testing.T) {
 			t.Fatalf("count all after seed=%d want 6", n)
 		}
 	})
+}
+
+func TestEscapeLike(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{`\`, `\\`},
+		{`%`, `\%`},
+		{`_`, `\_`},
+		{`a%b_c\d`, `a\%b\_c\\d`},
+		{`plain`, `plain`},
+		{``, ``},
+	}
+	for _, tc := range cases {
+		got := escapeLike(tc.in)
+		if got != tc.want {
+			t.Errorf("escapeLike(%q)=%q want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// TestListUsersLikeLiteralMetacharacters seeds names that literally contain
+// %, _, \ and asserts Query finds those rows without treating the chars as wildcards.
+func TestListUsersLikeLiteralMetacharacters(t *testing.T) {
+	db, repo := setupTestDB(t)
+	defer db.Close()
+
+	// Decoy users so unescaped wildcards would match widely
+	for _, s := range []struct{ first, last string }{
+		{"Alice", "Smith"},
+		{"Bob", "Jones"},
+	} {
+		if err := repo.CreateUser(&User{
+			Password: "password1", FirstName: ptr(s.first), LastName: ptr(s.last), NetworkRating: 1,
+		}); err != nil {
+			t.Fatalf("CreateUser decoy: %v", err)
+		}
+	}
+
+	if err := repo.CreateUser(&User{
+		Password: "password1", FirstName: ptr("Pat"), LastName: ptr("100%"), NetworkRating: 1,
+	}); err != nil {
+		t.Fatalf("CreateUser %%: %v", err)
+	}
+	if err := repo.CreateUser(&User{
+		Password: "password1", FirstName: ptr("Und"), LastName: ptr("a_b"), NetworkRating: 1,
+	}); err != nil {
+		t.Fatalf("CreateUser _: %v", err)
+	}
+	if err := repo.CreateUser(&User{
+		Password: "password1", FirstName: ptr("Back"), LastName: ptr(`x\y`), NetworkRating: 1,
+	}); err != nil {
+		t.Fatalf("CreateUser \\: %v", err)
+	}
+
+	users, err := repo.ListUsers(UserListFilter{Query: "100%"})
+	if err != nil {
+		t.Fatalf("ListUsers: %v", err)
+	}
+	if len(users) != 1 || *users[0].LastName != "100%" {
+		t.Fatalf("literal 100%%: got %d users", len(users))
+	}
+
+	users, err = repo.ListUsers(UserListFilter{Query: "a_b"})
+	if err != nil {
+		t.Fatalf("ListUsers: %v", err)
+	}
+	if len(users) != 1 || *users[0].LastName != "a_b" {
+		t.Fatalf("literal a_b: got %d users", len(users))
+	}
+
+	// Bare "_" must not widen to every single-char-gap match of other names
+	users, err = repo.ListUsers(UserListFilter{Query: "_"})
+	if err != nil {
+		t.Fatalf("ListUsers: %v", err)
+	}
+	if len(users) != 1 || *users[0].LastName != "a_b" {
+		t.Fatalf("literal _: want only a_b row, got %d", len(users))
+	}
+
+	users, err = repo.ListUsers(UserListFilter{Query: `x\y`})
+	if err != nil {
+		t.Fatalf("ListUsers: %v", err)
+	}
+	if len(users) != 1 || *users[0].LastName != `x\y` {
+		t.Fatalf(`literal x\y: got %d users`, len(users))
+	}
+
+	// Bare "%" still matches only names that contain a percent sign
+	users, err = repo.ListUsers(UserListFilter{Query: "%"})
+	if err != nil {
+		t.Fatalf("ListUsers: %v", err)
+	}
+	if len(users) != 1 || *users[0].LastName != "100%" {
+		t.Fatalf("literal %%: want only 100%% row, got %d", len(users))
+	}
 }
 
 func TestListUsersEmptyDB(t *testing.T) {
