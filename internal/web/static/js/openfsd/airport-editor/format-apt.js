@@ -70,7 +70,11 @@ function writeSurface(parts, s) {
       const da = Math.trunc(s.dispA ?? 0);
       const db = Math.trunc(s.dispB ?? 0);
       parts.push(`displaced threshold=${da}/${db}`);
-      parts.push(s.turnoffLeft !== false ? 'turnoff=left' : 'turnoff=right');
+      // Match parse default (left when omitted). Intentionally not Go's zero-value
+      // bool (false → right): hand-built partial surfaces without turnoffLeft
+      // should still emit the TWRTrainer/parse default of left.
+      const turnoffLeft = s.turnoffLeft ?? true;
+      parts.push(turnoffLeft ? 'turnoff=left' : 'turnoff=right');
       break;
     }
     case SurfaceParking:
@@ -93,11 +97,14 @@ function writeSurface(parts, s) {
 }
 
 /**
- * Always six fractional digits (Go %.6f).
+ * Always six fractional digits (Go %.6f). Non-finite → 0.000000 (defensive;
+ * callers should validate coords; matches formatHeaderFloat finite guard).
  * @param {number} v
  */
 export function formatCoord(v) {
-  return Number(v).toFixed(6);
+  const n = Number(v);
+  if (!Number.isFinite(n)) return '0.000000';
+  return n.toFixed(6);
 }
 
 /**

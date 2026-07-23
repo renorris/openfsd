@@ -5,7 +5,10 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { parseAPT } from '../../internal/web/static/js/openfsd/airport-editor/parse-apt.js';
-import { formatAPT } from '../../internal/web/static/js/openfsd/airport-editor/format-apt.js';
+import {
+  formatAPT,
+  formatCoord,
+} from '../../internal/web/static/js/openfsd/airport-editor/format-apt.js';
 import {
   SurfaceParking,
   SurfaceRunway,
@@ -197,6 +200,37 @@ test('formatAPT header float compact', () => {
   ]) {
     assert.ok(got.includes(`${line}\n`), line);
   }
+});
+
+test('formatAPT omitted turnoffLeft defaults to left (parse default)', () => {
+  const apt = {
+    icao: 'TEST',
+    patternSize: 1,
+    initClimbProps: 3000,
+    initClimbJets: 5000,
+    registration: 'N',
+    surfaces: [
+      {
+        kind: SurfaceRunway,
+        name: '9/27',
+        rwyA: '9',
+        rwyB: '27',
+        // turnoffLeft intentionally omitted
+        points: [
+          { lat: 1, lon: 2 },
+          { lat: 3, lon: 4 },
+        ],
+      },
+    ],
+  };
+  const got = formatAPT(apt);
+  assert.ok(got.includes('[RUNWAY 9/27]\ndisplaced threshold=0/0\nturnoff=left\n'));
+});
+
+test('formatCoord non-finite → 0.000000', () => {
+  assert.equal(formatCoord(Number.NaN), '0.000000');
+  assert.equal(formatCoord(Number.POSITIVE_INFINITY), '0.000000');
+  assert.equal(formatCoord(44.46893), '44.468930');
 });
 
 test('formatAPT runway name from rwyA/rwyB and unknown kind', () => {
