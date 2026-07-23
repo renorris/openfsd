@@ -141,4 +141,9 @@ func (s *Server) setupFrontendRoutes(parent *gin.RouterGroup) {
 	admin.POST("/sweatbox/unpause", s.handleFrontendSweatboxUnpause)
 	admin.POST("/sweatbox/delete", s.handleFrontendSweatboxDelete)
 	admin.POST("/sweatbox/delete-all", s.handleFrontendSweatboxDeleteAll)
+
+	// Airport editor: HTML shell + no-JS echo-download (no disk/DB persistence).
+	admin.GET("/airport-editor", s.handleFrontendAirportEditor)
+	admin.POST("/airport-editor/download-apt", s.handleFrontendAirportEditorDownloadAPT)
+	admin.POST("/airport-editor/download-air", s.handleFrontendAirportEditorDownloadAIR)
 }
