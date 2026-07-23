@@ -47,17 +47,30 @@ func newSweatboxEnv(t *testing.T) (*Server, *SweatboxHost, *memRegistry) {
 
 func loadKBTV(t *testing.T, h *SweatboxHost) {
 	t.Helper()
-	apt, err := os.ReadFile(filepath.Join("..", "sweatbox", "testdata", "KBTV_example.apt"))
-	if err != nil {
-		// try module-relative from workspace root
-		apt, err = os.ReadFile(filepath.Join("internal", "sweatbox", "testdata", "KBTV_example.apt"))
-	}
-	if err != nil {
-		t.Fatalf("read apt: %v", err)
-	}
+	apt := readTwrfilesFixture(t, "KBTV_example.apt")
 	if err := h.LoadAirport(apt); err != nil {
 		t.Fatalf("LoadAirport: %v", err)
 	}
+}
+
+func readTwrfilesFixture(t *testing.T, name string) []byte {
+	t.Helper()
+	candidates := []string{
+		filepath.Join("..", "..", "pkg", "twrfiles", "testdata", name),
+		filepath.Join("pkg", "twrfiles", "testdata", name),
+		filepath.Join("..", "sweatbox", "testdata", name),
+		filepath.Join("internal", "sweatbox", "testdata", name),
+	}
+	var last error
+	for _, p := range candidates {
+		b, err := os.ReadFile(p)
+		if err == nil {
+			return b
+		}
+		last = err
+	}
+	t.Fatalf("read fixture %s: %v", name, last)
+	return nil
 }
 
 func mustAddParked(t *testing.T, h *SweatboxHost, cs string) sweatbox.CommandResult {
@@ -552,14 +565,7 @@ func TestSweatboxHost_ScenarioLoadAndFP(t *testing.T) {
 	}
 	drain(atc)
 
-	airPath := filepath.Join("..", "sweatbox", "testdata", "KBTV_example.air")
-	raw, err := os.ReadFile(airPath)
-	if err != nil {
-		raw, err = os.ReadFile(filepath.Join("internal", "sweatbox", "testdata", "KBTV_example.air"))
-	}
-	if err != nil {
-		t.Fatal(err)
-	}
+	raw := readTwrfilesFixture(t, "KBTV_example.air")
 	n, errs := h.LoadScenario(raw)
 	if n != 3 {
 		t.Fatalf("loaded=%d errs=%v", n, errs)

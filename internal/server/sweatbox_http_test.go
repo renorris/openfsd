@@ -371,11 +371,20 @@ func doService(t *testing.T, e *gin.Engine, tok, method, path string, body []byt
 
 func readTestdata(t *testing.T, name string) []byte {
 	t.Helper()
-	path := filepath.Join("..", "sweatbox", "testdata", name)
-	b, err := os.ReadFile(path)
-	if err != nil {
-		b, err = os.ReadFile(filepath.Join("internal", "sweatbox", "testdata", name))
+	candidates := []string{
+		filepath.Join("..", "..", "pkg", "twrfiles", "testdata", name),
+		filepath.Join("pkg", "twrfiles", "testdata", name),
+		filepath.Join("..", "sweatbox", "testdata", name),
+		filepath.Join("internal", "sweatbox", "testdata", name),
 	}
-	require.NoError(t, err)
-	return b
+	var last error
+	for _, p := range candidates {
+		b, err := os.ReadFile(p)
+		if err == nil {
+			return b
+		}
+		last = err
+	}
+	require.NoError(t, last)
+	return nil
 }

@@ -6,8 +6,8 @@
 # Default overall floor: 80
 #
 # Hard floors (fail CI):
-#   pkg/protocol ≥98, internal/geo ≥98, internal/auth ≥95, internal/postoffice ≥90,
-#   internal/sweatbox ≥95
+#   pkg/protocol ≥98, pkg/twrfiles ≥98, internal/geo ≥98, internal/auth ≥95,
+#   internal/postoffice ≥90, internal/sweatbox ≥95
 # Soft / reported only:
 #   internal/web ≥80, overall aspirational 90
 set -euo pipefail
@@ -52,6 +52,7 @@ with open(cover_out) as f:
 
 hard = {
     "pkg/protocol": 98.0,
+    "pkg/twrfiles": 98.0,
     "internal/geo": 98.0,
     "internal/auth": 95.0,
     "internal/postoffice": 90.0,

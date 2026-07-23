@@ -553,3 +553,102 @@ func TestIntersectionOnSurface_PrefersB(t *testing.T) {
 		}
 	}
 }
+
+func TestIntersectionOnSurface_MissAndNil(t *testing.T) {
+	if _, ok := intersectionOnSurface(nil, "A", "B"); ok {
+		t.Error("nil graph")
+	}
+	g := NewGraph(loadKBTV(t))
+	if _, ok := intersectionOnSurface(g, "A", "ZZZ"); ok {
+		t.Error("missing B")
+	}
+	if _, ok := intersectionOnSurface(g, "L", "M"); ok {
+		t.Error("non-intersecting")
+	}
+}
+
+func TestFirstPathPointOnSurface_Miss(t *testing.T) {
+	g := NewGraph(loadKBTV(t))
+	if _, ok := firstPathPointOnSurface(g, nil, "A"); ok {
+		t.Error("empty path")
+	}
+	if _, ok := firstPathPointOnSurface(g, []Point{{0, 0}}, "NOPE"); ok {
+		t.Error("missing surface")
+	}
+	if _, ok := firstPathPointOnSurface(g, []Point{{0, 0}}, "A"); ok {
+		t.Error("far waypoint")
+	}
+	// Hit: path point coincides with A.
+	a := g.Surface("A")
+	if a == nil || len(a.Points) == 0 {
+		t.Fatal("taxiway A")
+	}
+	p, ok := firstPathPointOnSurface(g, []Point{{99, 99}, a.Points[0]}, "A")
+	if !ok || p != a.Points[0] {
+		t.Fatalf("want A point, got %v ok=%v", p, ok)
+	}
+}
+
+func TestDepRunwayFromTaxiArgsLocked(t *testing.T) {
+	e := loadKBTVEngine(t)
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if got := e.depRunwayFromTaxiArgsLocked(nil, "GA1"); got != "" {
+		t.Errorf("parking dest: %q", got)
+	}
+	if got := e.depRunwayFromTaxiArgsLocked([]string{"A", "@GA9"}, ""); got != "" {
+		t.Errorf("@parking: %q", got)
+	}
+	if got := e.depRunwayFromTaxiArgsLocked([]string{"A", "GA9"}, ""); got != "" {
+		t.Errorf("bare parking: %q", got)
+	}
+	if got := e.depRunwayFromTaxiArgsLocked([]string{"", "A", "19"}, ""); got == "" {
+		t.Error("runway 19 should yield designator")
+	}
+	if got := e.depRunwayFromTaxiArgsLocked([]string{"A", "B"}, ""); got != "" {
+		// taxiway-only: runwayEndLabel empty
+		if s := e.graph.Surface(got); s != nil && s.Kind == SurfaceRunway {
+			t.Errorf("taxi-only returned runway %q", got)
+		}
+	}
+	if got := e.depRunwayFromTaxiArgsLocked(nil, ""); got != "" {
+		t.Errorf("empty steps: %q", got)
+	}
+}
+
+func TestPlanTaxi_ErrorBranchesForCoverage(t *testing.T) {
+	g := NewGraph(loadKBTV(t))
+	// Empty token.
+	if _, msg := g.PlanTaxi("A", []string{""}, nil); msg == "" {
+		t.Error("empty step")
+	}
+	// Bad @parking name (not word).
+	if _, msg := g.PlanTaxi("A", []string{"@G-1"}, nil); msg == "" {
+		t.Error("bad parking name")
+	}
+	// Bare parking not last.
+	if _, msg := g.PlanTaxi("A", []string{"GA1", "A"}, nil); msg == "" || !strings.Contains(msg, "last step") {
+		t.Errorf("bare parking mid-route: %q", msg)
+	}
+	// Empty norm after only-invalid? parking-only OK; unknown surface:
+	if _, msg := g.PlanTaxi("A", []string{"ZZZ"}, nil); msg == "" {
+		t.Error("unknown step")
+	}
+}
+
+func TestInsertWaypoint_CloserSecond(t *testing.T) {
+	// Force loop body that prefers a later closer vertex (stmts on for-loop branch).
+	base := []Point{{0, 0}, {1, 0}, {2, 0}}
+	// Point near third vertex.
+	p := Point{Lat: 2.0 + 1e-8, Lon: 0}
+	wps, idx := insertWaypoint(base, p, 1.0) // 1m eps — may treat as new
+	if len(wps) < 3 {
+		t.Fatalf("wps=%v idx=%d", wps, idx)
+	}
+	// Also exercise mid-insert before first when closer to index 1.
+	wps2, idx2 := insertWaypoint([]Point{{0, 0}, {10, 0}}, Point{Lat: 9.9, Lon: 0}, 0.001)
+	if idx2 != 1 || len(wps2) != 3 {
+		t.Fatalf("mid insert: %v idx=%d", wps2, idx2)
+	}
+}

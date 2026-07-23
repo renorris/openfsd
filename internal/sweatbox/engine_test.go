@@ -3,8 +3,6 @@ package sweatbox
 import (
 	"fmt"
 	"math"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -15,10 +13,7 @@ import (
 
 func loadKBTVEngine(t *testing.T) *Engine {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join("testdata", "KBTV_example.apt"))
-	if err != nil {
-		t.Fatalf("read apt: %v", err)
-	}
+	data := kbtvFixture(t, "KBTV_example.apt")
 	apt, errs := ParseAPT(string(data))
 	if len(errs) != 0 {
 		t.Fatalf("apt errs: %v", errs)
@@ -103,10 +98,7 @@ func TestLoadScenario_AutoPauseAndBestEffort(t *testing.T) {
 	if e.Paused() {
 		t.Fatal("should be unpaused")
 	}
-	data, err := os.ReadFile(filepath.Join("testdata", "KBTV_example.air"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	data := kbtvFixture(t, "KBTV_example.air")
 	rows, perrs := ParseAIR(string(data))
 	if len(perrs) != 0 {
 		t.Fatalf("parse: %v", perrs)
@@ -986,6 +978,89 @@ func TestSplitCSV(t *testing.T) {
 	}
 	if len(splitCSV("")) != 0 {
 		t.Fatal("empty")
+	}
+}
+
+func TestNextSquawkLocked_VFRWhen1200Taken(t *testing.T) {
+	e := loadKBTVEngine(t)
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	// Occupy 1200 so the VFR first-preference branch falls through.
+	e.aircraft["OCC"] = &SimAircraft{Callsign: "OCC", Squawk: "1200"}
+	code := e.nextSquawkLocked(RulesVFR)
+	if code == "" || !isSquawk(code) {
+		t.Fatalf("VFR squawk = %q", code)
+	}
+	if code == "1200" {
+		t.Fatal("should not reissue 1200 while in use")
+	}
+	// IFR path also returns a free code.
+	ifr := e.nextSquawkLocked(RulesIFR)
+	if !isSquawk(ifr) {
+		t.Fatalf("IFR squawk = %q", ifr)
+	}
+	// Sequence wrap past 7777.
+	e.sqkSeq = 7778
+	wrap := e.nextSquawkLocked(RulesIFR)
+	if !isSquawk(wrap) {
+		t.Fatalf("wrap squawk = %q", wrap)
+	}
+	if e.sqkSeq < 2000 {
+		t.Errorf("sqkSeq after wrap = %d", e.sqkSeq)
+	}
+}
+
+func TestFieldReferencePoint_AndDefaultTypeEdges(t *testing.T) {
+	if fieldReferencePoint(nil).Lat != 0 {
+		t.Error("nil apt")
+	}
+	// Prefer first runway centroid-ish over parking-only.
+	apt := &Airport{Surfaces: []Surface{
+		{Kind: SurfaceParking, Name: "P", Points: []Point{{1, 2}}},
+		{Kind: SurfaceRunway, Name: "9/27", RwyA: "9", RwyB: "27", Points: []Point{{10, 20}, {11, 21}}},
+	}}
+	pt := fieldReferencePoint(apt)
+	if pt.Lat < 10 {
+		t.Errorf("want runway-based ref, got %v", pt)
+	}
+	// defaultType edges for coverage after apt/air extract (package floor).
+	if defaultType(WeightHeavy, EngineHelicopter) != "" {
+		t.Error("heavy heli invalid")
+	}
+	if defaultType(WeightHeavy, EnginePiston) != "" {
+		t.Error("heavy piston invalid")
+	}
+	if defaultType(WeightHeavy, EngineTurboprop) != "" {
+		t.Error("heavy turbo invalid")
+	}
+	if defaultType(WeightSmall, EngineJet) != "C510" {
+		t.Errorf("small jet = %q", defaultType(WeightSmall, EngineJet))
+	}
+	if defaultType("X", "Y") != "" {
+		t.Error("unknown pair")
+	}
+	if defaultCruiseAlt(EngineHelicopter) != 3500 {
+		t.Error("heli cruise")
+	}
+	if defaultApproachSpeed("Z") != 120 {
+		t.Error("default approach")
+	}
+	// One more edge for package floor after twrfiles extract.
+	if defaultCruiseAlt("") != 10000 {
+		t.Error("default cruise unknown engine")
+	}
+	if normalizeHeading(-90) != 270 {
+		t.Errorf("normalize -90 = %v", normalizeHeading(-90))
+	}
+	// fieldReferencePoint: skip empty-point surfaces, then n==0 → zero.
+	emptyOnly := &Airport{Surfaces: []Surface{
+		{Kind: SurfaceTaxiway, Name: "X", Points: nil},
+	}}
+	if fieldReferencePoint(emptyOnly) != (Point{}) {
+		t.Error("empty points should yield zero ref")
+	}
+	if defaultType(WeightHeavy, EngineJet) != "B744" {
+		t.Errorf("heavy jet = %q", defaultType(WeightHeavy, EngineJet))
 	}
 }
 

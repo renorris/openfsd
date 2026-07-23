@@ -36,15 +36,23 @@ const sweatboxDefaultCID = 900001
 
 func readSweatboxFixture(t *testing.T, name string) []byte {
 	t.Helper()
-	path := filepath.Join("..", "sweatbox", "testdata", name)
-	b, err := os.ReadFile(path)
-	if err != nil {
-		b, err = os.ReadFile(filepath.Join("internal", "sweatbox", "testdata", name))
+	candidates := []string{
+		filepath.Join("..", "..", "pkg", "twrfiles", "testdata", name),
+		filepath.Join("pkg", "twrfiles", "testdata", name),
+		// Legacy paths (pre-pkg/twrfiles extract) — keep briefly for local checkouts.
+		filepath.Join("..", "sweatbox", "testdata", name),
+		filepath.Join("internal", "sweatbox", "testdata", name),
 	}
-	if err != nil {
-		t.Fatalf("read fixture %s: %v", name, err)
+	var last error
+	for _, p := range candidates {
+		b, err := os.ReadFile(p)
+		if err == nil {
+			return b
+		}
+		last = err
 	}
-	return b
+	t.Fatalf("read fixture %s: %v", name, last)
+	return nil
 }
 
 func serviceAuth(t *testing.T, ts *server.TestServer) (tok string, client *http.Client) {

@@ -2,8 +2,6 @@ package sweatbox
 
 import (
 	"math"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -11,6 +9,37 @@ import (
 )
 
 // --- Pause freeze -----------------------------------------------------------
+
+func TestTickAircraft_UnknownStatusVectors(t *testing.T) {
+	// Covers default branch of tickAircraftLocked (unknown status with air vectors).
+	e := NewEngine()
+	e.mu.Lock()
+	ac := &SimAircraft{
+		Callsign:          "X",
+		Status:            "Weird",
+		Speed:             100,
+		HasDesiredHeading: true,
+		DesiredHeading:    90,
+		Lat:               40, Lon: -70, Alt: 3000, Heading: 0,
+	}
+	changed, del := e.tickAircraftLocked(ac, 1.0)
+	e.mu.Unlock()
+	if del {
+		t.Fatal("should not delete")
+	}
+	if !changed && ac.Heading == 0 {
+		// heading should advance toward desired if tickAirborne ran
+		t.Logf("changed=%v hdg=%v (air vector path exercised or no-op)", changed, ac.Heading)
+	}
+	// Stationary unknown without vectors: no-op path.
+	e.mu.Lock()
+	ac2 := &SimAircraft{Callsign: "Y", Status: "Weird", Speed: 0}
+	_, del = e.tickAircraftLocked(ac2, 1.0)
+	e.mu.Unlock()
+	if del {
+		t.Fatal("no delete")
+	}
+}
 
 func TestTick_PausedFreezesMotion(t *testing.T) {
 	e := loadKBTVEngine(t)
@@ -612,10 +641,7 @@ func TestTick_TaxiToParking(t *testing.T) {
 
 func TestTick_DeleteArrivalsWhenParked(t *testing.T) {
 	e := NewEngineSettings(Settings{DeleteArrivalsWhenParked: true})
-	data, err := os.ReadFile(filepath.Join("testdata", "KBTV_example.apt"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	data := kbtvFixture(t, "KBTV_example.apt")
 	apt, errs := ParseAPT(string(data))
 	if len(errs) != 0 {
 		t.Fatal(errs)

@@ -97,7 +97,7 @@ check_stdlib_only() {
 }
 
 # Fail if any package under pattern has a non-stdlib import other than allowed prefixes.
-# Used for internal/sweatbox: stdlib + internal/geo only (AGENTS.md §1).
+# Used for internal/sweatbox: stdlib + internal/geo + pkg/twrfiles (AGENTS.md §1).
 check_imports_allowlist() {
   local from_label="$1"
   local pattern="$2"
@@ -147,6 +147,9 @@ echo "    note: checks direct imports of every package matched by each pattern"
 # pkg/protocol — stdlib only (no third-party, no module-internal)
 check_stdlib_only "pkg/protocol" "${MODULE}/pkg/protocol/..."
 
+# pkg/twrfiles — stdlib only (.apt/.air wire format; no third-party, no module-internal)
+check_stdlib_only "pkg/twrfiles" "${MODULE}/pkg/twrfiles/..."
+
 # pkg/fsdclient — must not import internal/*
 check_no_imports "pkg/fsdclient" "${MODULE}/pkg/fsdclient/..." \
   "${MODULE}/internal"
@@ -194,10 +197,11 @@ check_no_imports "internal/auth" "${MODULE}/internal/auth/..." \
   "${MODULE}/internal/session" \
   "${MODULE}/internal/web"
 
-# internal/sweatbox — pure sim: stdlib + internal/geo only (AGENTS.md §1)
+# internal/sweatbox — pure sim: stdlib + internal/geo + pkg/twrfiles (AGENTS.md §1)
 # protocol encode lives in server host; no third-party / other internal packages
 check_imports_allowlist "internal/sweatbox" "${MODULE}/internal/sweatbox/..." \
-  "${MODULE}/internal/geo"
+  "${MODULE}/internal/geo" \
+  "${MODULE}/pkg/twrfiles"
 
 if [[ "$failed" -ne 0 ]]; then
   echo

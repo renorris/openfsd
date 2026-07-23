@@ -1,8 +1,6 @@
 package sweatbox
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/renorris/openfsd/internal/geo"
@@ -10,10 +8,7 @@ import (
 
 func loadKBTV(t *testing.T) *Airport {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join("testdata", "KBTV_example.apt"))
-	if err != nil {
-		t.Fatalf("read fixture: %v", err)
-	}
+	data := kbtvFixture(t, "KBTV_example.apt")
 	apt, errs := ParseAPT(string(data))
 	if len(errs) != 0 {
 		t.Fatalf("parse errors: %v", errs)

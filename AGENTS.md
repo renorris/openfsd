@@ -11,20 +11,21 @@ Operational rules for agents and humans changing this repository. This file is t
 | Package | Owns | Notes |
 |---------|------|-------|
 | `pkg/protocol` | Pure wire format (parse/serialize/validate) | No I/O; **stdlib only** |
+| `pkg/twrfiles` | TWRTrainer `.apt`/`.air` types + Parse (+ Format later) | No I/O beyond text parse; **stdlib only** |
 | `pkg/fsdclient` | Public mock/real FSD client | Imports `protocol` only (+ stdlib) |
 | `internal/geo` | Pure haversine / bounding box | **stdlib only** |
 | `internal/auth` | JWT + VATSIM auth state | No TCP |
 | `internal/session` | Per-connection state + send worker | Does not import postoffice/server |
 | `internal/postoffice` | Registry (map/tree of participants) | Depends on session ports, not server |
 | `internal/metar` | Worker pool + injectable HTTP | Side-effect boundary |
-| `internal/sweatbox` | Pure sim (apt/air parse, taxi, engine, kinematics) | **stdlib + `internal/geo` only**; no protocol/session/server |
+| `internal/sweatbox` | Pure sim (taxi, engine, kinematics; apt/air via twrfiles) | **stdlib + `internal/geo` + `pkg/twrfiles`**; no protocol/session/server |
 | `internal/server` | TCP accept, login, handlers, service HTTP | DI via `server.New` / `server.NewDefault` |
 | `internal/db` | Shared repositories + migrations | Used by FSD and web |
 | `internal/serviceapi` | Pure JSON DTOs for FSD service-HTTP (online users, sweatbox) | No I/O; shared by server + web |
 | `internal/web` | Gin MPA + progressive enhancement + `/api/v1` | boring-web mandatory |
 | `cmd/openfsd` | Process entry | Binary `openfsd`; `-fsd` / `-web` (default both) |
 
-**Wire format:** `pkg/protocol` only — no alternate field order or marshaling in handlers/clients.
+**Wire format:** `pkg/protocol` (FSD) and `pkg/twrfiles` (.apt/.air) — no alternate field order or marshaling in handlers/clients.
 
 **Registry:** `internal/postoffice`. **Web PE:** `internal/web`.
 
@@ -35,12 +36,14 @@ cmd/openfsd       → internal/server, internal/web, …
 internal/server   → session, postoffice, protocol, auth, metar, db, sweatbox, serviceapi
 internal/postoffice → geo, session
 internal/metar    → protocol, session
-internal/sweatbox → geo
+internal/sweatbox → geo, pkg/twrfiles
 internal/serviceapi → (stdlib only; no session/postoffice/server/web)
 internal/web      → auth, db, protocol, serviceapi
                     (never server/session/postoffice/metar/sweatbox —
-                     control plane is service HTTP + serviceapi DTOs)
+                     control plane is service HTTP + serviceapi DTOs;
+                     may import pkg/twrfiles for optional APT/AIR validate)
 pkg/fsdclient     → protocol
+pkg/twrfiles      → (stdlib only)
 internal/auth     → protocol
 internal/session  → protocol
 ```
@@ -54,6 +57,7 @@ Enforce with `scripts/check-import-graph.sh`.
 | From | Must not import |
 |------|-----------------|
 | `pkg/protocol` | Any non-stdlib import |
+| `pkg/twrfiles` | Any non-stdlib import |
 | `pkg/fsdclient` | `internal/*` |
 | `internal/session` | `postoffice`, `server`, `web`, `metar` |
 | `internal/geo` | Any non-stdlib import |
@@ -63,7 +67,7 @@ Enforce with `scripts/check-import-graph.sh`.
 | `internal/auth` | `server`, `session`, `web` |
 | `internal/sweatbox` | `server`, `web`, `postoffice`, `session`, `db`, `auth`, `metar`, `fsdclient`, `protocol` |
 
-Stdlib heuristic: first path element contains no `.` (e.g. `fmt`, `net/http`). Third-party is never allowed in `pkg/protocol` or `internal/geo`.
+Stdlib heuristic: first path element contains no `.` (e.g. `fmt`, `net/http`). Third-party is never allowed in `pkg/protocol`, `pkg/twrfiles`, or `internal/geo`.
 
 **Cycle rule:** `session` never imports `postoffice`. Postoffice depends on a narrow participant/send port. Shared errors like `ErrCallsignInUse` live next to the registry, not in `pkg/protocol`.
 
@@ -148,6 +152,7 @@ Enforced by `scripts/check-coverage.sh` (CI).
 |-------|-------|-------------|
 | Overall (exclude `cmd/`) | ≥80% | **Hard** |
 | `pkg/protocol` | ≥98% | **Hard** |
+| `pkg/twrfiles` | ≥98% | **Hard** |
 | `internal/geo` | ≥98% | **Hard** |
 | `internal/auth` | ≥95% | **Hard** |
 | `internal/postoffice` | ≥90% | **Hard** |
