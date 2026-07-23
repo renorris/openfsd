@@ -533,7 +533,7 @@ func TestSupervisorCannotCreateAdminViaForm(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status %d want 200 re-render", w.Code)
 	}
-	if !strings.Contains(w.Body.String(), "You cannot create a user with that rating") {
+	if !strings.Contains(w.Body.String(), "You cannot create a user with that network rating") {
 		t.Fatalf("expected rating ceiling error, body=%s", clip(w.Body.String(), 500))
 	}
 }
@@ -557,7 +557,7 @@ func TestSupervisorCannotPromoteToAdminViaForm(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status %d want 200 re-render", w.Code)
 	}
-	if !strings.Contains(w.Body.String(), "Cannot set rating above your own") {
+	if !strings.Contains(w.Body.String(), "Cannot set network rating above your own") {
 		t.Fatalf("expected ceiling error, body=%s", clip(w.Body.String(), 500))
 	}
 
@@ -574,49 +574,142 @@ func TestSupervisorCannotUpdateHigherRatedUserViaForm(t *testing.T) {
 	ts := newTestServer(t)
 	// Create admin first so CID ordering is fine; login as supervisor
 	admin := createTestUser(t, ts, "admin-pass", int(protocol.NetworkRatingAdministator))
+	// Preserve a distinct first name so we can detect profile mutation.
+	admin.FirstName = strPtr("Original")
+	admin.Password = ""
+	if err := ts.dbRepo.UserRepo.UpdateUser(admin); err != nil {
+		t.Fatal(err)
+	}
 	sup := createTestUser(t, ts, "sup-pass", int(protocol.NetworkRatingSupervisor))
 	cookies := formLogin(t, ts, sup.CID, "sup-pass")
 
-	// GET: read-only rail for higher-rated target (no submit button).
+	// GET: profile locked for higher-rated target; ratings still editable.
 	w, cookies := authedGET(t, ts, "/usereditor?cid="+itoa(admin.CID), cookies)
 	if w.Code != http.StatusOK {
 		t.Fatalf("GET higher-rated user status %d", w.Code)
 	}
 	body := w.Body.String()
-	if !strings.Contains(body, "Read-only") {
-		t.Fatalf("expected read-only notice, body=%s", clip(body, 500))
-	}
-	if strings.Contains(body, `type="submit"`) && strings.Contains(body, ">Update</button>") {
-		// Update submit must not appear in read-only rail (Create panel is off when editing).
-		if strings.Contains(body, "id=\"edit-form\"") && strings.Contains(body, ">Update</button>") {
-			t.Fatal("read-only edit form must not offer Update")
-		}
+	if !strings.Contains(body, "Profile locked") {
+		t.Fatalf("expected profile-locked notice, body=%s", clip(body, 500))
 	}
 	if !strings.Contains(body, `id="edit-first-name"`) || !strings.Contains(body, "disabled") {
-		t.Fatalf("expected disabled edit fields, body=%s", clip(body, 600))
+		t.Fatalf("expected disabled profile fields, body=%s", clip(body, 600))
+	}
+	if !strings.Contains(body, ">Update</button>") {
+		t.Fatal("expected Update for rating adjustments")
 	}
 
+	// POST password on higher-rated target must fail.
 	form := url.Values{}
 	form.Set("cid", itoa(admin.CID))
-	form.Set("first_name", "Hacked")
-	form.Set("last_name", "Admin")
-	form.Set("network_rating", "11")
+	form.Set("network_rating", itoa(admin.NetworkRating)) // leave network unchanged
+	form.Set("pilot_rating", "0")
+	form.Set("password", "newpassword1")
+	w, cookies = formPOST(t, ts, "/usereditor/update", form, cookies)
+	if w.Code == http.StatusSeeOther {
+		t.Fatalf("must not change password on higher-rated user, Location=%s", w.Header().Get("Location"))
+	}
+	if !strings.Contains(w.Body.String(), "Only supervisors can change passwords") &&
+		!strings.Contains(w.Body.String(), "password") {
+		// Rating-only path rejects password with explicit message.
+		if !strings.Contains(w.Body.String(), "Only supervisors can change passwords") {
+			t.Fatalf("expected password rejection, body=%s", clip(w.Body.String(), 500))
+		}
+	}
+
+	// Rating-only update (lower network to SUP ceiling) is allowed on any target.
+	form = url.Values{}
+	form.Set("cid", itoa(admin.CID))
+	form.Set("network_rating", "11") // SUP rating — at actor ceiling
+	form.Set("pilot_rating", "0")
 	form.Set("password", "")
 	w, _ = formPOST(t, ts, "/usereditor/update", form, cookies)
-	if w.Code == http.StatusSeeOther {
-		t.Fatalf("must not update higher-rated user, Location=%s", w.Header().Get("Location"))
-	}
-	body = w.Body.String()
-	if !strings.Contains(body, "Cannot update user with higher network rating") {
-		t.Fatalf("expected higher-target error, body=%s", clip(body, 500))
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("rating-only update status %d body %s", w.Code, w.Body.String())
 	}
 
 	u, err := ts.dbRepo.UserRepo.GetUserByCID(admin.CID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if safeStr(u.FirstName) == "Hacked" {
-		t.Fatal("admin first name must not change")
+	if safeStr(u.FirstName) != "Original" {
+		t.Fatalf("admin first name must not change, got %q", safeStr(u.FirstName))
+	}
+	if u.NetworkRating != 11 {
+		t.Fatalf("network rating = %d, want 11", u.NetworkRating)
+	}
+}
+
+func TestInstructorCanAdjustRatingsButNotCreate(t *testing.T) {
+	ts := newTestServer(t)
+	// Give instructor a pilot ceiling so they can assign pilot ratings.
+	inst := createTestUser(t, ts, "inst-pass", int(protocol.NetworkRatingInstructor1))
+	inst.PilotRating = 3
+	inst.Password = ""
+	if err := ts.dbRepo.UserRepo.UpdateUser(inst); err != nil {
+		t.Fatal(err)
+	}
+	obs := createTestUser(t, ts, "obs-pass", int(protocol.NetworkRatingObserver))
+	cookies := formLogin(t, ts, inst.CID, "inst-pass")
+
+	// Directory accessible.
+	w, cookies := authedGET(t, ts, "/usereditor", cookies)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /usereditor as I1 status %d", w.Code)
+	}
+	if strings.Contains(w.Body.String(), `action="/usereditor/create"`) {
+		t.Fatal("instructor must not see create form")
+	}
+
+	// Create forbidden.
+	form := url.Values{}
+	form.Set("first_name", "Nope")
+	form.Set("password", "password99")
+	form.Set("network_rating", "1")
+	form.Set("pilot_rating", "0")
+	w, cookies = formPOST(t, ts, "/usereditor/create", form, cookies)
+	if w.Code == http.StatusSeeOther && strings.Contains(w.Header().Get("Location"), "flash=created") {
+		t.Fatal("instructor must not create users")
+	}
+
+	// Rating adjust allowed.
+	form = url.Values{}
+	form.Set("cid", itoa(obs.CID))
+	form.Set("network_rating", "2") // S1 ≤ I1
+	form.Set("pilot_rating", "2")
+	form.Set("password", "")
+	w, _ = formPOST(t, ts, "/usereditor/update", form, cookies)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("instructor rating update status %d body %s", w.Code, w.Body.String())
+	}
+	u, err := ts.dbRepo.UserRepo.GetUserByCID(obs.CID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.NetworkRating != 2 {
+		t.Fatalf("network = %d want 2", u.NetworkRating)
+	}
+	if u.PilotRating != 2 {
+		t.Fatalf("pilot = %d want 2", u.PilotRating)
+	}
+}
+
+func TestInstructorCannotSetNetworkAboveOwn(t *testing.T) {
+	ts := newTestServer(t)
+	inst := createTestUser(t, ts, "inst-pass", int(protocol.NetworkRatingInstructor1))
+	obs := createTestUser(t, ts, "obs-pass", int(protocol.NetworkRatingObserver))
+	cookies := formLogin(t, ts, inst.CID, "inst-pass")
+
+	form := url.Values{}
+	form.Set("cid", itoa(obs.CID))
+	form.Set("network_rating", "11") // SUP — above I1
+	form.Set("pilot_rating", "0")
+	w, _ := formPOST(t, ts, "/usereditor/update", form, cookies)
+	if w.Code == http.StatusSeeOther {
+		t.Fatal("must not set network rating above actor")
+	}
+	if !strings.Contains(w.Body.String(), "above your own") {
+		t.Fatalf("expected ceiling error, body=%s", clip(w.Body.String(), 400))
 	}
 }
 

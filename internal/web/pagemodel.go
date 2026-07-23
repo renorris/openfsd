@@ -17,8 +17,13 @@ type pageUser struct {
 	LastName           string
 	NetworkRating      int
 	NetworkRatingLabel string
-	CanEditUsers       bool
-	CanEditConfig      bool
+	// CanEditUsers: Instructor1+ — Users page nav / directory access.
+	CanEditUsers bool
+	// CanFullMutateUsers: Supervisor+ — create + name/password mutation.
+	CanFullMutateUsers bool
+	// CanAdjustRatings: Instructor1+ — network + pilot rating changes.
+	CanAdjustRatings bool
+	CanEditConfig    bool
 }
 
 // basePage is embedded by every HTML page model so layout has nav data.
@@ -72,9 +77,11 @@ type userForm struct {
 	LastName      string
 	Password      string
 	NetworkRating int
+	PilotRating   int
 	CIDError      string
 	PasswordError string
 	RatingError   string
+	PilotError    string
 	Error         string
 }
 
@@ -85,6 +92,8 @@ type userDirectoryRow struct {
 	Rating      int
 	RatingShort string
 	RatingLabel string
+	PilotRating int
+	PilotLabel  string
 	Selected    bool
 	// EditHref is the full relative URL with directory params + this cid.
 	EditHref string
@@ -116,14 +125,19 @@ type userEditorPage struct {
 	// Includes ratings above the actor so SUP can filter to ADM.
 	FilterRatingOptions []ratingOption
 
-	ShowCreate bool // see rail state table
+	ShowCreate bool // see rail state table (SUP+ only)
 	Create     userForm
 	Edit       userForm
 	EditLoaded bool
-	// RatingOptions for create/edit selects only — ratingOptionsUpTo(actorMax, selected).
+	// RatingOptions for create/edit network selects — ratingOptionsUpTo(actorMax, selected).
 	RatingOptions []ratingOption
-	// EditReadOnly true when target.NetworkRating > actor: fields disabled, no Update.
-	// Server still rejects unauthorized POSTs.
+	// PilotRatingOptions capped at actor's own pilot_rating.
+	PilotRatingOptions []ratingOption
+	// ProfileLocked: name/password not editable (instructor, or SUP viewing higher-rated).
+	ProfileLocked bool
+	// RatingsLocked: no rating fields (should be rare; I1+ always may adjust within ceiling).
+	RatingsLocked bool
+	// EditReadOnly: nothing editable (legacy alias: profile + ratings locked).
 	EditReadOnly bool
 
 	// Template helpers for pagination / sort / new-user links (built server-side).
@@ -205,7 +219,9 @@ func pageUserFromClaims(claims *auth.CustomClaims) *pageUser {
 		LastName:           claims.LastName,
 		NetworkRating:      rating,
 		NetworkRatingLabel: networkRatingLabel(rating),
-		CanEditUsers:       claims.NetworkRating >= protocol.NetworkRatingSupervisor,
+		CanEditUsers:       canAccessUserEditor(claims.NetworkRating),
+		CanFullMutateUsers: canFullMutateUsers(claims.NetworkRating),
+		CanAdjustRatings:   canAdjustUserRatings(claims.NetworkRating),
 		CanEditConfig:      claims.NetworkRating >= protocol.NetworkRatingAdministator,
 	}
 }

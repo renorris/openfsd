@@ -46,7 +46,9 @@
         <input type="hidden" name="dir" value="{{ .Dir.DirParam }}">
         {{/* omit page, cid, new, flash — filter resets page and selection */}}
         <button type="submit" class="btn btn-sm btn-primary">Filter</button>
+        {{ if .User.CanFullMutateUsers }}
         <a class="btn btn-sm btn-outline-secondary" href="{{ .NewUserHref }}">New user</a>
+        {{ end }}
     </form>
 
     <div class="usr-body">
@@ -75,9 +77,10 @@
                             </th>
                             <th scope="col">
                                 <a href="{{ .SortRatingHref }}"{{ if eq .Dir.Sort "rating" }} aria-current="true"{{ end }}>
-                                    Rating{{ if eq .Dir.Sort "rating" }}{{ if .Dir.Desc }} ↓{{ else }} ↑{{ end }}{{ end }}
+                                    Net{{ if eq .Dir.Sort "rating" }}{{ if .Dir.Desc }} ↓{{ else }} ↑{{ end }}{{ end }}
                                 </a>
                             </th>
+                            <th scope="col">Pilot</th>
                         </tr>
                         </thead>
                         <tbody>
@@ -88,10 +91,11 @@
                             <td class="usr-cid"><a href="{{ .EditHref }}">{{ .CID }}</a></td>
                             <td>{{ .DisplayName }}</td>
                             <td title="{{ .RatingLabel }}">{{ .RatingShort }}</td>
+                            <td title="{{ .PilotLabel }}">{{ .PilotLabel }}</td>
                         </tr>
                         {{ else }}
                         <tr>
-                            <td colspan="3" class="usr-empty">No users match.</td>
+                            <td colspan="4" class="usr-empty">No users match.</td>
                         </tr>
                         {{ end }}
                         </tbody>
@@ -169,6 +173,19 @@
                             <div class="invalid-feedback d-block">{{ .Create.RatingError }}</div>
                             {{ end }}
                         </div>
+                        <div class="usr-field">
+                            <label for="create-pilot-rating">Pilot rating</label>
+                            <select class="form-select form-select-sm{{ if .Create.PilotError }} is-invalid{{ end }}"
+                                    id="create-pilot-rating" name="pilot_rating"
+                                    aria-label="Select pilot rating for new user">
+                                {{ range .PilotRatingOptions }}
+                                <option value="{{ .Value }}"{{ if eq .Value $.Create.PilotRating }} selected{{ end }}>{{ .Label }}</option>
+                                {{ end }}
+                            </select>
+                            {{ if .Create.PilotError }}
+                            <div class="invalid-feedback d-block">{{ .Create.PilotError }}</div>
+                            {{ end }}
+                        </div>
                         <button type="submit" class="btn btn-sm btn-primary">Create</button>
                     </form>
                 </div>
@@ -178,12 +195,20 @@
             {{ if .EditLoaded }}
             <section class="usr-panel" aria-labelledby="edit-user-heading">
                 <div class="usr-panel-hd">
-                    <h2 id="edit-user-heading">{{ if .EditReadOnly }}View user{{ else }}Edit user{{ end }}</h2>
+                    <h2 id="edit-user-heading">
+                        {{ if .EditReadOnly }}View user
+                        {{ else if .ProfileLocked }}Edit ratings
+                        {{ else }}Edit user{{ end }}
+                    </h2>
                 </div>
                 <div class="usr-panel-bd">
-                    {{ if .EditReadOnly }}
+                    {{ if .ProfileLocked }}
                     <div class="usr-flash usr-flash-warn" role="status">
-                        Read-only: this user has a higher network rating than you.
+                        {{ if not .User.CanFullMutateUsers }}
+                        Ratings only: instructors may set network and pilot ratings up to their own ceilings.
+                        {{ else }}
+                        Profile locked: higher network rating — you may still adjust ratings up to your ceiling.
+                        {{ end }}
                     </div>
                     {{ end }}
                     {{ if .Edit.Error }}
@@ -207,18 +232,18 @@
                         <div class="usr-field">
                             <label for="edit-first-name">First name</label>
                             <input type="text" class="form-control form-control-sm" id="edit-first-name" name="first_name"
-                                   value="{{ .Edit.FirstName }}" autocomplete="given-name"{{ if .EditReadOnly }} disabled{{ end }}>
+                                   value="{{ .Edit.FirstName }}" autocomplete="given-name"{{ if .ProfileLocked }} disabled{{ end }}>
                         </div>
                         <div class="usr-field">
                             <label for="edit-last-name">Last name</label>
                             <input type="text" class="form-control form-control-sm" id="edit-last-name" name="last_name"
-                                   value="{{ .Edit.LastName }}" autocomplete="family-name"{{ if .EditReadOnly }} disabled{{ end }}>
+                                   value="{{ .Edit.LastName }}" autocomplete="family-name"{{ if .ProfileLocked }} disabled{{ end }}>
                         </div>
                         <div class="usr-field">
                             <label for="edit-network-rating">Network rating</label>
                             <select class="form-select form-select-sm{{ if .Edit.RatingError }} is-invalid{{ end }}"
                                     id="edit-network-rating" name="network_rating"
-                                    aria-label="Select network rating"{{ if .EditReadOnly }} disabled{{ end }}>
+                                    aria-label="Select network rating"{{ if .RatingsLocked }} disabled{{ end }}>
                                 {{ range .RatingOptions }}
                                 <option value="{{ .Value }}"{{ if eq .Value $.Edit.NetworkRating }} selected{{ end }}>{{ .Label }}</option>
                                 {{ end }}
@@ -228,13 +253,26 @@
                             {{ end }}
                         </div>
                         <div class="usr-field">
+                            <label for="edit-pilot-rating">Pilot rating</label>
+                            <select class="form-select form-select-sm{{ if .Edit.PilotError }} is-invalid{{ end }}"
+                                    id="edit-pilot-rating" name="pilot_rating"
+                                    aria-label="Select pilot rating"{{ if .RatingsLocked }} disabled{{ end }}>
+                                {{ range .PilotRatingOptions }}
+                                <option value="{{ .Value }}"{{ if eq .Value $.Edit.PilotRating }} selected{{ end }}>{{ .Label }}</option>
+                                {{ end }}
+                            </select>
+                            {{ if .Edit.PilotError }}
+                            <div class="invalid-feedback d-block">{{ .Edit.PilotError }}</div>
+                            {{ end }}
+                        </div>
+                        <div class="usr-field">
                             <label for="edit-password">New password <span class="usr-hint">(blank = keep)</span></label>
                             <input type="password" class="form-control form-control-sm{{ if .Edit.PasswordError }} is-invalid{{ end }}"
-                                   id="edit-password" name="password" minlength="8" autocomplete="new-password"{{ if .EditReadOnly }} disabled{{ end }}>
+                                   id="edit-password" name="password" minlength="8" autocomplete="new-password"{{ if .ProfileLocked }} disabled{{ end }}>
                             {{ if .Edit.PasswordError }}
                             <div class="invalid-feedback d-block">{{ .Edit.PasswordError }}</div>
                             {{ end }}
-                            {{ if not .EditReadOnly }}
+                            {{ if not .ProfileLocked }}
                             <div class="mt-1" data-js="password-strength" hidden>
                                 <div class="progress" style="height: 8px;">
                                     <div id="edit-password-strength" class="progress-bar" role="progressbar"

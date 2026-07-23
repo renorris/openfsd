@@ -6,6 +6,8 @@ type User struct {
 	FirstName     *string
 	LastName      *string
 	NetworkRating int
+	// PilotRating is the pilot certificate rating (0 = none; typically 0–5).
+	PilotRating int
 }
 
 // UserListFilter controls ListUsers / CountUsers.

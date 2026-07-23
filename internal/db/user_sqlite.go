@@ -26,11 +26,11 @@ func (r *SQLiteUserRepository) CreateUser(user *User) (err error) {
 
 	row := r.db.QueryRow(`
 		INSERT INTO users
-		(password, first_name, last_name, network_rating)
+		(password, first_name, last_name, network_rating, pilot_rating)
 		VALUES 
-		(?, ?, ?, ?)
+		(?, ?, ?, ?, ?)
 		RETURNING cid`,
-		hash, user.FirstName, user.LastName, user.NetworkRating,
+		hash, user.FirstName, user.LastName, user.NetworkRating, user.PilotRating,
 	)
 	if err = row.Err(); err != nil {
 		return
@@ -47,7 +47,7 @@ func (r *SQLiteUserRepository) GetUserByCID(cid int) (user *User, err error) {
 	row := r.db.QueryRow(`
 		SELECT 
 		cid, password, first_name, 
-		last_name, network_rating
+		last_name, network_rating, pilot_rating
 		FROM users
 		WHERE cid = $1`,
 		cid,
@@ -63,6 +63,7 @@ func (r *SQLiteUserRepository) GetUserByCID(cid int) (user *User, err error) {
 		&user.FirstName,
 		&user.LastName,
 		&user.NetworkRating,
+		&user.PilotRating,
 	); err != nil {
 		return
 	}
@@ -90,16 +91,16 @@ func (r *SQLiteUserRepository) UpdateUser(user *User) (err error) {
 		// Include password in update
 		query = `
 			UPDATE users
-			SET password = ?, first_name = ?, last_name = ?, network_rating = ?
+			SET password = ?, first_name = ?, last_name = ?, network_rating = ?, pilot_rating = ?
 			WHERE cid = ?`
-		args = []interface{}{hash, user.FirstName, user.LastName, user.NetworkRating, user.CID}
+		args = []interface{}{hash, user.FirstName, user.LastName, user.NetworkRating, user.PilotRating, user.CID}
 	} else {
 		// Exclude password from update
 		query = `
 			UPDATE users
-			SET first_name = ?, last_name = ?, network_rating = ?
+			SET first_name = ?, last_name = ?, network_rating = ?, pilot_rating = ?
 			WHERE cid = ?`
-		args = []interface{}{user.FirstName, user.LastName, user.NetworkRating, user.CID}
+		args = []interface{}{user.FirstName, user.LastName, user.NetworkRating, user.PilotRating, user.CID}
 	}
 
 	// Execute the UPDATE statement
@@ -196,7 +197,7 @@ func (r *SQLiteUserRepository) ListUsers(filter UserListFilter) ([]*User, error)
 	orderBy := userListOrderBy(filter)
 
 	query := `
-		SELECT cid, first_name, last_name, network_rating
+		SELECT cid, first_name, last_name, network_rating, pilot_rating
 		FROM users
 		` + where + `
 		` + orderBy + `
@@ -212,7 +213,7 @@ func (r *SQLiteUserRepository) ListUsers(filter UserListFilter) ([]*User, error)
 	var users []*User
 	for rows.Next() {
 		u := &User{} // Password left empty — not selected
-		if err := rows.Scan(&u.CID, &u.FirstName, &u.LastName, &u.NetworkRating); err != nil {
+		if err := rows.Scan(&u.CID, &u.FirstName, &u.LastName, &u.NetworkRating, &u.PilotRating); err != nil {
 			return nil, err
 		}
 		users = append(users, u)
