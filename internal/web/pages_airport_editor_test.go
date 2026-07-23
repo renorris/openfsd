@@ -65,6 +65,7 @@ func TestAirportEditorAdminShell(t *testing.T) {
 
 	for _, want := range []string{
 		`id="apted-root"`,
+		`data-js="airport-editor"`,
 		`name="apt_text"`,
 		`name="air_text"`,
 		`name="filename"`,
@@ -74,14 +75,22 @@ func TestAirportEditorAdminShell(t *testing.T) {
 		`id="apted-map"`,
 		`requires JavaScript`,
 		`href="/airport-editor"`,
+		// PR6: Leaflet + ES modules for map enhancement
+		`/static/js/leaflet.js`,
+		`/static/js/openfsd/leaflet.rotatedmarker.js`,
+		`/static/js/openfsd/airport-editor/main.js`,
+		`/static/css/leaflet.css`,
+		`data-js="open-apt"`,
+		`data-js="open-air"`,
+		`data-js="fit"`,
+		`data-js="layer"`,
+		`data-js="rail-tabs"`,
+		`data-js="inspector"`,
+		`data-js="chip-icao"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected body to contain %q, body=%s", want, clip(body, 800))
 		}
-	}
-	// Map present but no editor JS/Leaflet wired in this PR (inert shell).
-	if strings.Contains(body, "airport-editor/main.js") || strings.Contains(body, "leaflet.js") {
-		t.Fatal("PR3 shell must not load Leaflet or airport-editor JS yet")
 	}
 }
 

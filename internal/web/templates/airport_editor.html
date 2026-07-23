@@ -3,12 +3,15 @@
 {{ define "body" }}
 {{/*
   JS budget exception (airport map editor) — complexity-gate exception:
-  This route will load Leaflet (vendor) + first-party airport-editor modules
-  in a later PR. Map geometry authoring is JS-primary (documented exception
-  to the general PE bar). Essential data path without JS: paste apt_text /
-  air_text + form CSRF echo-download. No SPA router / global server store /
-  hydration. Files are never written to server disk or DB.
+  This route loads Leaflet (vendor) + first-party airport-editor modules.
+  Map geometry authoring is JS-primary (documented exception to the general
+  PE bar). Essential data path without JS: paste apt_text / air_text + form
+  CSRF echo-download. No SPA router / global server store / hydration.
+  Files are never written to server disk or DB.
+
+  e2e blank tiles: set data-test-tiles="blank" on #apted-root (no OSM/Esri).
 */}}
+<link href="/static/css/leaflet.css" rel="stylesheet">
 <link href="/static/css/openfsd/airport-editor.css" rel="stylesheet">
 
 <main id="apted-root" class="apted container-fluid"
@@ -16,9 +19,14 @@
 
     <header class="apted-titlebar">
         <h1>Airport Editor</h1>
-        <p class="apted-hint">
-            Integrated .apt + .air authoring · text download works without JS ·
-            map requires JavaScript (coming soon)
+        <div class="apted-chips" aria-label="Document status">
+            <span class="apted-chip apted-chip-icao" data-js="chip-icao">—</span>
+            <span class="apted-chip" data-js="chip-apt" title="Airport geometry">APT</span>
+            <span class="apted-chip" data-js="chip-air" title="Scenario aircraft">AIR</span>
+            <span class="apted-hint" data-js="chip-counts"></span>
+        </div>
+        <p class="apted-hint apted-title-hint">
+            Integrated .apt + .air · map requires JavaScript · text download works without JS
         </p>
     </header>
 
@@ -29,6 +37,23 @@
     <div class="apted-flash apted-flash-err" role="alert">{{ .FlashError }}</div>
     {{ end }}
 
+    <p class="apted-flash" data-js="status" hidden role="status"></p>
+
+    <div class="apted-toolbar" role="toolbar" aria-label="Editor tools">
+        <label class="btn btn-sm btn-outline-dark apted-file-btn">
+            Open .apt
+            <input type="file" accept=".apt,text/plain" data-js="open-apt" hidden>
+        </label>
+        <label class="btn btn-sm btn-outline-dark apted-file-btn">
+            Open .air
+            <input type="file" accept=".air,text/plain" data-js="open-air" hidden>
+        </label>
+        <span class="apted-toolbar-sep" aria-hidden="true"></span>
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-js="fit">Fit</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-js="layer"
+                aria-label="Basemap layer: OSM. Click to switch.">Layer: OSM</button>
+    </div>
+
     <div class="apted-body">
         <div id="apted-map" class="apted-map" role="application"
              aria-label="Airport map editor (requires JavaScript)">
@@ -38,19 +63,95 @@
             </p>
         </div>
 
-        <aside class="apted-rail" aria-label="Editor panels">
-            <section class="apted-panel" aria-labelledby="apted-raw-heading">
-                <div class="apted-panel-hd">
-                    <h2 id="apted-raw-heading">Raw text</h2>
-                    <span class="apted-hint">No server save</span>
-                </div>
-                <div class="apted-panel-bd">
-                    <p class="apted-hint mb-0">
-                        Paste file text, set a safe filename, then download.
-                        Nothing is stored on the server.
-                    </p>
-                </div>
-            </section>
+        <aside class="apted-rail" data-js="rail" aria-label="Editor panels">
+            <div class="apted-tabs" role="tablist" aria-label="Editor tabs" data-js="rail-tabs">
+                <button type="button" class="apted-tab is-active" role="tab"
+                        data-tab="airport" aria-selected="true" id="apted-tab-airport">Airport</button>
+                <button type="button" class="apted-tab" role="tab"
+                        data-tab="surfaces" aria-selected="false" id="apted-tab-surfaces">Surfaces</button>
+                <button type="button" class="apted-tab" role="tab"
+                        data-tab="aircraft" aria-selected="false" id="apted-tab-aircraft">Aircraft</button>
+                <button type="button" class="apted-tab" role="tab"
+                        data-tab="validate" aria-selected="false" id="apted-tab-validate">Validate</button>
+                <button type="button" class="apted-tab" role="tab"
+                        data-tab="raw" aria-selected="false" id="apted-tab-raw">Raw</button>
+            </div>
+
+            <div class="apted-rail-scroll">
+                <section class="apted-panel apted-tab-panel is-active" data-js-tab-panel="airport"
+                         role="tabpanel" aria-labelledby="apted-tab-airport">
+                    <div class="apted-panel-hd">
+                        <h2>Airport</h2>
+                        <span class="apted-hint">Headers</span>
+                    </div>
+                    <div class="apted-panel-bd" data-js="panel-airport">
+                        <p class="apted-hint">Open a .apt file to view airport headers.</p>
+                    </div>
+                </section>
+
+                <section class="apted-panel apted-tab-panel" data-js-tab-panel="surfaces" hidden
+                         role="tabpanel" aria-labelledby="apted-tab-surfaces">
+                    <div class="apted-panel-hd">
+                        <h2>Surfaces</h2>
+                        <span class="apted-hint">Click to select</span>
+                    </div>
+                    <div class="apted-panel-bd" data-js="panel-surfaces">
+                        <p class="apted-hint">No surfaces.</p>
+                    </div>
+                </section>
+
+                <section class="apted-panel apted-tab-panel" data-js-tab-panel="aircraft" hidden
+                         role="tabpanel" aria-labelledby="apted-tab-aircraft">
+                    <div class="apted-panel-hd">
+                        <h2>Aircraft</h2>
+                        <span class="apted-hint">Click to select</span>
+                    </div>
+                    <div class="apted-panel-bd" data-js="panel-aircraft">
+                        <p class="apted-hint">No aircraft.</p>
+                    </div>
+                </section>
+
+                <section class="apted-panel apted-tab-panel" data-js-tab-panel="validate" hidden
+                         role="tabpanel" aria-labelledby="apted-tab-validate">
+                    <div class="apted-panel-hd">
+                        <h2>Validate</h2>
+                        <span class="apted-hint">Parse errors</span>
+                    </div>
+                    <div class="apted-panel-bd" data-js="panel-validate">
+                        <p class="apted-hint">Load .apt / .air to see parse issues.</p>
+                    </div>
+                </section>
+
+                <section class="apted-panel apted-tab-panel" data-js-tab-panel="raw" hidden
+                         role="tabpanel" aria-labelledby="apted-tab-raw">
+                    <div class="apted-panel-hd">
+                        <h2>Raw</h2>
+                        <span class="apted-hint">Read-only preview</span>
+                    </div>
+                    <div class="apted-panel-bd apted-raw-panel">
+                        <div class="apted-field">
+                            <label for="apted-raw-apt">.apt (formatted)</label>
+                            <textarea id="apted-raw-apt" data-js="raw-apt" rows="10"
+                                      readonly spellcheck="false"></textarea>
+                        </div>
+                        <div class="apted-field">
+                            <label for="apted-raw-air">.air (formatted)</label>
+                            <textarea id="apted-raw-air" data-js="raw-air" rows="6"
+                                      readonly spellcheck="false"></textarea>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="apted-panel apted-inspector-panel" aria-labelledby="apted-inspector-heading">
+                    <div class="apted-panel-hd">
+                        <h2 id="apted-inspector-heading">Inspector</h2>
+                        <span class="apted-hint">View only</span>
+                    </div>
+                    <div class="apted-panel-bd" data-js="inspector">
+                        <p class="apted-hint">Select a surface or aircraft on the map or in a list.</p>
+                    </div>
+                </section>
+            </div>
         </aside>
     </div>
 
@@ -95,4 +196,8 @@
         </form>
     </section>
 </main>
+
+<script src="/static/js/leaflet.js"></script>
+<script src="/static/js/openfsd/leaflet.rotatedmarker.js"></script>
+<script type="module" src="/static/js/openfsd/airport-editor/main.js"></script>
 {{ end }}

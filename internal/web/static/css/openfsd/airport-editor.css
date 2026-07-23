@@ -1,9 +1,8 @@
 /*
- * Airport editor — dense utilitarian layout (layout-only for PR3).
+ * Airport editor — dense utilitarian 16:9 console (map + rail).
  *
- * Target: 16:9 landscape operator console aligned with sweatbox tokens.
- * Progressive enhancement later: map/rail interactivity. Forms and text
- * fallback work without this stylesheet.
+ * Aligned with sweatbox tokens. Progressive enhancement: map/rail JS
+ * enhances layout; forms and text fallback work without this stylesheet.
  */
 
 /* --- tokens (mirrors sweatbox density; --apted-* namespace) --- */
@@ -16,8 +15,11 @@
   --apted-panel: #fff;
   --apted-muted: #5c636a;
   --apted-accent: #1a1a1a;
+  --apted-sel: #dce8f5;
+  --apted-sel-border: #4a7ab0;
   --apted-danger: #842029;
   --apted-ok: #0f5132;
+  --apted-warn-bg: #fff3cd;
   --apted-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
   --apted-font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --apted-fs: 0.8125rem;
@@ -45,7 +47,7 @@
   box-sizing: border-box;
 }
 
-/* --- title / flash --- */
+/* --- title / chips / flash --- */
 .apted-titlebar {
   display: flex;
   flex-wrap: wrap;
@@ -63,10 +65,43 @@
   text-transform: uppercase;
 }
 
+.apted-title-hint {
+  flex: 1 1 100%;
+}
+
 .apted-hint {
   margin: 0;
   color: var(--apted-muted);
   font-size: var(--apted-fs-sm);
+}
+
+.apted-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.5rem;
+  font-family: var(--apted-mono);
+  font-size: var(--apted-fs-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.apted-chip {
+  display: inline-block;
+  padding: 0.1rem 0.4rem;
+  border: 1px solid var(--apted-border);
+  border-radius: 2px;
+  background: var(--apted-panel);
+  font-weight: 600;
+}
+
+.apted-chip-icao {
+  letter-spacing: 0.04em;
+}
+
+.apted-chip.is-dirty {
+  border-color: #c9a227;
+  background: var(--apted-warn-bg);
+  color: #664d03;
 }
 
 .apted-flash {
@@ -89,6 +124,30 @@
   border-color: #f1aeb5;
 }
 
+/* --- toolbar --- */
+.apted-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.45rem;
+  background: var(--apted-panel);
+  border: 1px solid var(--apted-border-strong);
+  border-radius: 2px;
+}
+
+.apted-toolbar-sep {
+  width: 1px;
+  align-self: stretch;
+  background: var(--apted-border);
+  margin: 0 0.15rem;
+}
+
+.apted-file-btn {
+  margin: 0;
+  cursor: pointer;
+}
+
 /* --- body grid: map + rail --- */
 .apted-body {
   flex: 1 1 auto;
@@ -101,10 +160,11 @@
 @media (min-width: 900px) {
   .apted-body {
     grid-template-columns: minmax(0, 1fr) minmax(18rem, 24rem);
-    max-height: calc(100dvh - var(--apted-header-approx) - 6rem);
+    max-height: calc(100dvh - var(--apted-header-approx) - 7.5rem);
   }
 }
 
+/* Map full-bleed (Leaflet owns the box when enhanced) */
 .apted-map {
   min-height: 16rem;
   background: #dfe6ea;
@@ -114,6 +174,21 @@
   align-items: center;
   justify-content: center;
   padding: 1rem;
+  position: relative;
+  z-index: 0;
+}
+
+.apted.is-enhanced .apted-map {
+  display: block;
+  padding: 0;
+  min-height: 20rem;
+}
+
+@media (min-width: 900px) {
+  .apted.is-enhanced .apted-map {
+    min-height: 0;
+    height: 100%;
+  }
 }
 
 .apted-map-placeholder {
@@ -124,22 +199,84 @@
   font-size: var(--apted-fs-sm);
 }
 
+/* Leaflet attribution must remain visible — do not hide .leaflet-control-attribution */
+
+/* --- rail --- */
 .apted-rail {
   display: flex;
   flex-direction: column;
-  gap: var(--apted-gap);
+  gap: 0;
   min-height: 0;
   min-width: 0;
+  background: var(--apted-panel);
+  border: 1px solid var(--apted-border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.apted-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0;
+  border-bottom: 1px solid var(--apted-border);
+  background: #e9ecef;
+  flex-shrink: 0;
+}
+
+.apted-tab {
+  appearance: none;
+  border: 0;
+  border-right: 1px solid var(--apted-border);
+  background: transparent;
+  padding: 0.35rem 0.55rem;
+  font-size: var(--apted-fs-sm);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--apted-muted);
+  cursor: pointer;
+  margin: 0;
+  font-family: inherit;
+}
+
+.apted-tab:hover {
+  color: var(--apted-accent);
+  background: #dde1e5;
+}
+
+.apted-tab.is-active,
+.apted-tab[aria-selected="true"] {
+  color: var(--apted-accent);
+  background: var(--apted-panel);
+  box-shadow: inset 0 -2px 0 var(--apted-sel-border);
+}
+
+.apted-rail-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
 }
 
 .apted-panel {
   background: var(--apted-panel);
-  border: 1px solid var(--apted-border);
-  border-radius: 2px;
+  border: 0;
+  border-radius: 0;
   display: flex;
   flex-direction: column;
   min-height: 0;
   min-width: 0;
+}
+
+.apted-tab-panel {
+  border-bottom: 1px solid var(--apted-border);
+}
+
+.apted-inspector-panel {
+  border-top: 1px dashed var(--apted-border);
+  flex: 1 1 auto;
 }
 
 .apted-panel-hd {
@@ -150,7 +287,7 @@
   gap: 0.25rem 0.5rem;
   padding: 0.3rem 0.5rem;
   border-bottom: 1px solid var(--apted-border);
-  background: #e9ecef;
+  background: #f0f2f4;
 }
 
 .apted-panel-hd h2 {
@@ -170,6 +307,127 @@
   gap: 0.4rem;
 }
 
+.apted-subhd {
+  margin: 0;
+  font-size: var(--apted-fs-sm);
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+
+/* key/value inspector */
+.apted-kv {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.apted-kv-row {
+  display: grid;
+  grid-template-columns: 7.5rem minmax(0, 1fr);
+  gap: 0.35rem;
+  align-items: baseline;
+}
+
+.apted-kv-row dt {
+  margin: 0;
+  font-size: var(--apted-fs-sm);
+  font-weight: 600;
+  color: var(--apted-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.apted-kv-row dd {
+  margin: 0;
+  font-family: var(--apted-mono);
+  font-size: var(--apted-fs-sm);
+  font-variant-numeric: tabular-nums;
+  word-break: break-word;
+}
+
+/* lists */
+.apted-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--apted-border);
+  max-height: 14rem;
+  overflow: auto;
+}
+
+.apted-list-item {
+  margin: 0;
+  padding: 0.3rem 0.45rem;
+  font-family: var(--apted-mono);
+  font-size: var(--apted-fs-sm);
+  font-variant-numeric: tabular-nums;
+  border-bottom: 1px solid var(--apted-border);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.apted-list-item:last-child {
+  border-bottom: 0;
+}
+
+.apted-list-item:hover {
+  background: #f0f4f8;
+}
+
+.apted-list-item.is-selected,
+.apted-list-item[aria-selected="true"] {
+  background: var(--apted-sel);
+  box-shadow: inset 3px 0 0 var(--apted-sel-border);
+  font-weight: 600;
+}
+
+.apted-err-list {
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: var(--apted-fs-sm);
+  color: var(--apted-danger);
+}
+
+.apted-err-list-warn {
+  color: #664d03;
+}
+
+.apted-mini-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--apted-mono);
+  font-size: var(--apted-fs-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.apted-mini-table th,
+.apted-mini-table td {
+  border: 1px solid var(--apted-border);
+  padding: 0.15rem 0.35rem;
+  text-align: right;
+}
+
+.apted-mini-table th {
+  background: #e9ecef;
+  font-weight: 600;
+  text-align: center;
+}
+
+.apted-raw-panel textarea {
+  font-family: var(--apted-mono);
+  font-size: var(--apted-fs-sm);
+  border: 1px solid var(--apted-border);
+  border-radius: 2px;
+  padding: 0.35rem 0.45rem;
+  width: 100%;
+  resize: vertical;
+  min-height: 5rem;
+  background: #f8f9fa;
+}
+
 /* --- no-JS text fallback --- */
 .apted-fallback {
   background: var(--apted-panel);
@@ -179,6 +437,11 @@
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
+}
+
+.apted.is-enhanced .apted-fallback {
+  /* Keep available for PE text path / download forms; collapse visually slightly */
+  opacity: 0.95;
 }
 
 .apted-fallback h2 {
