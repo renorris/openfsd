@@ -77,11 +77,19 @@ Stdlib heuristic: first path element contains no `.` (e.g. `fmt`, `net/http`). T
 
 ## 3. Wire-format change checklist
 
+**FSD packets (`pkg/protocol`):**
 - [ ] Golden fixture added/updated under `pkg/protocol/testdata/packets`
 - [ ] Unit tests in `pkg/protocol`
 - [ ] E2E green if behavior is user-visible (`internal/server` e2e)
 - [ ] No marshal rewrite without fixture comparison (bytes must not silently change)
 - [ ] Consult `docs/protocol.md`; no silent field reordering
+
+**TWRTrainer `.apt`/`.air` (`pkg/twrfiles`):**
+- [ ] Golden fixture added/updated under `pkg/twrfiles/testdata` (and Format goldens when Format exists)
+- [ ] Unit tests in `pkg/twrfiles`
+- [ ] Sweatbox + server sweatbox paths green if load/parse behavior is user-visible
+- [ ] No parse/serialize rewrite without fixture comparison (bytes/messages must not silently change)
+- [ ] Consult `docs/design/apt-air-editor.md` Format contract when adding FormatAPT/FormatAIR
 
 ---
 

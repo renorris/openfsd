@@ -136,7 +136,7 @@ func TestParseAPT_Defaults(t *testing.T) {
 	if apt.InitClimbJets != defaultInitClimbJets {
 		t.Errorf("InitClimbJets default = %v", apt.InitClimbJets)
 	}
-	if apt.Registration != defaultRegistration {
+	if apt.Registration != DefaultRegistration {
 		t.Errorf("Registration default = %q", apt.Registration)
 	}
 }

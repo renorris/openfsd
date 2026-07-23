@@ -1042,7 +1042,7 @@ Optional config keys later: `sweatbox_tick_ms`, `sweatbox_cid`, `sweatbox_max_ai
 
 ### File formats
 
-**.apt / .air** TWRTrainer-compatible (findings 04 / python_ref). Fixtures: KBTV samples in `internal/sweatbox/testdata/`.
+**.apt / .air** TWRTrainer-compatible (findings 04 / python_ref). Fixtures: KBTV samples in `pkg/twrfiles/testdata/`.
 
 openfsd-native JSON: optional later.
 

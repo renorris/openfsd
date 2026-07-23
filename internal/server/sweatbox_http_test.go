@@ -371,11 +371,10 @@ func doService(t *testing.T, e *gin.Engine, tok, method, path string, body []byt
 
 func readTestdata(t *testing.T, name string) []byte {
 	t.Helper()
+	// Canonical fixtures: pkg/twrfiles/testdata (from package dir or module root).
 	candidates := []string{
 		filepath.Join("..", "..", "pkg", "twrfiles", "testdata", name),
 		filepath.Join("pkg", "twrfiles", "testdata", name),
-		filepath.Join("..", "sweatbox", "testdata", name),
-		filepath.Join("internal", "sweatbox", "testdata", name),
 	}
 	var last error
 	for _, p := range candidates {

@@ -1010,57 +1010,58 @@ func TestNextSquawkLocked_VFRWhen1200Taken(t *testing.T) {
 	}
 }
 
-func TestFieldReferencePoint_AndDefaultTypeEdges(t *testing.T) {
-	if fieldReferencePoint(nil).Lat != 0 {
-		t.Error("nil apt")
+func TestFieldReferencePoint_RunwayPreferred(t *testing.T) {
+	if fieldReferencePoint(nil) != (Point{}) {
+		t.Error("nil apt → zero")
 	}
-	// Prefer first runway centroid-ish over parking-only.
+	// Prefer first runway midpoint over parking-only points.
 	apt := &Airport{Surfaces: []Surface{
 		{Kind: SurfaceParking, Name: "P", Points: []Point{{1, 2}}},
-		{Kind: SurfaceRunway, Name: "9/27", RwyA: "9", RwyB: "27", Points: []Point{{10, 20}, {11, 21}}},
+		{Kind: SurfaceRunway, Name: "9/27", RwyA: "9", RwyB: "27", Points: []Point{{10, 20}, {12, 24}}},
 	}}
 	pt := fieldReferencePoint(apt)
-	if pt.Lat < 10 {
-		t.Errorf("want runway-based ref, got %v", pt)
+	if pt.Lat != 11 || pt.Lon != 22 {
+		t.Errorf("runway midpoint = %v, want {11 22}", pt)
 	}
-	// defaultType edges for coverage after apt/air extract (package floor).
-	if defaultType(WeightHeavy, EngineHelicopter) != "" {
-		t.Error("heavy heli invalid")
-	}
-	if defaultType(WeightHeavy, EnginePiston) != "" {
-		t.Error("heavy piston invalid")
-	}
-	if defaultType(WeightHeavy, EngineTurboprop) != "" {
-		t.Error("heavy turbo invalid")
-	}
-	if defaultType(WeightSmall, EngineJet) != "C510" {
-		t.Errorf("small jet = %q", defaultType(WeightSmall, EngineJet))
-	}
-	if defaultType("X", "Y") != "" {
-		t.Error("unknown pair")
-	}
-	if defaultCruiseAlt(EngineHelicopter) != 3500 {
-		t.Error("heli cruise")
-	}
-	if defaultApproachSpeed("Z") != 120 {
-		t.Error("default approach")
-	}
-	// One more edge for package floor after twrfiles extract.
-	if defaultCruiseAlt("") != 10000 {
-		t.Error("default cruise unknown engine")
-	}
-	if normalizeHeading(-90) != 270 {
-		t.Errorf("normalize -90 = %v", normalizeHeading(-90))
-	}
-	// fieldReferencePoint: skip empty-point surfaces, then n==0 → zero.
+	// Surfaces with no points contribute nothing; all-empty → zero.
 	emptyOnly := &Airport{Surfaces: []Surface{
 		{Kind: SurfaceTaxiway, Name: "X", Points: nil},
 	}}
 	if fieldReferencePoint(emptyOnly) != (Point{}) {
 		t.Error("empty points should yield zero ref")
 	}
-	if defaultType(WeightHeavy, EngineJet) != "B744" {
-		t.Errorf("heavy jet = %q", defaultType(WeightHeavy, EngineJet))
+}
+
+func TestDefaultType_WeightEngineMatrix(t *testing.T) {
+	tests := []struct {
+		weight, engine, want string
+	}{
+		{WeightHeavy, EngineHelicopter, ""},
+		{WeightHeavy, EnginePiston, ""},
+		{WeightHeavy, EngineTurboprop, ""},
+		{WeightHeavy, EngineJet, "B744"},
+		{WeightSmall, EngineJet, "C510"},
+		{"X", "Y", ""},
+	}
+	for _, tt := range tests {
+		if got := defaultType(tt.weight, tt.engine); got != tt.want {
+			t.Errorf("defaultType(%s,%s)=%q want %q", tt.weight, tt.engine, got, tt.want)
+		}
+	}
+}
+
+func TestDefaultCruiseAltAndApproachSpeed(t *testing.T) {
+	if defaultCruiseAlt(EngineHelicopter) != 3500 {
+		t.Errorf("heli cruise = %d", defaultCruiseAlt(EngineHelicopter))
+	}
+	if defaultCruiseAlt("") != 10000 {
+		t.Errorf("unknown engine cruise = %d", defaultCruiseAlt(""))
+	}
+	if defaultApproachSpeed("Z") != 120 {
+		t.Errorf("unknown approach = %v", defaultApproachSpeed("Z"))
+	}
+	if normalizeHeading(-90) != 270 {
+		t.Errorf("normalize -90 = %v", normalizeHeading(-90))
 	}
 }
 

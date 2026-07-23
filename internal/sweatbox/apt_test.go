@@ -12,8 +12,8 @@ import (
 
 func kbtvFixture(t *testing.T, name string) []byte {
 	t.Helper()
+	// Canonical fixtures live in pkg/twrfiles/testdata (package dir or module root).
 	candidates := []string{
-		filepath.Join("testdata", name),
 		filepath.Join("..", "..", "pkg", "twrfiles", "testdata", name),
 		filepath.Join("pkg", "twrfiles", "testdata", name),
 	}

@@ -11,7 +11,7 @@ import (
 // --- Pause freeze -----------------------------------------------------------
 
 func TestTickAircraft_UnknownStatusVectors(t *testing.T) {
-	// Covers default branch of tickAircraftLocked (unknown status with air vectors).
+	// default branch of tickAircraftLocked: unknown status still honors air vectors.
 	e := NewEngine()
 	e.mu.Lock()
 	ac := &SimAircraft{
@@ -27,17 +27,22 @@ func TestTickAircraft_UnknownStatusVectors(t *testing.T) {
 	if del {
 		t.Fatal("should not delete")
 	}
-	if !changed && ac.Heading == 0 {
-		// heading should advance toward desired if tickAirborne ran
-		t.Logf("changed=%v hdg=%v (air vector path exercised or no-op)", changed, ac.Heading)
+	if !changed {
+		t.Fatal("expected position/heading change from air vectors")
 	}
-	// Stationary unknown without vectors: no-op path.
+	if ac.Heading <= 0 || ac.Heading > 90 {
+		t.Fatalf("heading should turn toward 90 from 0, got %v", ac.Heading)
+	}
+	// Stationary unknown without vectors: pure no-op.
 	e.mu.Lock()
-	ac2 := &SimAircraft{Callsign: "Y", Status: "Weird", Speed: 0}
-	_, del = e.tickAircraftLocked(ac2, 1.0)
+	ac2 := &SimAircraft{Callsign: "Y", Status: "Weird", Speed: 0, Lat: 1, Lon: 2, Heading: 45}
+	changed2, del2 := e.tickAircraftLocked(ac2, 1.0)
 	e.mu.Unlock()
-	if del {
-		t.Fatal("no delete")
+	if del2 || changed2 {
+		t.Fatalf("noop want changed=false del=false, got changed=%v del=%v", changed2, del2)
+	}
+	if ac2.Heading != 45 || ac2.Lat != 1 || ac2.Lon != 2 {
+		t.Fatalf("state mutated: %+v", ac2)
 	}
 }
 

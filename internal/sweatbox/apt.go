@@ -2,9 +2,9 @@ package sweatbox
 
 import "github.com/renorris/openfsd/pkg/twrfiles"
 
-// Default GA registration prefix when the airport header omits registration=
-// (matches twrfiles ParseAPT fallback).
-const defaultRegistration = "N"
+// defaultRegistration is the GA callsign prefix when airport Registration is
+// empty. Single source of truth: pkg/twrfiles.DefaultRegistration (ParseAPT fallback).
+const defaultRegistration = twrfiles.DefaultRegistration
 
 // ParseAPT parses TWRTrainer-compatible .apt text.
 // Thin wrapper over pkg/twrfiles so internal/server and sim call sites stay stable.

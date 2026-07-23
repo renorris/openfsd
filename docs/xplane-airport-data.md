@@ -16,7 +16,7 @@ official Gateway API or a local X-Plane install, and do not commit third-party d
 |-------------------------|-------------------|
 | Converter (`cmd/aptdat2apt`) | Full Global Airports `apt.dat` |
 | Optional downloader code (`internal/xp12aptdat`) | CDN zip blobs |
-| Tiny hand-authored sweatbox samples under `internal/sweatbox/testdata/` | Bulk `generated-apt/*.apt` trees |
+| Tiny hand-authored `.apt`/`.air` samples under `pkg/twrfiles/testdata/` | Bulk `generated-apt/*.apt` trees |
 | This notice | Laminar 3D art, DSF, libraries, payware |
 
 End users obtain airport **source data on their own machine**. openfsd never
@@ -149,7 +149,7 @@ openfsd’s **converter source code** remains under this project’s MIT license
 MIT tooling that *reads* GPL data at runtime does not relicense the server
 binary; obligations attach if you **redistribute the GPL data or derivatives**.
 
-Hand-written fixtures under `internal/sweatbox/testdata/` are project test
+Hand-written fixtures under `pkg/twrfiles/testdata/` are project test
 assets, not a Global Airports dump.
 
 ---

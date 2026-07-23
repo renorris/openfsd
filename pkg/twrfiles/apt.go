@@ -6,12 +6,16 @@ import (
 	"strings"
 )
 
+// DefaultRegistration is the TWRTrainer fallback for registration= when the
+// header omits it. Sim GA callsign generation should use the same value
+// (see internal/sweatbox defaultRegistration).
+const DefaultRegistration = "N"
+
 // Default airport header values (TWRTrainer fallbacks).
 const (
 	defaultPatternSize    = 1.0
 	defaultInitClimbProps = 3000.0
 	defaultInitClimbJets  = 5000.0
-	defaultRegistration   = "N"
 )
 
 // pathDupKey is the shared taxiway/hold name namespace used for duplicate detection
@@ -26,7 +30,7 @@ func ParseAPT(text string) (Airport, []string) {
 		PatternSize:    defaultPatternSize,
 		InitClimbProps: defaultInitClimbProps,
 		InitClimbJets:  defaultInitClimbJets,
-		Registration:   defaultRegistration,
+		Registration:   DefaultRegistration,
 	}
 	var errs []string
 	var cur *Surface
