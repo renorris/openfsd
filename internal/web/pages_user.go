@@ -168,15 +168,33 @@ func (s *Server) loadUserIntoEditForm(page *userEditorPage, cidStr string) {
 		return
 	}
 	page.EditLoaded = true
+	actorMax := actorMaxRating(page)
+	page.EditReadOnly = user.NetworkRating > actorMax
 	page.Edit = userForm{
 		CID:           strconv.Itoa(user.CID),
 		FirstName:     safeStr(user.FirstName),
 		LastName:      safeStr(user.LastName),
 		NetworkRating: user.NetworkRating,
 	}
-	// Keep create/edit selects capped at actor max; selected value is the loaded rating
-	// (may appear only via value compare in template if above max — rare for higher targets).
-	page.RatingOptions = ratingOptionsUpTo(actorMaxRating(page), user.NetworkRating)
+	// Create/edit selects capped at actor max. For read-only higher-rated targets,
+	// still surface their rating as the selected option so the rail is accurate.
+	page.RatingOptions = ratingOptionsUpTo(actorMax, user.NetworkRating)
+	if page.EditReadOnly {
+		found := false
+		for _, o := range page.RatingOptions {
+			if o.Value == user.NetworkRating {
+				found = true
+				break
+			}
+		}
+		if !found {
+			page.RatingOptions = append(page.RatingOptions, ratingOption{
+				Value:    user.NetworkRating,
+				Label:    networkRatingLabel(user.NetworkRating),
+				Selected: true,
+			})
+		}
+	}
 }
 
 // reRenderUserEditor reloads directory + chrome after a validation failure on POST.

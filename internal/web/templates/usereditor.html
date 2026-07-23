@@ -178,9 +178,14 @@
             {{ if .EditLoaded }}
             <section class="usr-panel" aria-labelledby="edit-user-heading">
                 <div class="usr-panel-hd">
-                    <h2 id="edit-user-heading">Edit user</h2>
+                    <h2 id="edit-user-heading">{{ if .EditReadOnly }}View user{{ else }}Edit user{{ end }}</h2>
                 </div>
                 <div class="usr-panel-bd">
+                    {{ if .EditReadOnly }}
+                    <div class="usr-flash usr-flash-warn" role="status">
+                        Read-only: this user has a higher network rating than you.
+                    </div>
+                    {{ end }}
                     {{ if .Edit.Error }}
                     <div class="usr-flash usr-flash-err" role="alert">{{ .Edit.Error }}</div>
                     {{ end }}
@@ -202,18 +207,18 @@
                         <div class="usr-field">
                             <label for="edit-first-name">First name</label>
                             <input type="text" class="form-control form-control-sm" id="edit-first-name" name="first_name"
-                                   value="{{ .Edit.FirstName }}" autocomplete="given-name">
+                                   value="{{ .Edit.FirstName }}" autocomplete="given-name"{{ if .EditReadOnly }} disabled{{ end }}>
                         </div>
                         <div class="usr-field">
                             <label for="edit-last-name">Last name</label>
                             <input type="text" class="form-control form-control-sm" id="edit-last-name" name="last_name"
-                                   value="{{ .Edit.LastName }}" autocomplete="family-name">
+                                   value="{{ .Edit.LastName }}" autocomplete="family-name"{{ if .EditReadOnly }} disabled{{ end }}>
                         </div>
                         <div class="usr-field">
                             <label for="edit-network-rating">Network rating</label>
                             <select class="form-select form-select-sm{{ if .Edit.RatingError }} is-invalid{{ end }}"
                                     id="edit-network-rating" name="network_rating"
-                                    aria-label="Select network rating">
+                                    aria-label="Select network rating"{{ if .EditReadOnly }} disabled{{ end }}>
                                 {{ range .RatingOptions }}
                                 <option value="{{ .Value }}"{{ if eq .Value $.Edit.NetworkRating }} selected{{ end }}>{{ .Label }}</option>
                                 {{ end }}
@@ -225,10 +230,11 @@
                         <div class="usr-field">
                             <label for="edit-password">New password <span class="usr-hint">(blank = keep)</span></label>
                             <input type="password" class="form-control form-control-sm{{ if .Edit.PasswordError }} is-invalid{{ end }}"
-                                   id="edit-password" name="password" minlength="8" autocomplete="new-password">
+                                   id="edit-password" name="password" minlength="8" autocomplete="new-password"{{ if .EditReadOnly }} disabled{{ end }}>
                             {{ if .Edit.PasswordError }}
                             <div class="invalid-feedback d-block">{{ .Edit.PasswordError }}</div>
                             {{ end }}
+                            {{ if not .EditReadOnly }}
                             <div class="mt-1" data-js="password-strength" hidden>
                                 <div class="progress" style="height: 8px;">
                                     <div id="edit-password-strength" class="progress-bar" role="progressbar"
@@ -236,8 +242,11 @@
                                 </div>
                                 <small id="edit-password-feedback" class="form-text text-muted"></small>
                             </div>
+                            {{ end }}
                         </div>
+                        {{ if not .EditReadOnly }}
                         <button type="submit" class="btn btn-sm btn-primary">Update</button>
+                        {{ end }}
                     </form>
                 </div>
             </section>

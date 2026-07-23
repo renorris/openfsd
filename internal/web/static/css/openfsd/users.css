@@ -81,6 +81,11 @@
   border-color: #f1aeb5;
   color: var(--usr-danger);
 }
+.usr-flash-warn {
+  background: #fff3cd;
+  border-color: #ffecb5;
+  color: #664d03;
+}
 
 .usr-filters {
   display: flex;

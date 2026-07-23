@@ -122,8 +122,8 @@ type userEditorPage struct {
 	EditLoaded bool
 	// RatingOptions for create/edit selects only — ratingOptionsUpTo(actorMax, selected).
 	RatingOptions []ratingOption
-	// EditReadOnly true when target.NetworkRating > actor (optional polish / Optional PR 4;
-	// until then EditLoaded may still show a submittable form that server-rejects).
+	// EditReadOnly true when target.NetworkRating > actor: fields disabled, no Update.
+	// Server still rejects unauthorized POSTs.
 	EditReadOnly bool
 
 	// Template helpers for pagination / sort / new-user links (built server-side).

@@ -577,17 +577,36 @@ func TestSupervisorCannotUpdateHigherRatedUserViaForm(t *testing.T) {
 	sup := createTestUser(t, ts, "sup-pass", int(protocol.NetworkRatingSupervisor))
 	cookies := formLogin(t, ts, sup.CID, "sup-pass")
 
+	// GET: read-only rail for higher-rated target (no submit button).
+	w, cookies := authedGET(t, ts, "/usereditor?cid="+itoa(admin.CID), cookies)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET higher-rated user status %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "Read-only") {
+		t.Fatalf("expected read-only notice, body=%s", clip(body, 500))
+	}
+	if strings.Contains(body, `type="submit"`) && strings.Contains(body, ">Update</button>") {
+		// Update submit must not appear in read-only rail (Create panel is off when editing).
+		if strings.Contains(body, "id=\"edit-form\"") && strings.Contains(body, ">Update</button>") {
+			t.Fatal("read-only edit form must not offer Update")
+		}
+	}
+	if !strings.Contains(body, `id="edit-first-name"`) || !strings.Contains(body, "disabled") {
+		t.Fatalf("expected disabled edit fields, body=%s", clip(body, 600))
+	}
+
 	form := url.Values{}
 	form.Set("cid", itoa(admin.CID))
 	form.Set("first_name", "Hacked")
 	form.Set("last_name", "Admin")
 	form.Set("network_rating", "11")
 	form.Set("password", "")
-	w, _ := formPOST(t, ts, "/usereditor/update", form, cookies)
+	w, _ = formPOST(t, ts, "/usereditor/update", form, cookies)
 	if w.Code == http.StatusSeeOther {
 		t.Fatalf("must not update higher-rated user, Location=%s", w.Header().Get("Location"))
 	}
-	body := w.Body.String()
+	body = w.Body.String()
 	if !strings.Contains(body, "Cannot update user with higher network rating") {
 		t.Fatalf("expected higher-target error, body=%s", clip(body, 500))
 	}
