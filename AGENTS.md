@@ -11,7 +11,7 @@ Operational rules for agents and humans changing this repository. This file is t
 | Package | Owns | Notes |
 |---------|------|-------|
 | `pkg/protocol` | Pure wire format (parse/serialize/validate) | No I/O; **stdlib only** |
-| `pkg/twrfiles` | TWRTrainer `.apt`/`.air` types + Parse (+ Format later) | No I/O beyond text parse; **stdlib only** |
+| `pkg/twrfiles` | TWRTrainer `.apt`/`.air` types + Parse + Format | No I/O beyond text parse/serialize; **stdlib only** |
 | `pkg/fsdclient` | Public mock/real FSD client | Imports `protocol` only (+ stdlib) |
 | `internal/geo` | Pure haversine / bounding box | **stdlib only** |
 | `internal/auth` | JWT + VATSIM auth state | No TCP |
