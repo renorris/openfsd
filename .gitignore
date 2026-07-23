@@ -4,6 +4,9 @@
 **tmp**
 build-and-push.sh
 
+# Optional npm install under webjs/ (unit tests need no deps by default)
+node_modules/
+
 # Local SQLite databases and WAL/SHM sidecars (never commit operator data)
 *.db
 *.db-shm

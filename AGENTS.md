@@ -194,6 +194,11 @@ bash scripts/check-import-graph.sh
 # Format
 gofmt -l .
 
+# Web JS pure modules (Node ≥20; airport-editor parse/format parity)
+bash scripts/check-webjs.sh
+# or: cd webjs && npm test
+# optional coverage: cd webjs && npm run test:coverage
+
 # Benchmarks
 go test -bench=. -benchmem ./internal/postoffice/ ./pkg/protocol/
 
@@ -202,6 +207,8 @@ go test -tags=stress -count=1 -timeout=120s ./internal/server/ -run TestStress -
 ```
 
 E2E uses `pkg/fsdclient` against `StartTestServer` in `internal/server`. Stress records baselines; no absolute latency fail on cold CI.
+
+**Web JS:** pure modules live under `internal/web/static/js/openfsd/` (go:embed). Tests live under `webjs/` and import via relative path — do not duplicate sources under `webjs/src/`.
 
 Manual smoke: see root `README.md` (Docker compose / single binary).
 
