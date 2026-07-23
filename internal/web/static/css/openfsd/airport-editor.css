@@ -1,0 +1,230 @@
+/*
+ * Airport editor — dense utilitarian layout (layout-only for PR3).
+ *
+ * Target: 16:9 landscape operator console aligned with sweatbox tokens.
+ * Progressive enhancement later: map/rail interactivity. Forms and text
+ * fallback work without this stylesheet.
+ */
+
+/* --- tokens (mirrors sweatbox density; --apted-* namespace) --- */
+.apted {
+  --apted-gap: 0.5rem;
+  --apted-pad: 0.5rem 0.75rem;
+  --apted-border: #c5c9ce;
+  --apted-border-strong: #8b9198;
+  --apted-bg: #f4f5f6;
+  --apted-panel: #fff;
+  --apted-muted: #5c636a;
+  --apted-accent: #1a1a1a;
+  --apted-danger: #842029;
+  --apted-ok: #0f5132;
+  --apted-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --apted-font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --apted-fs: 0.8125rem;
+  --apted-fs-sm: 0.75rem;
+  --apted-header-approx: 3.25rem;
+
+  box-sizing: border-box;
+  font-family: var(--apted-font);
+  font-size: var(--apted-fs);
+  line-height: 1.35;
+  color: var(--apted-accent);
+  background: var(--apted-bg);
+  min-height: calc(100dvh - var(--apted-header-approx));
+  max-width: none;
+  margin: 0;
+  padding: var(--apted-pad);
+  display: flex;
+  flex-direction: column;
+  gap: var(--apted-gap);
+}
+
+.apted *,
+.apted *::before,
+.apted *::after {
+  box-sizing: border-box;
+}
+
+/* --- title / flash --- */
+.apted-titlebar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.25rem 1rem;
+  margin: 0;
+}
+
+.apted-titlebar h1 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.apted-hint {
+  margin: 0;
+  color: var(--apted-muted);
+  font-size: var(--apted-fs-sm);
+}
+
+.apted-flash {
+  margin: 0;
+  padding: 0.35rem 0.6rem;
+  font-size: var(--apted-fs-sm);
+  border: 1px solid var(--apted-border);
+  border-radius: 2px;
+}
+
+.apted-flash-ok {
+  background: #d1e7dd;
+  color: var(--apted-ok);
+  border-color: #a3cfbb;
+}
+
+.apted-flash-err {
+  background: #f8d7da;
+  color: var(--apted-danger);
+  border-color: #f1aeb5;
+}
+
+/* --- body grid: map + rail --- */
+.apted-body {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: 1fr;
+  min-height: 0;
+  gap: var(--apted-gap);
+}
+
+@media (min-width: 900px) {
+  .apted-body {
+    grid-template-columns: minmax(0, 1fr) minmax(18rem, 24rem);
+    max-height: calc(100dvh - var(--apted-header-approx) - 6rem);
+  }
+}
+
+.apted-map {
+  min-height: 16rem;
+  background: #dfe6ea;
+  border: 1px solid var(--apted-border-strong);
+  border-radius: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+
+.apted-map-placeholder {
+  margin: 0;
+  max-width: 28rem;
+  text-align: center;
+  color: var(--apted-muted);
+  font-size: var(--apted-fs-sm);
+}
+
+.apted-rail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--apted-gap);
+  min-height: 0;
+  min-width: 0;
+}
+
+.apted-panel {
+  background: var(--apted-panel);
+  border: 1px solid var(--apted-border);
+  border-radius: 2px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+.apted-panel-hd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.25rem 0.5rem;
+  padding: 0.3rem 0.5rem;
+  border-bottom: 1px solid var(--apted-border);
+  background: #e9ecef;
+}
+
+.apted-panel-hd h2 {
+  margin: 0;
+  font-size: var(--apted-fs-sm);
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.apted-panel-bd {
+  padding: 0.45rem 0.5rem;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+/* --- no-JS text fallback --- */
+.apted-fallback {
+  background: var(--apted-panel);
+  border: 1px solid var(--apted-border);
+  border-radius: 2px;
+  padding: 0.6rem 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.apted-fallback h2 {
+  margin: 0;
+  font-size: var(--apted-fs-sm);
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.apted-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin: 0;
+  padding-top: 0.35rem;
+  border-top: 1px dashed var(--apted-border);
+}
+
+.apted-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  margin: 0;
+}
+
+.apted-field > label {
+  font-size: var(--apted-fs-sm);
+  font-weight: 600;
+  color: var(--apted-muted);
+  margin: 0;
+}
+
+.apted-field textarea,
+.apted-field input[type="text"] {
+  font-family: var(--apted-mono);
+  font-size: var(--apted-fs-sm);
+  border: 1px solid var(--apted-border);
+  border-radius: 2px;
+  padding: 0.35rem 0.45rem;
+  width: 100%;
+  max-width: 100%;
+}
+
+.apted-field textarea {
+  min-height: 8rem;
+  resize: vertical;
+  line-height: 1.4;
+}

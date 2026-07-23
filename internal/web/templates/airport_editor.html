@@ -1,0 +1,98 @@
+{{ define "title" }}Airport Editor{{ end }}
+
+{{ define "body" }}
+{{/*
+  JS budget exception (airport map editor) — complexity-gate exception:
+  This route will load Leaflet (vendor) + first-party airport-editor modules
+  in a later PR. Map geometry authoring is JS-primary (documented exception
+  to the general PE bar). Essential data path without JS: paste apt_text /
+  air_text + form CSRF echo-download. No SPA router / global server store /
+  hydration. Files are never written to server disk or DB.
+*/}}
+<link href="/static/css/openfsd/airport-editor.css" rel="stylesheet">
+
+<main id="apted-root" class="apted container-fluid"
+      data-js="airport-editor">
+
+    <header class="apted-titlebar">
+        <h1>Airport Editor</h1>
+        <p class="apted-hint">
+            Integrated .apt + .air authoring · text download works without JS ·
+            map requires JavaScript (coming soon)
+        </p>
+    </header>
+
+    {{ if .FlashSuccess }}
+    <div class="apted-flash apted-flash-ok" role="status">{{ .FlashSuccess }}</div>
+    {{ end }}
+    {{ if .FlashError }}
+    <div class="apted-flash apted-flash-err" role="alert">{{ .FlashError }}</div>
+    {{ end }}
+
+    <div class="apted-body">
+        <div id="apted-map" class="apted-map" role="application"
+             aria-label="Airport map editor (requires JavaScript)">
+            <p class="apted-map-placeholder">
+                Map editing requires JavaScript. Use the text fallback below to
+                paste and download <code>.apt</code> / <code>.air</code> files.
+            </p>
+        </div>
+
+        <aside class="apted-rail" aria-label="Editor panels">
+            <section class="apted-panel" aria-labelledby="apted-raw-heading">
+                <div class="apted-panel-hd">
+                    <h2 id="apted-raw-heading">Raw text</h2>
+                    <span class="apted-hint">No server save</span>
+                </div>
+                <div class="apted-panel-bd">
+                    <p class="apted-hint mb-0">
+                        Paste file text, set a safe filename, then download.
+                        Nothing is stored on the server.
+                    </p>
+                </div>
+            </section>
+        </aside>
+    </div>
+
+    {{/* No-JS fallback: always present in HTML (not JS-injected) */}}
+    <section class="apted-fallback" aria-labelledby="apted-fallback-heading">
+        <h2 id="apted-fallback-heading">Text fallback (works without JavaScript)</h2>
+        <p class="apted-hint">
+            Map editing requires JavaScript. Paste or type file text below, then download.
+            Echo-download only — the server does not persist these files.
+        </p>
+
+        <form method="post" action="/airport-editor/download-apt" class="apted-form">
+            <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
+            <div class="apted-field">
+                <label for="apt_text">Airport .apt</label>
+                <textarea id="apt_text" name="apt_text" rows="12" spellcheck="false"
+                          placeholder="icao=KBTV&#10;…"></textarea>
+            </div>
+            <div class="apted-field">
+                <label for="apt_filename">Download filename</label>
+                <input type="text" id="apt_filename" name="filename" value="airport.apt"
+                       autocomplete="off" spellcheck="false" maxlength="64"
+                       pattern="[A-Za-z0-9._\-]{1,64}">
+            </div>
+            <button type="submit" class="btn btn-sm btn-primary">Download .apt</button>
+        </form>
+
+        <form method="post" action="/airport-editor/download-air" class="apted-form">
+            <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
+            <div class="apted-field">
+                <label for="air_text">Scenario .air</label>
+                <textarea id="air_text" name="air_text" rows="8" spellcheck="false"
+                          placeholder="CALLSIGN:TYPE:…"></textarea>
+            </div>
+            <div class="apted-field">
+                <label for="air_filename">Download filename</label>
+                <input type="text" id="air_filename" name="filename" value="scenario.air"
+                       autocomplete="off" spellcheck="false" maxlength="64"
+                       pattern="[A-Za-z0-9._\-]{1,64}">
+            </div>
+            <button type="submit" class="btn btn-sm btn-primary">Download .air</button>
+        </form>
+    </section>
+</main>
+{{ end }}

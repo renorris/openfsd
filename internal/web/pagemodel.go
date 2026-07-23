@@ -145,6 +145,14 @@ type sweatboxPage struct {
 	Aircraft []sweatboxAircraftRow
 }
 
+// airportEditorPage is the Administrator airport .apt/.air editor MPA model.
+// No durable server state — document lives in the browser; download is echo-only.
+type airportEditorPage struct {
+	basePage
+	FlashSuccess string
+	FlashError   string
+}
+
 func pageUserFromClaims(claims *auth.CustomClaims) *pageUser {
 	if claims == nil {
 		return nil

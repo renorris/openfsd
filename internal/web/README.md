@@ -13,11 +13,15 @@ JSON under `/api/v1` for external tools and map polling. First-party UI is a pro
 | Dashboard | `GET /dashboard` | session; **server-rendered connection summary** (table/counts from FSD service). Leaflet map is PE only (`credentials: 'same-origin'`) |
 | User editor | `GET /usereditor[?cid=]`, `POST /usereditor/create`, `POST /usereditor/update` | Supervisor+; CSRF on mutations |
 | Config editor | `GET/POST /configeditor`, `POST /configeditor/create-token`, `POST /configeditor/reset-secret` | Administrator; CSRF on mutations |
+| Sweatbox | `GET /sweatbox`, form POSTs under `/sweatbox/*` | Administrator; CSRF on mutations; proxies FSD service HTTP |
+| Airport editor | `GET /airport-editor`, `POST /airport-editor/download-apt`, `POST /airport-editor/download-air` | Administrator; CSRF on download; **echo-only** (no disk/DB persistence of `.apt`/`.air`) |
 
 JSON under `/api/v1` remains for external consumers and map polling. Admin mutations work with **cookie + CSRF only** (no `Authorization` header required).
 
 ### JS budget / map exception
 First-party openfsd modules stay small and vanilla (no jQuery). The **dashboard route** may load **Leaflet** (vendor) + `dashboard.js` as a documented exception to the 30–50 KB compressed first-party budget. Failure mode: map is absent; connection summary HTML still works.
+
+The **airport editor** (`/airport-editor`) is a second complexity-gate exception for map geometry authoring (Leaflet + first-party modules, landed in later PRs). Essential data path without JS: paste `apt_text` / `air_text` + CSRF form echo-download. Map region is inert when JS is off. Download handlers never write APT/AIR to disk or DB.
 
 ---
 
