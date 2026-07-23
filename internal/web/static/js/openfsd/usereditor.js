@@ -1,5 +1,7 @@
-// Progressive enhancement for user editor: password strength meter only.
-// Create / update / search use native form POST/GET — no JS required.
+// Progressive enhancement for user editor:
+// - Password strength meters (existing)
+// - Optional row-click navigates to the row's EditHref (real <a> remains primary path)
+// Create / update / filter / sort / pagination use native form POST/GET — no JS required.
 
 function evaluatePassword(password, strengthBar, feedback) {
     if (!password) {
@@ -40,7 +42,7 @@ function bindPasswordMeter(inputId, barId, feedbackId) {
     if (!input || !bar || !feedback) {
         return;
     }
-    const wrap = input.closest(".mb-3");
+    const wrap = input.closest(".usr-field") || input.closest(".mb-3");
     if (wrap) {
         const pe = wrap.querySelector("[data-js=password-strength]");
         if (pe) {
@@ -52,7 +54,29 @@ function bindPasswordMeter(inputId, barId, feedbackId) {
     });
 }
 
+function bindDirectoryRowClicks() {
+    const table = document.getElementById("user-directory-table");
+    if (!table) {
+        return;
+    }
+    table.addEventListener("click", function (ev) {
+        // Let real links / buttons work natively.
+        if (ev.target.closest("a, button, input, select, label")) {
+            return;
+        }
+        const row = ev.target.closest("tr[data-edit-href]");
+        if (!row) {
+            return;
+        }
+        const href = row.getAttribute("data-edit-href");
+        if (href) {
+            window.location.href = href;
+        }
+    });
+}
+
 document.addEventListener("DOMContentLoaded", function () {
     bindPasswordMeter("create-password", "create-password-strength", "create-password-feedback");
     bindPasswordMeter("edit-password", "edit-password-strength", "edit-password-feedback");
+    bindDirectoryRowClicks();
 });

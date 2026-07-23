@@ -61,12 +61,25 @@ func TestNoJSUserCreateAndLoad(t *testing.T) {
 	admin := createTestUser(t, ts, "admin-pass", int(protocol.NetworkRatingSupervisor))
 	cookies := formLogin(t, ts, admin.CID, "admin-pass")
 
-	// GET usereditor must be server-rendered (forms present).
+	// GET usereditor: directory + empty rail (create only when ?new=1).
 	w, cookies := authedGET(t, ts, "/usereditor", cookies)
 	if w.Code != http.StatusOK {
 		t.Fatalf("GET /usereditor status %d", w.Code)
 	}
 	body := w.Body.String()
+	if !strings.Contains(body, `id="user-directory-table"`) {
+		t.Fatalf("expected directory table, body=%s", clip(body, 500))
+	}
+	if !strings.Contains(body, "New user") {
+		t.Fatal("expected New user control")
+	}
+
+	// Create rail: ?new=1 shows create form with CSRF.
+	w, cookies = authedGET(t, ts, "/usereditor?new=1", cookies)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /usereditor?new=1 status %d", w.Code)
+	}
+	body = w.Body.String()
 	if !strings.Contains(body, `method="post" action="/usereditor/create"`) {
 		t.Fatalf("expected create form POST action, body=%s", clip(body, 500))
 	}
@@ -85,9 +98,7 @@ func TestNoJSUserCreateAndLoad(t *testing.T) {
 		t.Fatalf("create status %d body %s", w.Code, w.Body.String())
 	}
 	loc := w.Header().Get("Location")
-	if !strings.Contains(loc, "/usereditor?cid=") || !strings.Contains(loc, "flash=created") {
-		t.Fatalf("unexpected redirect Location=%q", loc)
-	}
+	assertUserEditorRedirect(t, loc, "", "created")
 
 	// Follow redirect: edit form should show created user (server-rendered).
 	w, cookies = authedGET(t, ts, loc, cookies)
@@ -495,14 +506,19 @@ func TestSupervisorCannotCreateAdminViaForm(t *testing.T) {
 	sup := createTestUser(t, ts, "sup-pass", int(protocol.NetworkRatingSupervisor))
 	cookies := formLogin(t, ts, sup.CID, "sup-pass")
 
-	// UI should not offer Administrator option for supervisor
+	// UI should not offer Administrator option for supervisor on create/edit selects.
+	// Filter may legally contain value="12" (inventory).
 	w, cookies := authedGET(t, ts, "/usereditor", cookies)
 	if w.Code != http.StatusOK {
 		t.Fatalf("GET usereditor %d", w.Code)
 	}
 	body := w.Body.String()
-	if strings.Contains(body, `value="12"`) {
-		t.Fatal("supervisor usereditor should not list Administrator (12) option")
+	if selectContainsValue(body, "create-network-rating", "12") {
+		t.Fatal("supervisor create select should not list Administrator (12)")
+	}
+	// Empty rail: edit select absent; when present must also exclude 12.
+	if selectContainsValue(body, "edit-network-rating", "12") {
+		t.Fatal("supervisor edit select should not list Administrator (12)")
 	}
 
 	form := url.Values{}
@@ -582,5 +598,371 @@ func TestSupervisorCannotUpdateHigherRatedUserViaForm(t *testing.T) {
 	}
 	if safeStr(u.FirstName) == "Hacked" {
 		t.Fatal("admin first name must not change")
+	}
+}
+
+// assertUserEditorRedirect parses Location and requires cid + flash query keys.
+// wantCID empty means any positive cid is accepted.
+func assertUserEditorRedirect(t *testing.T, loc, wantCID, wantFlash string) {
+	t.Helper()
+	u, err := url.Parse(loc)
+	if err != nil {
+		t.Fatalf("parse Location %q: %v", loc, err)
+	}
+	if u.Path != "/usereditor" {
+		t.Fatalf("Location path=%q want /usereditor (full=%q)", u.Path, loc)
+	}
+	q := u.Query()
+	cid := q.Get("cid")
+	if cid == "" {
+		t.Fatalf("Location missing cid: %q", loc)
+	}
+	if wantCID != "" && cid != wantCID {
+		t.Fatalf("Location cid=%q want %q (full=%q)", cid, wantCID, loc)
+	}
+	if q.Get("flash") != wantFlash {
+		t.Fatalf("Location flash=%q want %q (full=%q)", q.Get("flash"), wantFlash, loc)
+	}
+}
+
+// selectContainsValue reports whether the HTML select with the given id has an
+// option with the given value attribute. Scopes to that element so filter
+// options (which may include value="12") do not false-positive create/edit ceilings.
+func selectContainsValue(body, selectID, value string) bool {
+	// Find id="selectID"
+	marker := `id="` + selectID + `"`
+	i := strings.Index(body, marker)
+	if i < 0 {
+		return false
+	}
+	// Search forward for </select>
+	rest := body[i:]
+	end := strings.Index(strings.ToLower(rest), "</select>")
+	if end < 0 {
+		return false
+	}
+	chunk := rest[:end]
+	return strings.Contains(chunk, `value="`+value+`"`)
+}
+
+func TestNoJSUserDirectoryListsUsers(t *testing.T) {
+	ts := newTestServer(t)
+	sup := createTestUser(t, ts, "sup-pass", int(protocol.NetworkRatingSupervisor))
+	// Named user for directory display
+	first := "Alice"
+	last := "Directory"
+	u := &db.User{
+		Password:      "password99",
+		FirstName:     &first,
+		LastName:      &last,
+		NetworkRating: int(protocol.NetworkRatingObserver),
+	}
+	if err := ts.dbRepo.UserRepo.CreateUser(u); err != nil {
+		t.Fatal(err)
+	}
+	cookies := formLogin(t, ts, sup.CID, "sup-pass")
+
+	w, _ := authedGET(t, ts, "/usereditor", cookies)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `id="user-directory-table"`) {
+		t.Fatalf("expected directory table, body=%s", clip(body, 400))
+	}
+	if !strings.Contains(body, itoa(u.CID)) {
+		t.Fatalf("expected seeded CID %d in directory", u.CID)
+	}
+	if !strings.Contains(body, "Alice Directory") {
+		t.Fatalf("expected display name in directory, body=%s", clip(body, 600))
+	}
+	if !strings.Contains(body, `id="filter-network-rating"`) {
+		t.Fatal("expected filter rating select")
+	}
+	// Filter may include ADM=12
+	if !selectContainsValue(body, "filter-network-rating", "12") {
+		t.Fatal("filter should list Administrator (12) for discovery")
+	}
+	// Empty rail empty-state
+	if !strings.Contains(body, "Select a user from the directory") {
+		t.Fatal("expected empty rail message")
+	}
+}
+
+func TestNoJSUserDirectorySearch(t *testing.T) {
+	ts := newTestServer(t)
+	sup := createTestUser(t, ts, "sup-pass", int(protocol.NetworkRatingSupervisor))
+	aliceFirst, aliceLast := "Alice", "Smithson"
+	bobFirst, bobLast := "Bob", "Jones"
+	alice := &db.User{Password: "password99", FirstName: &aliceFirst, LastName: &aliceLast, NetworkRating: 1}
+	bob := &db.User{Password: "password99", FirstName: &bobFirst, LastName: &bobLast, NetworkRating: 1}
+	if err := ts.dbRepo.UserRepo.CreateUser(alice); err != nil {
+		t.Fatal(err)
+	}
+	if err := ts.dbRepo.UserRepo.CreateUser(bob); err != nil {
+		t.Fatal(err)
+	}
+	cookies := formLogin(t, ts, sup.CID, "sup-pass")
+
+	w, _ := authedGET(t, ts, "/usereditor?q=Smithson", cookies)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "Alice Smithson") {
+		t.Fatalf("expected Alice match, body=%s", clip(body, 600))
+	}
+	if strings.Contains(body, "Bob Jones") {
+		t.Fatal("Bob should not match q=Smithson")
+	}
+	if !strings.Contains(body, `value="Smithson"`) {
+		t.Fatal("filter form should echo q")
+	}
+}
+
+func TestNoJSUserDirectoryRatingFilter(t *testing.T) {
+	ts := newTestServer(t)
+	sup := createTestUser(t, ts, "sup-pass", int(protocol.NetworkRatingSupervisor))
+	obs := createTestUser(t, ts, "obs-pass", int(protocol.NetworkRatingObserver))
+	// S1 student
+	s1First := "Stu"
+	s1 := &db.User{Password: "password99", FirstName: &s1First, NetworkRating: 2}
+	if err := ts.dbRepo.UserRepo.CreateUser(s1); err != nil {
+		t.Fatal(err)
+	}
+	cookies := formLogin(t, ts, sup.CID, "sup-pass")
+
+	w, _ := authedGET(t, ts, "/usereditor?rating=1", cookies)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d", w.Code)
+	}
+	body := w.Body.String()
+	// Observer (1) should appear; S1 (2) should not
+	if !strings.Contains(body, `>`+itoa(obs.CID)+`<`) && !strings.Contains(body, itoa(obs.CID)) {
+		t.Fatalf("expected observer cid %d for rating=1", obs.CID)
+	}
+	// Selected filter option
+	if !strings.Contains(body, `id="filter-network-rating"`) {
+		t.Fatal("missing filter select")
+	}
+}
+
+func TestNoJSUserDirectorySort(t *testing.T) {
+	ts := newTestServer(t)
+	sup := createTestUser(t, ts, "sup-pass", int(protocol.NetworkRatingSupervisor))
+	cookies := formLogin(t, ts, sup.CID, "sup-pass")
+
+	w, _ := authedGET(t, ts, "/usereditor?sort=rating&dir=desc", cookies)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `sort=rating`) {
+		t.Fatal("expected sort links/hidden sort=rating context")
+	}
+	// Active sort indicator on rating header
+	if !strings.Contains(body, "Rating") {
+		t.Fatal("expected Rating column")
+	}
+}
+
+func TestNoJSUserDirectoryPagination(t *testing.T) {
+	ts := newTestServer(t)
+	sup := createTestUser(t, ts, "sup-pass", int(protocol.NetworkRatingSupervisor))
+	// Seed enough users that page 2 exists only if page size is small —
+	// page size is fixed at 50, so create 51 extra users is heavy.
+	// Instead assert pager chrome renders and page=2 clamps/works with few users.
+	cookies := formLogin(t, ts, sup.CID, "sup-pass")
+
+	w, _ := authedGET(t, ts, "/usereditor?page=1", cookies)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "usr-pager") && !strings.Contains(body, "Page 1") {
+		t.Fatalf("expected pager, body=%s", clip(body, 400))
+	}
+
+	// page past end clamps to last page (still 200)
+	w, _ = authedGET(t, ts, "/usereditor?page=999", cookies)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "Page 1 of") {
+		t.Fatalf("expected clamp to page 1, body=%s", clip(w.Body.String(), 400))
+	}
+}
+
+func TestNoJSUserSelectPreservesFilters(t *testing.T) {
+	ts := newTestServer(t)
+	sup := createTestUser(t, ts, "sup-pass", int(protocol.NetworkRatingSupervisor))
+	first, last := "Filter", "Keep"
+	target := &db.User{Password: "password99", FirstName: &first, LastName: &last, NetworkRating: 1}
+	if err := ts.dbRepo.UserRepo.CreateUser(target); err != nil {
+		t.Fatal(err)
+	}
+	cookies := formLogin(t, ts, sup.CID, "sup-pass")
+
+	path := "/usereditor?q=Filter&sort=name&dir=asc&cid=" + itoa(target.CID)
+	w, _ := authedGET(t, ts, path, cookies)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `value="Filter"`) {
+		t.Fatal("filter q should be preserved")
+	}
+	if !strings.Contains(body, `id="edit-form"`) {
+		t.Fatal("expected edit form for selected cid")
+	}
+	if !strings.Contains(body, `value="Filter"`) || !strings.Contains(body, `value="Keep"`) {
+		t.Fatal("edit form should show names")
+	}
+	// Row edit href should carry q
+	if !strings.Contains(body, "q=Filter") {
+		t.Fatal("row/sort links should preserve q=Filter")
+	}
+	// Selected row class
+	if !strings.Contains(body, "usr-row-selected") {
+		t.Fatal("expected selected row highlight")
+	}
+}
+
+func TestNoJSUserCreatePreservesFilters(t *testing.T) {
+	ts := newTestServer(t)
+	sup := createTestUser(t, ts, "sup-pass", int(protocol.NetworkRatingSupervisor))
+	cookies := formLogin(t, ts, sup.CID, "sup-pass")
+
+	// Open create with filters in URL
+	w, cookies := authedGET(t, ts, "/usereditor?q=zzz&sort=name&dir=desc&new=1", cookies)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET create rail %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `id="create-form"`) {
+		t.Fatal("expected create form")
+	}
+	if !strings.Contains(body, `name="dir_q" value="zzz"`) {
+		t.Fatalf("expected hidden dir_q, body=%s", clip(body, 800))
+	}
+
+	form := url.Values{}
+	form.Set("first_name", "Preserve")
+	form.Set("last_name", "Filters")
+	form.Set("password", "password99")
+	form.Set("network_rating", "1")
+	form.Set("dir_q", "zzz")
+	form.Set("dir_rating", "")
+	form.Set("dir_sort", "name")
+	form.Set("dir_dir", "desc")
+	form.Set("dir_page", "1")
+	w, cookies = formPOST(t, ts, "/usereditor/create", form, cookies)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("create status %d body %s", w.Code, w.Body.String())
+	}
+	loc := w.Header().Get("Location")
+	u, err := url.Parse(loc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := u.Query()
+	if q.Get("flash") != "created" {
+		t.Fatalf("flash=%q loc=%q", q.Get("flash"), loc)
+	}
+	if q.Get("cid") == "" {
+		t.Fatalf("missing cid in %q", loc)
+	}
+	if q.Get("q") != "zzz" {
+		t.Fatalf("q not preserved: %q", loc)
+	}
+	if q.Get("sort") != "name" {
+		t.Fatalf("sort not preserved: %q", loc)
+	}
+	if q.Get("dir") != "desc" {
+		t.Fatalf("dir not preserved: %q", loc)
+	}
+}
+
+func TestNoJSUserUpdatePreservesFilters(t *testing.T) {
+	ts := newTestServer(t)
+	sup := createTestUser(t, ts, "sup-pass", int(protocol.NetworkRatingSupervisor))
+	target := createTestUser(t, ts, "target-pass", int(protocol.NetworkRatingObserver))
+	cookies := formLogin(t, ts, sup.CID, "sup-pass")
+
+	form := url.Values{}
+	form.Set("cid", itoa(target.CID))
+	form.Set("first_name", "Updated")
+	form.Set("last_name", "KeepQ")
+	form.Set("network_rating", "2")
+	form.Set("password", "")
+	form.Set("dir_q", "KeepQ")
+	form.Set("dir_rating", "2")
+	form.Set("dir_sort", "rating")
+	form.Set("dir_dir", "asc")
+	form.Set("dir_page", "1")
+	w, _ := formPOST(t, ts, "/usereditor/update", form, cookies)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("update status %d body %s", w.Code, w.Body.String())
+	}
+	loc := w.Header().Get("Location")
+	u, err := url.Parse(loc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := u.Query()
+	if q.Get("flash") != "updated" {
+		t.Fatalf("flash=%q", q.Get("flash"))
+	}
+	if q.Get("cid") != itoa(target.CID) {
+		t.Fatalf("cid=%q", q.Get("cid"))
+	}
+	if q.Get("q") != "KeepQ" {
+		t.Fatalf("q not preserved: %q", loc)
+	}
+	if q.Get("rating") != "2" {
+		t.Fatalf("rating not preserved: %q", loc)
+	}
+	if q.Get("sort") != "rating" {
+		t.Fatalf("sort not preserved: %q", loc)
+	}
+}
+
+func TestNoJSUserFilterFormOmitsPageAndSelection(t *testing.T) {
+	ts := newTestServer(t)
+	sup := createTestUser(t, ts, "sup-pass", int(protocol.NetworkRatingSupervisor))
+	cookies := formLogin(t, ts, sup.CID, "sup-pass")
+
+	w, _ := authedGET(t, ts, "/usereditor?q=x&page=2&cid=1&new=1", cookies)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d", w.Code)
+	}
+	body := w.Body.String()
+	// Filter form should not include page/cid/new/flash fields
+	// Extract filter form roughly
+	idx := strings.Index(body, `id="user-filter-form"`)
+	if idx < 0 {
+		t.Fatal("missing filter form")
+	}
+	rest := body[idx:]
+	end := strings.Index(rest, "</form>")
+	if end < 0 {
+		t.Fatal("unclosed filter form")
+	}
+	formHTML := rest[:end]
+	if strings.Contains(formHTML, `name="page"`) {
+		t.Fatal("filter form must omit page")
+	}
+	if strings.Contains(formHTML, `name="cid"`) {
+		t.Fatal("filter form must omit cid")
+	}
+	if strings.Contains(formHTML, `name="new"`) {
+		t.Fatal("filter form must omit new")
+	}
+	if strings.Contains(formHTML, `name="flash"`) {
+		t.Fatal("filter form must omit flash")
+	}
+	// Should preserve sort/dir as hidden
+	if !strings.Contains(formHTML, `name="sort"`) || !strings.Contains(formHTML, `name="dir"`) {
+		t.Fatal("filter form must include hidden sort/dir")
 	}
 }

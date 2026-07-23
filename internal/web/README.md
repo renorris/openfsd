@@ -11,7 +11,7 @@ JSON under `/api/v1` for external tools and map polling. First-party UI is a pro
 |------|--------|-------|
 | Login | `GET/POST /login`, `POST /logout` | public / session |
 | Dashboard | `GET /dashboard` | session; **server-rendered connection summary** (table/counts from FSD service). Leaflet map is PE only (`credentials: 'same-origin'`) |
-| User editor | `GET /usereditor[?cid=]`, `POST /usereditor/create`, `POST /usereditor/update` | Supervisor+; CSRF on mutations |
+| Users (directory) | `GET /usereditor[?q&rating&sort&dir&page&cid&new&flash]`, `POST /usereditor/create`, `POST /usereditor/update` | Supervisor+; CSRF on mutations; URL-owned filters; create/update POST may send `dir_*` hidden fields to preserve directory state on PRG |
 | Config editor | `GET/POST /configeditor`, `POST /configeditor/create-token`, `POST /configeditor/reset-secret` | Administrator; CSRF on mutations |
 
 JSON under `/api/v1` remains for external consumers and map polling. Admin mutations work with **cookie + CSRF only** (no `Authorization` header required).

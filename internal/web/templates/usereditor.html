@@ -1,56 +1,164 @@
-{{ define "title" }}User Editor{{ end }}
+{{ define "title" }}Users{{ end }}
 
 {{ define "body" }}
-<main class="container mt-4">
-    <h1 class="h4 mb-3">User Editor</h1>
+{{/*
+  Dense user directory + create/edit rail (server-rendered MPA).
+
+  Progressive enhancement (usereditor.js):
+  - Password strength meters
+  - Optional row-click navigates to EditHref
+
+  Primary path: HTML forms + links + CSRF + PRG. No SPA / client filter.
+  Layout: dense 16:9 operator console (users.css / usr-*).
+*/}}
+<link href="/static/css/openfsd/users.css" rel="stylesheet">
+
+<main class="usr container-fluid">
+    <div class="usr-titlebar">
+        <h1>Users</h1>
+        <p class="usr-hint">Directory · create and edit in the rail · forms work without JS</p>
+        <span class="usr-count" aria-live="polite">{{ .Dir.Total }} total</span>
+    </div>
 
     {{ if .FlashSuccess }}
-    <div class="alert alert-success" role="status">{{ .FlashSuccess }}</div>
+    <div class="usr-flash usr-flash-ok" role="status">{{ .FlashSuccess }}</div>
     {{ end }}
     {{ if .FlashError }}
-    <div class="alert alert-danger" role="alert">{{ .FlashError }}</div>
+    <div class="usr-flash usr-flash-err" role="alert">{{ .FlashError }}</div>
     {{ end }}
 
-    <div class="row">
-        <div class="col-12 col-md-4 mb-4">
-            <div class="card">
-                <div class="card-body">
-                    <h2 class="h5 card-title">Create User</h2>
-                    {{ if .Create.Error }}
-                    <div class="alert alert-danger" role="alert">{{ .Create.Error }}</div>
+    <form class="usr-filters" method="get" action="/usereditor" id="user-filter-form">
+        <div class="usr-field">
+            <label for="filter-q">Search</label>
+            <input type="search" id="filter-q" name="q" value="{{ .Dir.Q }}"
+                   placeholder="CID, name…" autocomplete="off">
+        </div>
+        <div class="usr-field">
+            <label for="filter-network-rating">Rating</label>
+            <select id="filter-network-rating" name="rating" aria-label="Filter by network rating">
+                <option value=""{{ if not .Dir.Rating }} selected{{ end }}>All ratings</option>
+                {{ range .FilterRatingOptions }}
+                <option value="{{ .Value }}"{{ if .Selected }} selected{{ end }}>{{ .Label }}</option>
+                {{ end }}
+            </select>
+        </div>
+        <input type="hidden" name="sort" value="{{ .Dir.Sort }}">
+        <input type="hidden" name="dir" value="{{ .Dir.DirParam }}">
+        {{/* omit page, cid, new, flash — filter resets page and selection */}}
+        <button type="submit" class="btn btn-sm btn-primary">Filter</button>
+        <a class="btn btn-sm btn-outline-secondary" href="{{ .NewUserHref }}">New user</a>
+    </form>
+
+    <div class="usr-body">
+        <section class="usr-panel" aria-labelledby="users-dir-heading">
+            <div class="usr-panel-hd">
+                <h2 id="users-dir-heading">Directory</h2>
+                <span class="usr-hint">
+                    {{ if gt .Dir.Pages 1 }}Page {{ .Dir.Page }} / {{ .Dir.Pages }} · {{ end }}
+                    {{ .Dir.Total }} users
+                </span>
+            </div>
+            <div class="usr-panel-bd">
+                <div class="usr-table-scroll">
+                    <table class="usr-table table table-sm mb-0" id="user-directory-table">
+                        <thead>
+                        <tr>
+                            <th scope="col">
+                                <a href="{{ .SortCIDHref }}"{{ if eq .Dir.Sort "cid" }} aria-current="true"{{ end }}>
+                                    CID{{ if eq .Dir.Sort "cid" }}{{ if .Dir.Desc }} ↓{{ else }} ↑{{ end }}{{ end }}
+                                </a>
+                            </th>
+                            <th scope="col">
+                                <a href="{{ .SortNameHref }}"{{ if eq .Dir.Sort "name" }} aria-current="true"{{ end }}>
+                                    Name{{ if eq .Dir.Sort "name" }}{{ if .Dir.Desc }} ↓{{ else }} ↑{{ end }}{{ end }}
+                                </a>
+                            </th>
+                            <th scope="col">
+                                <a href="{{ .SortRatingHref }}"{{ if eq .Dir.Sort "rating" }} aria-current="true"{{ end }}>
+                                    Rating{{ if eq .Dir.Sort "rating" }}{{ if .Dir.Desc }} ↓{{ else }} ↑{{ end }}{{ end }}
+                                </a>
+                            </th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        {{ range .Users }}
+                        <tr class="{{ if .Selected }}usr-row-selected{{ end }}"
+                            data-edit-href="{{ .EditHref }}"
+                            {{ if .Selected }}aria-current="true"{{ end }}>
+                            <td class="usr-cid"><a href="{{ .EditHref }}">{{ .CID }}</a></td>
+                            <td>{{ .DisplayName }}</td>
+                            <td title="{{ .RatingLabel }}">{{ .RatingShort }}</td>
+                        </tr>
+                        {{ else }}
+                        <tr>
+                            <td colspan="3" class="usr-empty">No users match.</td>
+                        </tr>
+                        {{ end }}
+                        </tbody>
+                    </table>
+                </div>
+                <nav class="usr-pager" aria-label="Directory pages">
+                    {{ if .PrevPageHref }}
+                    <a class="btn btn-sm btn-outline-secondary" href="{{ .PrevPageHref }}">Prev</a>
+                    {{ else }}
+                    <span class="btn btn-sm btn-outline-secondary disabled" aria-disabled="true">Prev</span>
                     {{ end }}
-                    <form class="mb-0" id="create-form" method="post" action="/usereditor/create" data-js="user-create">
+                    <span class="usr-pager-status">Page {{ .Dir.Page }} of {{ .Dir.Pages }}</span>
+                    {{ if .NextPageHref }}
+                    <a class="btn btn-sm btn-outline-secondary" href="{{ .NextPageHref }}">Next</a>
+                    {{ else }}
+                    <span class="btn btn-sm btn-outline-secondary disabled" aria-disabled="true">Next</span>
+                    {{ end }}
+                </nav>
+            </div>
+        </section>
+
+        <aside class="usr-rail" aria-label="User form">
+            {{ if .ShowCreate }}
+            <section class="usr-panel" aria-labelledby="create-user-heading">
+                <div class="usr-panel-hd">
+                    <h2 id="create-user-heading">Create user</h2>
+                </div>
+                <div class="usr-panel-bd">
+                    {{ if .Create.Error }}
+                    <div class="usr-flash usr-flash-err" role="alert">{{ .Create.Error }}</div>
+                    {{ end }}
+                    <form class="usr-form mb-0" id="create-form" method="post" action="/usereditor/create" data-js="user-create">
                         <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
-                        <div class="mb-3">
-                            <label for="create-first-name" class="form-label">First Name</label>
-                            <input type="text" class="form-control" id="create-first-name" name="first_name"
+                        <input type="hidden" name="dir_q" value="{{ .Dir.Q }}">
+                        <input type="hidden" name="dir_rating" value="{{ .Dir.RatingParam }}">
+                        <input type="hidden" name="dir_sort" value="{{ .Dir.Sort }}">
+                        <input type="hidden" name="dir_dir" value="{{ .Dir.DirParam }}">
+                        <input type="hidden" name="dir_page" value="{{ .Dir.Page }}">
+                        <div class="usr-field">
+                            <label for="create-first-name">First name</label>
+                            <input type="text" class="form-control form-control-sm" id="create-first-name" name="first_name"
                                    value="{{ .Create.FirstName }}" autocomplete="given-name">
                         </div>
-                        <div class="mb-3">
-                            <label for="create-last-name" class="form-label">Last Name</label>
-                            <input type="text" class="form-control" id="create-last-name" name="last_name"
+                        <div class="usr-field">
+                            <label for="create-last-name">Last name</label>
+                            <input type="text" class="form-control form-control-sm" id="create-last-name" name="last_name"
                                    value="{{ .Create.LastName }}" autocomplete="family-name">
                         </div>
-                        <div class="mb-3">
-                            <label for="create-password" class="form-label">Password</label>
-                            <input type="password" class="form-control{{ if .Create.PasswordError }} is-invalid{{ end }}"
+                        <div class="usr-field">
+                            <label for="create-password">Password</label>
+                            <input type="password" class="form-control form-control-sm{{ if .Create.PasswordError }} is-invalid{{ end }}"
                                    id="create-password" name="password" minlength="8" required
                                    autocomplete="new-password">
                             {{ if .Create.PasswordError }}
-                            <div class="invalid-feedback">{{ .Create.PasswordError }}</div>
+                            <div class="invalid-feedback d-block">{{ .Create.PasswordError }}</div>
                             {{ end }}
-                            <div class="mt-2" data-js="password-strength" hidden>
-                                <label class="form-label" for="create-password">Password Strength</label>
-                                <div class="progress" style="height: 10px;">
+                            <div class="mt-1" data-js="password-strength" hidden>
+                                <div class="progress" style="height: 8px;">
                                     <div id="create-password-strength" class="progress-bar" role="progressbar"
                                          style="width: 0%;" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
                                 </div>
                                 <small id="create-password-feedback" class="form-text text-muted"></small>
                             </div>
                         </div>
-                        <div class="mb-3">
-                            <label for="create-network-rating" class="form-label">Network Rating</label>
-                            <select class="form-select{{ if .Create.RatingError }} is-invalid{{ end }}"
+                        <div class="usr-field">
+                            <label for="create-network-rating">Network rating</label>
+                            <select class="form-select form-select-sm{{ if .Create.RatingError }} is-invalid{{ end }}"
                                     id="create-network-rating" name="network_rating" required
                                     aria-label="Select network rating for new user">
                                 {{ range .RatingOptions }}
@@ -58,64 +166,52 @@
                                 {{ end }}
                             </select>
                             {{ if .Create.RatingError }}
-                            <div class="invalid-feedback">{{ .Create.RatingError }}</div>
+                            <div class="invalid-feedback d-block">{{ .Create.RatingError }}</div>
                             {{ end }}
                         </div>
-                        <button type="submit" class="btn btn-primary">Create</button>
+                        <button type="submit" class="btn btn-sm btn-primary">Create</button>
                     </form>
                 </div>
-            </div>
-        </div>
+            </section>
+            {{ end }}
 
-        <div class="col-12 col-md-4 mb-4">
-            <div class="card">
-                <div class="card-body">
-                    <h2 class="h5 card-title">Search for User by CID</h2>
-                    <form id="search-form" method="get" action="/usereditor">
-                        <div class="mb-3">
-                            <label for="search-cid" class="form-label">CID</label>
-                            <input type="number" class="form-control" id="search-cid" name="cid"
-                                   min="1" required value="{{ .SearchCID }}">
-                        </div>
-                        <button type="submit" class="btn btn-primary">Search</button>
-                    </form>
+            {{ if .EditLoaded }}
+            <section class="usr-panel" aria-labelledby="edit-user-heading">
+                <div class="usr-panel-hd">
+                    <h2 id="edit-user-heading">Edit user</h2>
                 </div>
-            </div>
-        </div>
-
-        <div class="col-12 col-md-4 mb-4">
-            <div class="card">
-                <div class="card-body">
-                    <h2 class="h5 card-title">Edit User</h2>
-                    {{ if not .EditLoaded }}
-                    <p class="text-muted mb-0">Search for a user by CID to edit their details.</p>
-                    {{ else }}
+                <div class="usr-panel-bd">
                     {{ if .Edit.Error }}
-                    <div class="alert alert-danger" role="alert">{{ .Edit.Error }}</div>
+                    <div class="usr-flash usr-flash-err" role="alert">{{ .Edit.Error }}</div>
                     {{ end }}
-                    <form class="mb-0" id="edit-form" method="post" action="/usereditor/update" data-js="user-edit">
+                    <form class="usr-form mb-0" id="edit-form" method="post" action="/usereditor/update" data-js="user-edit">
                         <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
-                        <div class="mb-3">
-                            <label for="edit-cid" class="form-label">CID</label>
-                            <input type="text" class="form-control{{ if .Edit.CIDError }} is-invalid{{ end }}"
+                        <input type="hidden" name="dir_q" value="{{ .Dir.Q }}">
+                        <input type="hidden" name="dir_rating" value="{{ .Dir.RatingParam }}">
+                        <input type="hidden" name="dir_sort" value="{{ .Dir.Sort }}">
+                        <input type="hidden" name="dir_dir" value="{{ .Dir.DirParam }}">
+                        <input type="hidden" name="dir_page" value="{{ .Dir.Page }}">
+                        <div class="usr-field">
+                            <label for="edit-cid">CID</label>
+                            <input type="text" class="form-control form-control-sm{{ if .Edit.CIDError }} is-invalid{{ end }}"
                                    id="edit-cid" name="cid" value="{{ .Edit.CID }}" readonly>
                             {{ if .Edit.CIDError }}
-                            <div class="invalid-feedback">{{ .Edit.CIDError }}</div>
+                            <div class="invalid-feedback d-block">{{ .Edit.CIDError }}</div>
                             {{ end }}
                         </div>
-                        <div class="mb-3">
-                            <label for="edit-first-name" class="form-label">First Name</label>
-                            <input type="text" class="form-control" id="edit-first-name" name="first_name"
+                        <div class="usr-field">
+                            <label for="edit-first-name">First name</label>
+                            <input type="text" class="form-control form-control-sm" id="edit-first-name" name="first_name"
                                    value="{{ .Edit.FirstName }}" autocomplete="given-name">
                         </div>
-                        <div class="mb-3">
-                            <label for="edit-last-name" class="form-label">Last Name</label>
-                            <input type="text" class="form-control" id="edit-last-name" name="last_name"
+                        <div class="usr-field">
+                            <label for="edit-last-name">Last name</label>
+                            <input type="text" class="form-control form-control-sm" id="edit-last-name" name="last_name"
                                    value="{{ .Edit.LastName }}" autocomplete="family-name">
                         </div>
-                        <div class="mb-3">
-                            <label for="edit-network-rating" class="form-label">Network Rating</label>
-                            <select class="form-select{{ if .Edit.RatingError }} is-invalid{{ end }}"
+                        <div class="usr-field">
+                            <label for="edit-network-rating">Network rating</label>
+                            <select class="form-select form-select-sm{{ if .Edit.RatingError }} is-invalid{{ end }}"
                                     id="edit-network-rating" name="network_rating"
                                     aria-label="Select network rating">
                                 {{ range .RatingOptions }}
@@ -123,30 +219,42 @@
                                 {{ end }}
                             </select>
                             {{ if .Edit.RatingError }}
-                            <div class="invalid-feedback">{{ .Edit.RatingError }}</div>
+                            <div class="invalid-feedback d-block">{{ .Edit.RatingError }}</div>
                             {{ end }}
                         </div>
-                        <div class="mb-3">
-                            <label for="edit-password" class="form-label">New Password (leave blank to keep current)</label>
-                            <input type="password" class="form-control{{ if .Edit.PasswordError }} is-invalid{{ end }}"
+                        <div class="usr-field">
+                            <label for="edit-password">New password <span class="usr-hint">(blank = keep)</span></label>
+                            <input type="password" class="form-control form-control-sm{{ if .Edit.PasswordError }} is-invalid{{ end }}"
                                    id="edit-password" name="password" minlength="8" autocomplete="new-password">
                             {{ if .Edit.PasswordError }}
-                            <div class="invalid-feedback">{{ .Edit.PasswordError }}</div>
+                            <div class="invalid-feedback d-block">{{ .Edit.PasswordError }}</div>
                             {{ end }}
-                            <div class="mt-2" data-js="password-strength" hidden>
-                                <div class="progress" style="height: 10px;">
+                            <div class="mt-1" data-js="password-strength" hidden>
+                                <div class="progress" style="height: 8px;">
                                     <div id="edit-password-strength" class="progress-bar" role="progressbar"
                                          style="width: 0%;" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
                                 </div>
                                 <small id="edit-password-feedback" class="form-text text-muted"></small>
                             </div>
                         </div>
-                        <button type="submit" class="btn btn-primary">Update</button>
+                        <button type="submit" class="btn btn-sm btn-primary">Update</button>
                     </form>
-                    {{ end }}
                 </div>
-            </div>
-        </div>
+            </section>
+            {{ end }}
+
+            {{ if and (not .ShowCreate) (not .EditLoaded) }}
+            <section class="usr-panel usr-rail-empty" aria-labelledby="rail-empty-heading">
+                <div class="usr-panel-hd">
+                    <h2 id="rail-empty-heading">User</h2>
+                </div>
+                <div class="usr-panel-bd">
+                    <p class="usr-empty-msg">Select a user from the directory, or create a new user.</p>
+                    <a class="btn btn-sm btn-primary" href="{{ .NewUserHref }}">New user</a>
+                </div>
+            </section>
+            {{ end }}
+        </aside>
     </div>
 </main>
 

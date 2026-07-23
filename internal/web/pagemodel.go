@@ -78,18 +78,62 @@ type userForm struct {
 	Error         string
 }
 
+// userDirectoryRow is one line in the users table (no password).
+type userDirectoryRow struct {
+	CID         int
+	DisplayName string
+	Rating      int
+	RatingShort string
+	RatingLabel string
+	Selected    bool
+	// EditHref is the full relative URL with directory params + this cid.
+	EditHref string
+}
+
+// userDirectoryQuery is the parsed, validated directory state for templates + redirects.
+type userDirectoryQuery struct {
+	Q        string
+	Rating   *int // nil = all; non-nil includes 0 (Suspended) and -1 (Inactive)
+	Sort     string
+	Desc     bool
+	Page     int
+	PageSize int
+	Total    int
+	Pages    int // max(1, ceil(Total/PageSize)) after clamp
+}
+
 type userEditorPage struct {
 	basePage
 	FlashSuccess string
 	FlashError   string
-	// Create form (left column)
-	Create userForm
-	// Search CID field
-	SearchCID string
-	// Edit form (right column); Edit.CID non-empty means a user was loaded
-	Edit          userForm
-	EditLoaded    bool
+
+	Dir   userDirectoryQuery
+	Users []userDirectoryRow
+	// FilterRatingOptions is protocol ratings −1…12 only (Value is the int rating).
+	// Do NOT put "All ratings" in this slice: ratingOption.Value is int and 0 is
+	// Suspended — encoding All as Value:0 would filter rating=0. "All" is a
+	// hardcoded <option value=""> in the template when Dir.Rating == nil.
+	// Includes ratings above the actor so SUP can filter to ADM.
+	FilterRatingOptions []ratingOption
+
+	ShowCreate bool // see rail state table
+	Create     userForm
+	Edit       userForm
+	EditLoaded bool
+	// RatingOptions for create/edit selects only — ratingOptionsUpTo(actorMax, selected).
 	RatingOptions []ratingOption
+	// EditReadOnly true when target.NetworkRating > actor (optional polish / Optional PR 4;
+	// until then EditLoaded may still show a submittable form that server-rejects).
+	EditReadOnly bool
+
+	// Template helpers for pagination / sort / new-user links (built server-side).
+	NewUserHref  string
+	PrevPageHref string
+	NextPageHref string
+	// Sort links: active column toggles dir; inactive starts asc. Page resets to 1.
+	SortCIDHref    string
+	SortNameHref   string
+	SortRatingHref string
 }
 
 // configField is one editable config key for the config editor form.
@@ -199,6 +243,52 @@ func networkRatingLabel(val int) string {
 	default:
 		return "Unknown"
 	}
+}
+
+// networkRatingShort returns dense UI-local short codes for the directory table.
+// INAC/SUSP are UI inventions; OBS…ADM match common network shorthands.
+func networkRatingShort(val int) string {
+	switch protocol.NetworkRating(val) {
+	case protocol.NetworkRatingInactive:
+		return "INAC"
+	case protocol.NetworkRatingSuspended:
+		return "SUSP"
+	case protocol.NetworkRatingObserver:
+		return "OBS"
+	case protocol.NetworkRatingStudent1:
+		return "S1"
+	case protocol.NetworkRatingStudent2:
+		return "S2"
+	case protocol.NetworkRatingStudent3:
+		return "S3"
+	case protocol.NetworkRatingController1:
+		return "C1"
+	case protocol.NetworkRatingController2:
+		return "C2"
+	case protocol.NetworkRatingController3:
+		return "C3"
+	case protocol.NetworkRatingInstructor1:
+		return "I1"
+	case protocol.NetworkRatingInstructor2:
+		return "I2"
+	case protocol.NetworkRatingInstructor3:
+		return "I3"
+	case protocol.NetworkRatingSupervisor:
+		return "SUP"
+	case protocol.NetworkRatingAdministator:
+		return "ADM"
+	default:
+		return "?"
+	}
+}
+
+// userDisplayName returns "First Last" or "CID %d" when names are empty.
+func userDisplayName(first, last *string, cid int) string {
+	name := strings.TrimSpace(safeStr(first) + " " + safeStr(last))
+	if name == "" {
+		return fmt.Sprintf("CID %d", cid)
+	}
+	return name
 }
 
 // ratingOptionsUpTo returns network rating select options from Inactive (−1)
