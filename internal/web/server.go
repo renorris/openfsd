@@ -39,10 +39,30 @@ func NewDefaultServer(ctx context.Context) (server *Server, err error) {
 	}
 	slog.Debug("SQL OK")
 
+	if err = sqlDb.PingContext(ctx); err != nil {
+		return
+	}
+
 	sqlDb.SetMaxOpenConns(cfg.DatabaseMaxConns)
+
+	// Migrate here too so -web alone (or web starting against a fresh file)
+	// works. When colocated, FSD migrates first; second Up is ErrNoChange.
+	if cfg.DatabaseAutoMigrate {
+		slog.Debug("automatically migrating database")
+		if err = db.Migrate(sqlDb); err != nil {
+			return
+		}
+		slog.Debug("migrate OK")
+	}
 
 	dbRepo, err := db.NewRepositories(sqlDb)
 	if err != nil {
+		return
+	}
+
+	// Seed JWT/welcome defaults if missing (SetIfNotExists). Safe when FSD
+	// already initialized config on the same database.
+	if err = db.InitDefaultConfig(dbRepo.ConfigRepo); err != nil {
 		return
 	}
 

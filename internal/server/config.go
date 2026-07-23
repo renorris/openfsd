@@ -21,10 +21,14 @@ type Config struct {
 
 	// DatabaseDriver is accepted for backward compatibility only.
 	// openfsd is SQLite-only; any non-empty value other than "sqlite" is rejected at startup.
-	DatabaseDriver      string `env:"DATABASE_DRIVER, default=sqlite"`
-	DatabaseSourceName  string `env:"DATABASE_SOURCE_NAME, default=:memory:"` // SQLite DSN (path or :memory:)
-	DatabaseAutoMigrate bool   `env:"DATABASE_AUTO_MIGRATE, default=true"`    // Whether to automatically run database migrations on startup
-	DatabaseMaxConns    int    `env:"DATABASE_MAX_CONNS, default=1"`          // Max number of database connections
+	DatabaseDriver string `env:"DATABASE_DRIVER, default=sqlite"`
+	// DatabaseSourceName is the SQLite DSN. Default is a local file with WAL so
+	// colocated FSD+web share one database. Bare ":memory:" is private per
+	// sql.Open — cmd/openfsd rewrites it to a shared in-memory DSN when both
+	// services run. See db.DefaultSQLiteDSN / db.SharedMemorySQLiteDSN.
+	DatabaseSourceName  string `env:"DATABASE_SOURCE_NAME, default=openfsd.db?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"`
+	DatabaseAutoMigrate bool   `env:"DATABASE_AUTO_MIGRATE, default=true"` // Whether to automatically run database migrations on startup
+	DatabaseMaxConns    int    `env:"DATABASE_MAX_CONNS, default=1"`       // Max number of database connections
 
 	NumMetarWorkers int `env:"NUM_METAR_WORKERS, default=4"` // Number of METAR fetch workers to run
 

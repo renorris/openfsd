@@ -13,12 +13,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gin-gonic/gin"
+	"github.com/renorris/openfsd/internal/db"
 	"github.com/renorris/openfsd/internal/server"
 	"github.com/renorris/openfsd/internal/web"
 )
 
 func main() {
-	setSlogLevel()
+	configureRuntimeDefaults()
 
 	fsdFlag := flag.Bool("fsd", false, "run the FSD server (TCP protocol + internal service HTTP)")
 	webFlag := flag.Bool("web", false, "run the web UI and /api/v1 HTTP server")
@@ -30,6 +32,10 @@ func main() {
 		runFSD, runWeb = true, true
 	}
 
+	// Bare ":memory:" is private per sql.Open. When both services run in this
+	// process they must share one database (migrations/admin seed + JWT/config).
+	normalizeColocatedMemoryDSN(runFSD, runWeb)
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
@@ -37,6 +43,21 @@ func main() {
 		slog.Error(err.Error())
 		os.Exit(1)
 	}
+}
+
+// normalizeColocatedMemoryDSN rewrites DATABASE_SOURCE_NAME=:memory: to a
+// shared in-memory DSN when FSD and web both run. Without this, each service
+// opens an empty private DB and web fails with "no such table: config".
+func normalizeColocatedMemoryDSN(runFSD, runWeb bool) {
+	if !runFSD || !runWeb {
+		return
+	}
+	dsn := strings.TrimSpace(os.Getenv("DATABASE_SOURCE_NAME"))
+	if dsn != ":memory:" {
+		return
+	}
+	_ = os.Setenv("DATABASE_SOURCE_NAME", db.SharedMemorySQLiteDSN)
+	slog.Info("DATABASE_SOURCE_NAME=:memory: rewritten to shared in-memory DSN for colocated FSD+web")
 }
 
 func run(parent context.Context, runFSD, runWeb bool) error {
@@ -148,8 +169,20 @@ func waitForFSDServiceHTTP(ctx context.Context) error {
 	}
 }
 
-func setSlogLevel() {
+// configureRuntimeDefaults applies production defaults for logging and Gin.
+//
+// Both FSD and web share this process: slog stays at Info unless LOG_DEBUG=true,
+// and Gin runs in release mode unless GIN_MODE is explicitly set.
+func configureRuntimeDefaults() {
+	level := slog.LevelInfo
 	if os.Getenv("LOG_DEBUG") == "true" {
-		slog.SetLogLoggerLevel(slog.LevelDebug)
+		level = slog.LevelDebug
+	}
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
+
+	// Gin defaults to debug when GIN_MODE is unset; force release for quiet
+	// production logs (FSD service HTTP + web). Honor explicit GIN_MODE.
+	if os.Getenv(gin.EnvGinMode) == "" {
+		gin.SetMode(gin.ReleaseMode)
 	}
 }

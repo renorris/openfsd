@@ -4,10 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"github.com/renorris/openfsd/internal/serviceapi"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -17,16 +17,29 @@ import (
 	"github.com/renorris/openfsd/internal/auth"
 	"github.com/renorris/openfsd/internal/db"
 	"github.com/renorris/openfsd/internal/postoffice"
+	"github.com/renorris/openfsd/internal/serviceapi"
 	"github.com/renorris/openfsd/pkg/protocol"
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
 )
 
 func TestLoadConfigDefaults(t *testing.T) {
+	// Unset so envconfig uses struct tag defaults (empty string is still "set").
+	for _, k := range []string{
+		"DATABASE_SOURCE_NAME",
+		"DATABASE_DRIVER",
+		"DATABASE_AUTO_MIGRATE",
+	} {
+		t.Setenv(k, "placeholder") // register cleanup restore with testing
+		require.NoError(t, os.Unsetenv(k))
+	}
+
 	cfg, err := loadConfig(context.Background())
 	require.NoError(t, err)
 	require.NotEmpty(t, cfg.FsdListenAddrs)
 	require.Equal(t, "sqlite", cfg.DatabaseDriver)
+	require.Equal(t, db.DefaultSQLiteDSN, cfg.DatabaseSourceName)
+	require.True(t, cfg.DatabaseAutoMigrate)
 	require.NotZero(t, cfg.NumMetarWorkers)
 	require.Equal(t, "127.0.0.1:13618", cfg.ServiceHTTPListenAddr)
 	require.Equal(t, 5000, cfg.FsdMaxConnections)

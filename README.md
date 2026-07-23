@@ -55,14 +55,15 @@ go build -o openfsd ./cmd/openfsd
 
 | Variable | Default | Notes |
 |----------|---------|-------|
-| `DATABASE_SOURCE_NAME` | `:memory:` | SQLite path or `:memory:`; shared by both services |
+| `DATABASE_SOURCE_NAME` | `openfsd.db?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)` | SQLite path (preferred) or `:memory:`; must be shared by both services. Bare `:memory:` is rewritten to a process-shared DSN when FSD+web run together. |
 | `DATABASE_DRIVER` | `sqlite` | Compatibility only; must be `sqlite` or unset (Postgres removed) |
-| `DATABASE_AUTO_MIGRATE` | `true` | FSD applies migrations on startup |
+| `DATABASE_AUTO_MIGRATE` | `true` | FSD and web apply migrations on startup (idempotent) |
 | `FSD_LISTEN_ADDRS` | `:6809` | FSD TCP listen address(es) |
 | `SERVICE_HTTP_LISTEN_ADDR` | `:13618` | Internal FSD admin HTTP |
 | `FSD_HTTP_SERVICE_ADDRESS` | `http://127.0.0.1:13618` | Web → FSD service HTTP |
 | `LISTEN_ADDR` | `:8000` | Web UI + `/api/v1` |
-| `LOG_DEBUG` | *(unset)* | Set `true` for debug logging |
+| `LOG_DEBUG` | *(unset)* | Set `true` for slog debug logging (default is info / release) |
+| `GIN_MODE` | `release` | Gin mode for web + FSD service HTTP; set `debug` for Gin debug output |
 
 Colocated mode (default) uses the shared DB and in-process service HTTP. For `-web` against a remote FSD, set `FSD_HTTP_SERVICE_ADDRESS`.
 

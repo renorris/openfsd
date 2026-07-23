@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -51,6 +52,12 @@ func (s *Server) runServiceHTTP(ctx context.Context) {
 }
 
 func (s *Server) setupRoutes() (e *gin.Engine) {
+	// Production default: release (no [GIN-debug] noise). Honor GIN_MODE and
+	// leave TestMode alone for unit tests that call gin.SetMode(gin.TestMode).
+	if os.Getenv(gin.EnvGinMode) == "" && gin.Mode() != gin.TestMode {
+		gin.SetMode(gin.ReleaseMode)
+	}
+
 	e = gin.New()
 	e.Use(gin.Recovery())
 

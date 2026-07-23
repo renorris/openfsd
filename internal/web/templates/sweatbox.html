@@ -2,59 +2,69 @@
 
 {{ define "body" }}
 {{/*
+  Instructor control panel (server-rendered MPA).
+
   Progressive enhancement (sweatbox.js):
-  Polls GET /api/v1/sweatbox/state every 1–2 s to refresh status + aircraft
-  table when JS is available. Forms remain server-side command authority
-  (POST + CSRF). No SPA / client router / global store.
-  First-party openfsd JS only (no Leaflet on this page).
+  - Polls GET /api/v1/sweatbox/state every 1–2 s for status + aircraft table
+  - Persists draft fields (callsign, command history, apt/air paste) in localStorage
+  - Row click selects callsign
+
+  Primary path: HTML forms + CSRF + PRG. No SPA / client router / global store.
+  Layout: dense 16:9 operator console (see sweatbox.css).
 */}}
-<main class="container mt-4" style="max-width: 960px"
+<link href="/static/css/openfsd/sweatbox.css" rel="stylesheet">
+
+<main class="sbx container-fluid"
       id="sweatbox-root"
       data-js="sweatbox"
       data-poll-ms="1500"
       data-available="{{ if .Available }}1{{ else }}0{{ end }}">
-    <h1 class="h4 mb-3">Sweatbox instructor</h1>
-    <p class="text-muted small">
-        Server-rendered control plane for the integrated sweatbox simulator.
-        JavaScript is not required — use <strong>Refresh</strong> to update aircraft state.
-        With JavaScript enabled, the status and table update automatically.
-    </p>
-    <p class="small mb-3" data-js="live-status" hidden aria-live="polite"></p>
+
+    <div class="sbx-titlebar">
+        <h1>Sweatbox</h1>
+        <p class="sbx-hint">Control panel · forms work without JS · <a href="/sweatbox">Refresh</a> reloads snapshot</p>
+    </div>
 
     {{ if .FlashSuccess }}
-    <div class="alert alert-success" role="status">{{ .FlashSuccess }}</div>
+    <div class="sbx-flash sbx-flash-ok" role="status">{{ .FlashSuccess }}</div>
     {{ end }}
     {{ if .FlashError }}
-    <div class="alert alert-danger" role="alert">{{ .FlashError }}</div>
+    <div class="sbx-flash sbx-flash-err" role="alert">{{ .FlashError }}</div>
     {{ end }}
 
     {{ if .Disabled }}
-    <div class="alert alert-warning" role="status">
-        <strong>Sweatbox disabled.</strong>
-        {{ .StatusMsg }}
+    <div class="sbx-flash sbx-flash-warn sbx-banner" role="status">
+        <strong>Disabled.</strong> {{ .StatusMsg }}
     </div>
     {{ else if .Unavailable }}
-    <div class="alert alert-warning" role="status">
-        <strong>Unavailable.</strong>
-        {{ .StatusMsg }}
+    <div class="sbx-flash sbx-flash-warn sbx-banner" role="status">
+        <strong>Unavailable.</strong> {{ .StatusMsg }}
     </div>
     {{ else if .Available }}
 
-    <section class="mb-4" aria-labelledby="sweatbox-status-heading">
-        <h2 id="sweatbox-status-heading" class="h5">Status</h2>
-        <dl class="row mb-0 small">
-            <dt class="col-sm-3">Airport</dt>
-            <dd class="col-sm-9" data-js="icao">{{ if .ICAO }}{{ .ICAO }}{{ else }}—{{ end }}</dd>
-            <dt class="col-sm-3">Paused</dt>
-            <dd class="col-sm-9" data-js="paused">{{ if .Paused }}yes{{ else }}no{{ end }}</dd>
-            <dt class="col-sm-3">Elapsed</dt>
-            <dd class="col-sm-9" data-js="elapsed">{{ .Elapsed }}</dd>
-            <dt class="col-sm-3">Arrivals / departures</dt>
-            <dd class="col-sm-9" data-js="arr-dep">{{ .ArrCount }} / {{ .DepCount }}</dd>
+    {{/* --- status strip --- */}}
+    <section class="sbx-status" aria-labelledby="sweatbox-status-heading">
+        <h2 id="sweatbox-status-heading" class="visually-hidden">Status</h2>
+        <dl>
+            <div class="sbx-kv">
+                <dt>ICAO</dt>
+                <dd data-js="icao">{{ if .ICAO }}{{ .ICAO }}{{ else }}—{{ end }}</dd>
+            </div>
+            <div class="sbx-kv">
+                <dt>Paused</dt>
+                <dd data-js="paused">{{ if .Paused }}yes{{ else }}no{{ end }}</dd>
+            </div>
+            <div class="sbx-kv">
+                <dt>Elapsed</dt>
+                <dd data-js="elapsed">{{ .Elapsed }}</dd>
+            </div>
+            <div class="sbx-kv">
+                <dt>Arr/Dep</dt>
+                <dd data-js="arr-dep">{{ .ArrCount }} / {{ .DepCount }}</dd>
+            </div>
         </dl>
-        <p class="text-muted small mt-2 mb-0" data-js="status-msg"{{ if not .StatusMsg }} hidden{{ end }}>{{ .StatusMsg }}</p>
-
-        <div class="d-flex flex-wrap gap-2 mt-3">
+        <div class="sbx-status-actions">
+            <p class="sbx-live" data-js="live-status" hidden aria-live="polite"></p>
             <form method="post" action="/sweatbox/pause" class="d-inline m-0">
                 <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
                 <button type="submit" class="btn btn-sm btn-outline-secondary" data-js="pause-btn"{{ if .Paused }} disabled{{ end }}>Pause</button>
@@ -65,123 +75,153 @@
             </form>
             <a class="btn btn-sm btn-outline-primary" href="/sweatbox">Refresh</a>
         </div>
+        <p class="sbx-hint w-100 mb-0" data-js="status-msg"{{ if not .StatusMsg }} hidden{{ end }}>{{ .StatusMsg }}</p>
     </section>
 
-    <section class="mb-4" aria-labelledby="sweatbox-aircraft-heading">
-        <h2 id="sweatbox-aircraft-heading" class="h5">Aircraft</h2>
-        <div class="table-responsive" data-js="aircraft-table-wrap"{{ if not .Aircraft }} hidden{{ end }}>
-            <table class="table table-sm table-striped align-middle" id="sweatbox-aircraft-table">
-                <thead>
-                <tr>
-                    <th scope="col">Callsign</th>
-                    <th scope="col">Type</th>
-                    <th scope="col">Rules</th>
-                    <th scope="col">Squawk</th>
-                    <th scope="col">Hdg</th>
-                    <th scope="col">Alt</th>
-                    <th scope="col">Spd</th>
-                    <th scope="col">Status</th>
-                    <th scope="col">Instruction</th>
-                    <th scope="col"><span class="visually-hidden">Actions</span></th>
-                </tr>
-                </thead>
-                <tbody data-js="aircraft-tbody" id="sweatbox-aircraft-tbody">
-                {{ range .Aircraft }}
-                <tr data-callsign="{{ .Callsign }}">
-                    <td>{{ .Callsign }}</td>
-                    <td>{{ .Type }}</td>
-                    <td>{{ .Rules }}</td>
-                    <td>{{ .Squawk }}</td>
-                    <td>{{ .Heading }}</td>
-                    <td>{{ .Alt }}</td>
-                    <td>{{ .Speed }}</td>
-                    <td>{{ .Status }}</td>
-                    <td>{{ .Instruction }}</td>
-                    <td>
-                        <form method="post" action="/sweatbox/delete" class="d-inline m-0">
-                            <input type="hidden" name="csrf_token" value="{{ $.CSRFToken }}">
-                            <input type="hidden" name="callsign" value="{{ .Callsign }}">
-                            <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
-                        </form>
-                    </td>
-                </tr>
-                {{ end }}
-                </tbody>
-            </table>
-        </div>
-        <p class="text-muted small" data-js="aircraft-empty"{{ if .Aircraft }} hidden{{ end }}>No sweatbox aircraft. Load a scenario or use the command box (<code>add …</code>).</p>
-
-        <form method="post" action="/sweatbox/delete-all" class="mt-2">
-            <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
-            <div class="form-check mb-2">
-                <input class="form-check-input" type="checkbox" name="confirm" value="on" id="confirm-delete-all" required>
-                <label class="form-check-label" for="confirm-delete-all">Confirm delete all aircraft</label>
+    <div class="sbx-body">
+        {{/* --- aircraft (primary surface) --- */}}
+        <section class="sbx-panel" aria-labelledby="sweatbox-aircraft-heading">
+            <div class="sbx-panel-hd">
+                <h2 id="sweatbox-aircraft-heading">Aircraft</h2>
+                <span class="sbx-hint">Click row → select callsign</span>
             </div>
-            <button type="submit" class="btn btn-sm btn-danger">Delete all</button>
-        </form>
-    </section>
+            <div class="sbx-panel-bd">
+                <div class="sbx-table-scroll" data-js="aircraft-table-wrap"{{ if not .Aircraft }} hidden{{ end }}>
+                    <table class="sbx-table table table-sm mb-0" id="sweatbox-aircraft-table">
+                        <thead>
+                        <tr>
+                            <th scope="col">Callsign</th>
+                            <th scope="col">Type</th>
+                            <th scope="col">Rules</th>
+                            <th scope="col">Squawk</th>
+                            <th scope="col">Hdg</th>
+                            <th scope="col">Alt</th>
+                            <th scope="col">Spd</th>
+                            <th scope="col">Status</th>
+                            <th scope="col">Instruction</th>
+                            <th scope="col"><span class="visually-hidden">Actions</span></th>
+                        </tr>
+                        </thead>
+                        <tbody data-js="aircraft-tbody" id="sweatbox-aircraft-tbody">
+                        {{ range .Aircraft }}
+                        <tr data-callsign="{{ .Callsign }}" tabindex="0">
+                            <td class="sbx-cs">{{ .Callsign }}</td>
+                            <td>{{ .Type }}</td>
+                            <td>{{ .Rules }}</td>
+                            <td>{{ .Squawk }}</td>
+                            <td>{{ .Heading }}</td>
+                            <td>{{ .Alt }}</td>
+                            <td>{{ .Speed }}</td>
+                            <td>{{ .Status }}</td>
+                            <td class="sbx-instr" title="{{ .Instruction }}">{{ .Instruction }}</td>
+                            <td>
+                                <form method="post" action="/sweatbox/delete" class="d-inline m-0">
+                                    <input type="hidden" name="csrf_token" value="{{ $.CSRFToken }}">
+                                    <input type="hidden" name="callsign" value="{{ .Callsign }}">
+                                    <button type="submit" class="btn btn-sm btn-outline-danger">Del</button>
+                                </form>
+                            </td>
+                        </tr>
+                        {{ end }}
+                        </tbody>
+                    </table>
+                </div>
+                <p class="sbx-empty" data-js="aircraft-empty"{{ if .Aircraft }} hidden{{ end }}>No aircraft. Load scenario or <code>add …</code>.</p>
 
-    <section class="mb-4" aria-labelledby="sweatbox-command-heading">
-        <h2 id="sweatbox-command-heading" class="h5">Command</h2>
-        <form method="post" action="/sweatbox/command">
-            <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
-            <div class="mb-2">
-                <label for="sbx-callsign" class="form-label">Selected callsign (optional)</label>
-                <input type="text" class="form-control form-control-sm" id="sbx-callsign" name="callsign"
-                       value="" autocomplete="off" spellcheck="false" placeholder="e.g. AAL123">
-                <div class="form-text">Used for aircraft-scoped verbs when the command line does not include a callsign. With JS, click a table row to fill this field.</div>
+                <form method="post" action="/sweatbox/delete-all" class="sbx-danger-row">
+                    <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
+                    <label class="sbx-check" for="confirm-delete-all">
+                        <input type="checkbox" name="confirm" value="on" id="confirm-delete-all" required>
+                        Confirm delete all
+                    </label>
+                    <button type="submit" class="btn btn-sm btn-danger">Delete all</button>
+                </form>
             </div>
-            <div class="mb-2">
-                <label for="sbx-command" class="form-label">Command</label>
-                <input type="text" class="form-control" id="sbx-command" name="command" required
-                       value="" autocomplete="off" spellcheck="false"
-                       placeholder="add AAL1 B738 J I KBTV KBOS …  or  p / un / ops / del AAL1">
-            </div>
-            <button type="submit" class="btn btn-primary">Run command</button>
-        </form>
-    </section>
+        </section>
 
-    <div class="row g-3 mb-4">
-        <div class="col-md-6">
-            <section class="card h-100" aria-labelledby="sweatbox-airport-heading">
-                <div class="card-body">
-                    <h2 id="sweatbox-airport-heading" class="h5 card-title">Load airport (.apt)</h2>
-                    <form method="post" action="/sweatbox/airport" enctype="multipart/form-data">
+        {{/* --- right rail: command + load --- */}}
+        <div class="sbx-rail">
+            <section class="sbx-panel sbx-panel-cmd" aria-labelledby="sweatbox-command-heading">
+                <div class="sbx-panel-hd">
+                    <h2 id="sweatbox-command-heading">Command</h2>
+                </div>
+                <div class="sbx-panel-bd">
+                    <form method="post" action="/sweatbox/command" class="sbx-form" data-js="command-form">
                         <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
-                        <div class="mb-2">
-                            <label for="sbx-apt-file" class="form-label">Upload file</label>
+                        <div class="sbx-cmd-row">
+                            <div class="sbx-field">
+                                <label for="sbx-callsign">Selected CS</label>
+                                <input type="text" class="form-control form-control-sm" id="sbx-callsign" name="callsign"
+                                       value="" autocomplete="off" spellcheck="false" placeholder="AAL123"
+                                       data-persist="callsign">
+                            </div>
+                        </div>
+                        <div class="sbx-field">
+                            <label for="sbx-command">Line</label>
+                            <input type="text" class="form-control form-control-sm sbx-cmd-input" id="sbx-command" name="command" required
+                                   value="" autocomplete="off" spellcheck="false"
+                                   placeholder="add i h j 4r 15  ·  taxi A hs 33  ·  cto  ·  ops"
+                                   data-persist="command"
+                                   data-js="command-input">
+                        </div>
+                        <button type="submit" class="btn btn-sm btn-primary sbx-btn-run">Run</button>
+                    </form>
+                    <ul class="sbx-history" data-js="cmd-history" hidden aria-label="Recent commands"></ul>
+                    <div class="sbx-help" id="sbx-cmd-help">
+                        <strong>Global</strong> add · p/pause · un/unpause · ops · del<br>
+                        <strong>Ground</strong> taxi · hold · res · cross · pos · cto · ctoc · nostop<br>
+                        <strong>XPDR</strong> sq · sqi · sn · ss · id<br>
+                        <strong>Air</strong> fh · fhn · tr · tl · fph · cm · spd · ga · go<br>
+                        <strong>Pattern</strong> erc/erd/erb elc/eld/elb ef · tg sg la fs · mlt mrt · ext · ps<br>
+                        <strong>FP</strong> fp · vp · remarks · Target: <code>CS, verb</code> or Selected CS
+                    </div>
+                </div>
+            </section>
+
+            <section class="sbx-panel" aria-labelledby="sweatbox-airport-heading">
+                <div class="sbx-panel-hd">
+                    <h2 id="sweatbox-airport-heading">Airport .apt</h2>
+                </div>
+                <div class="sbx-panel-bd">
+                    <form method="post" action="/sweatbox/airport" enctype="multipart/form-data" class="sbx-form">
+                        <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
+                        <div class="sbx-field">
+                            <label for="sbx-apt-file">File</label>
                             <input type="file" class="form-control form-control-sm" id="sbx-apt-file" name="file" accept=".apt,text/plain">
                         </div>
-                        <div class="mb-2">
-                            <label for="sbx-apt-text" class="form-label">Or paste .apt text</label>
-                            <textarea class="form-control form-control-sm" id="sbx-apt-text" name="apt_text" rows="6"
-                                      placeholder="icao=KBTV&#10;…"></textarea>
+                        <div class="sbx-field">
+                            <label for="sbx-apt-text">Paste</label>
+                            <textarea class="form-control form-control-sm" id="sbx-apt-text" name="apt_text" rows="4"
+                                      placeholder="icao=KBTV&#10;…"
+                                      data-persist="apt_text"></textarea>
                         </div>
-                        <div class="form-check mb-2">
-                            <input class="form-check-input" type="checkbox" name="replace" value="on" id="sbx-apt-replace">
-                            <label class="form-check-label" for="sbx-apt-replace">Replace existing airport (clears aircraft)</label>
-                        </div>
-                        <button type="submit" class="btn btn-outline-primary">Load airport</button>
+                        <label class="sbx-check" for="sbx-apt-replace">
+                            <input type="checkbox" name="replace" value="on" id="sbx-apt-replace" data-persist="apt_replace">
+                            Replace (clears aircraft)
+                        </label>
+                        <button type="submit" class="btn btn-sm btn-outline-primary">Load airport</button>
                     </form>
                 </div>
             </section>
-        </div>
-        <div class="col-md-6">
-            <section class="card h-100" aria-labelledby="sweatbox-scenario-heading">
-                <div class="card-body">
-                    <h2 id="sweatbox-scenario-heading" class="h5 card-title">Load scenario (.air)</h2>
-                    <form method="post" action="/sweatbox/scenario" enctype="multipart/form-data">
+
+            <section class="sbx-panel" aria-labelledby="sweatbox-scenario-heading">
+                <div class="sbx-panel-hd">
+                    <h2 id="sweatbox-scenario-heading">Scenario .air</h2>
+                </div>
+                <div class="sbx-panel-bd">
+                    <form method="post" action="/sweatbox/scenario" enctype="multipart/form-data" class="sbx-form">
                         <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
-                        <div class="mb-2">
-                            <label for="sbx-air-file" class="form-label">Upload file</label>
+                        <div class="sbx-field">
+                            <label for="sbx-air-file">File</label>
                             <input type="file" class="form-control form-control-sm" id="sbx-air-file" name="file" accept=".air,text/plain">
                         </div>
-                        <div class="mb-2">
-                            <label for="sbx-air-text" class="form-label">Or paste .air text</label>
-                            <textarea class="form-control form-control-sm" id="sbx-air-text" name="air_text" rows="6"
-                                      placeholder="AAL123:B738/F:J:I:…"></textarea>
+                        <div class="sbx-field">
+                            <label for="sbx-air-text">Paste</label>
+                            <textarea class="form-control form-control-sm" id="sbx-air-text" name="air_text" rows="4"
+                                      placeholder="AAL123:B738/F:J:I:…"
+                                      data-persist="air_text"></textarea>
                         </div>
-                        <button type="submit" class="btn btn-outline-primary">Load scenario</button>
+                        <button type="submit" class="btn btn-sm btn-outline-primary">Load scenario</button>
                     </form>
                 </div>
             </section>

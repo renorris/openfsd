@@ -25,9 +25,9 @@ Use the web UI (**Configure Server**) to set these.
 
 | Name | Description | Default |
 |------|-------------|---------|
-| `DATABASE_SOURCE_NAME` | SQLite DSN: file path or `:memory:`. Prefer a file with WAL + busy timeout for production. | `:memory:` |
+| `DATABASE_SOURCE_NAME` | SQLite DSN: file path (preferred) or `:memory:`. Default is a local file with WAL + busy timeout so colocated FSD+web share one database. Bare `:memory:` is private per connection; when both services run in one process it is rewritten to a shared in-memory DSN. | `openfsd.db?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)` |
 | `DATABASE_DRIVER` | **Compatibility only.** Must be omitted or `sqlite`. Any other value (including `postgres`) fails startup. See [Migrating from PostgreSQL](Migrating-from-PostgreSQL.md). | `sqlite` |
-| `DATABASE_AUTO_MIGRATE` | When `true`, FSD applies SQLite migrations on startup. | `true` |
+| `DATABASE_AUTO_MIGRATE` | When `true`, FSD and web apply SQLite migrations on startup (idempotent). | `true` |
 | `DATABASE_MAX_CONNS` | Max open SQL connections. `1` is fine for small servers. | `1` |
 
 Example production DSN:
@@ -56,7 +56,9 @@ Example production DSN:
 
 | Name | Description | Default |
 |------|-------------|---------|
-| `LOG_DEBUG` | Set to `true` for debug logging | *(unset)* |
+| `LOG_DEBUG` | Set to `true` for slog debug logging (FSD + web). Default is info / release. | *(unset)* |
+| `GIN_MODE` | Gin mode for the web UI and FSD service HTTP. openfsd defaults to `release` when unset (Gin’s own default is `debug`). | `release` (when unset) |
+| `GIN_LOGGER` | When set (any non-empty value), enables Gin’s request logger middleware on the web server. | *(unset)* |
 
 ## CLI flags
 

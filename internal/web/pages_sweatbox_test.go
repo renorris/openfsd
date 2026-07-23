@@ -68,7 +68,7 @@ func TestSweatboxPageAdminShowsUnavailableWhenFSDDown(t *testing.T) {
 		t.Fatalf("status %d body %s", w.Code, w.Body.String())
 	}
 	body := w.Body.String()
-	if !strings.Contains(body, "Sweatbox instructor") {
+	if !strings.Contains(body, "Sweatbox") {
 		t.Fatalf("expected page title content, body=%s", clip(body, 400))
 	}
 	if !strings.Contains(body, "Unavailable") && !strings.Contains(body, "not enabled") {
