@@ -32,7 +32,21 @@ internal/metar/       # METAR worker pool (injectable HTTP)
 internal/db/          # Shared repositories + migrations
 internal/serviceapi/  # Pure JSON DTOs for FSD service HTTP (shared by server + web)
 internal/web/         # Gin MPA + /api/v1
+internal/sweatbox/    # Ground/taxi sim (stdlib + geo)
+cmd/aptdat2apt/       # Optional: convert XP12 apt.dat → sweatbox .apt (user-fetched data)
 ```
+
+### Airport layout data (sweatbox)
+
+openfsd **does not ship** X-Plane Global Airports `apt.dat` or bulk generated
+airport files. Operators fetch layout data themselves and convert locally:
+
+```bash
+go run ./cmd/aptdat2apt -download -out generated-apt -quiet
+```
+
+Sources, licensing (Gateway / Global Airports GPLv2), and packaging rules:
+[docs/xplane-airport-data.md](docs/xplane-airport-data.md).
 
 ## Build and run
 

@@ -18,6 +18,14 @@ build-and-push.sh
 /openfsd-web
 /fsdweb
 /fsd
+/openfsd
 
-# openfsd binary
-openfsd
+# User-fetched X-Plane Global Airports data and bulk conversion output.
+# Tooling under cmd/, internal/xp12aptdat/, scripts/ is tracked.
+# See docs/xplane-airport-data.md.
+/xp12-aptdat/
+/generated-apt/
+apt.dat
+apt.dat.zip
+**/apt.dat
+**/apt.dat.zip
