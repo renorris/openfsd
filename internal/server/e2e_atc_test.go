@@ -233,30 +233,23 @@ func TestE2E_ATCChatAndITRange(t *testing.T) {
 	waitMOTD(t, pilot, pilotCS)
 
 	lat, lon := 40.64, -73.78
-	for _, send := range []func() error{
-		func() error {
-			return a.SendATCPosition(protocol.ATCPosition{
-				Callsign: aCS, Frequencies: "28550", FacilityType: 4, VisibilityRange: 40,
-				NetworkRating: protocol.NetworkRatingController1, Latitude: lat, Longitude: lon,
-			})
-		},
-		func() error {
-			return b.SendATCPosition(protocol.ATCPosition{
-				Callsign: bCS, Frequencies: "21770", FacilityType: 3, VisibilityRange: 40,
-				NetworkRating: protocol.NetworkRatingSupervisor, Latitude: lat, Longitude: lon,
-			})
-		},
-		func() error {
-			return pilot.SendPilotPosition(protocol.PilotPosition{
-				TransponderMode: "S", Callsign: pilotCS, TransponderCode: "1200",
-				NetworkRating: protocol.NetworkRatingObserver,
-				Latitude:      lat, Longitude: lon, TrueAltitude: 1000, Groundspeed: 0,
-			})
-		},
-	} {
-		if err := send(); err != nil {
-			t.Fatal(err)
-		}
+	posA := protocol.ATCPosition{
+		Callsign: aCS, Frequencies: "28550", FacilityType: 4, VisibilityRange: 40,
+		NetworkRating: protocol.NetworkRatingController1, Latitude: lat, Longitude: lon,
+	}
+	posB := protocol.ATCPosition{
+		Callsign: bCS, Frequencies: "21770", FacilityType: 3, VisibilityRange: 40,
+		NetworkRating: protocol.NetworkRatingSupervisor, Latitude: lat, Longitude: lon,
+	}
+	// Mutual geo must be established before @49999 / @94835 fan-out (cross-connection race).
+	exchangeATCPositions(t, a, b, posA, posB)
+
+	if err := pilot.SendPilotPosition(protocol.PilotPosition{
+		TransponderMode: "S", Callsign: pilotCS, TransponderCode: "1200",
+		NetworkRating: protocol.NetworkRatingObserver,
+		Latitude:      lat, Longitude: lon, TrueAltitude: 1000, Groundspeed: 0,
+	}); err != nil {
+		t.Fatal(err)
 	}
 
 	// ATC-only chat.
@@ -317,12 +310,23 @@ func TestE2E_BeaconAssignAndFPRequest(t *testing.T) {
 	waitMOTD(t, pilot, pilotCS)
 
 	// File a flight plan so SERVER:FP has something to return.
+	// Wait for ATC to receive the broadcast: pilot $FP and ATC $CQ SERVER:FP
+	// ride different gnet event loops, so a bare Send is not enough to prove
+	// FlightPlan is stored before the re-request (CI flake: empty plan → no #PC).
 	fpl := "$FP" + pilotCS + ":*A:I:B738:430:KJFK:1200:0000:350:KLAX:0500:0000:0:0:0:0::/V/:\r\n"
 	if err := pilot.Send([]byte(fpl)); err != nil {
 		t.Fatal(err)
 	}
+	ctxFP, cancelFP := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelFP()
+	if _, err := atc.WaitFor(ctxFP, func(r fsdclient.Received) bool {
+		return r.Type == protocol.PacketTypeFlightPlan && bytes.Contains(r.Raw, []byte(pilotCS))
+	}); err != nil {
+		t.Fatalf("wait pilot $FP broadcast: %v (recorder=%v)", err, atc.Recorder().All())
+	}
 
-	// ATC needs facility > OBS for privileged BC.
+	// ATC needs facility > OBS for privileged BC. Same connection as later $CQ,
+	// so order is preserved; still send before BC so FacilityType is non-zero.
 	if err := atc.SendATCPosition(protocol.ATCPosition{
 		Callsign: atcCS, Frequencies: "28550", FacilityType: 4, VisibilityRange: 50,
 		NetworkRating: protocol.NetworkRatingController1, Latitude: 40.64, Longitude: -73.78,
@@ -336,6 +340,7 @@ func TestE2E_BeaconAssignAndFPRequest(t *testing.T) {
 	}
 
 	// Re-request flight plan + beacon from SERVER.
+	// Client.WaitFor only sees new reads, so the pilot-broadcast $FP above is not re-matched.
 	if err := atc.Send([]byte("$CQ" + atcCS + ":SERVER:FP:" + pilotCS + "\r\n")); err != nil {
 		t.Fatal(err)
 	}
