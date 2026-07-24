@@ -466,7 +466,10 @@ func TestAttemptAuth_SuccessPassword(t *testing.T) {
 }
 
 func TestAttemptAuth_JWT(t *testing.T) {
-	srv := newAuthTestServer(t, &fakeUserStore{byCID: map[int]*db.User{}}, nil)
+	// JWT path loads the user for pilot_rating checks (REQUIRE_PILOT_PPL).
+	srv := newAuthTestServer(t, &fakeUserStore{byCID: map[int]*db.User{
+		42: {CID: 42, NetworkRating: int(protocol.NetworkRatingStudent1), PilotRating: int(protocol.PilotRatingNone)},
+	}}, nil)
 	tok, err := auth.MakeJwtToken(&auth.CustomFields{
 		TokenType:     "fsd",
 		CID:           42,
@@ -501,6 +504,56 @@ func TestAttemptAuth_JWT(t *testing.T) {
 	client2.Auth = &auth.AuthState{}
 	if err := srv.attemptAuthentication(client2, signed2); err == nil {
 		t.Fatal("access token must not work for FSD login")
+	}
+}
+
+func TestAttemptAuth_RequirePilotPPL(t *testing.T) {
+	hash, err := bcrypt.GenerateFromPassword([]byte("secret"), bcrypt.MinCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &fakeUserStore{byCID: map[int]*db.User{
+		9: {
+			CID:           9,
+			Password:      string(hash),
+			NetworkRating: int(protocol.NetworkRatingObserver),
+			PilotRating:   int(protocol.PilotRatingNone), // P0
+		},
+	}}
+	srv := newAuthTestServer(t, f, nil)
+	// Inject config via type assert on ConfigKV.
+	kv, ok := srv.configKV.(*mapConfig)
+	if !ok {
+		t.Fatal("expected mapConfig")
+	}
+	kv.m[db.ConfigRequirePilotPPL] = "true"
+
+	// Pilot with P0 must fail.
+	pilot := session.New(context.Background(), &discardConn{}, nil, session.LoginData{
+		Callsign: "N9", CID: 9, NetworkRating: protocol.NetworkRatingObserver, IsAtc: false,
+	})
+	pilot.Auth = &auth.AuthState{}
+	if err := srv.attemptAuthentication(pilot, "secret"); err == nil {
+		t.Fatal("P0 pilot must be rejected when REQUIRE_PILOT_PPL=true")
+	}
+
+	// Same cert as ATC is allowed.
+	atc := session.New(context.Background(), &discardConn{}, nil, session.LoginData{
+		Callsign: "N9_TWR", CID: 9, NetworkRating: protocol.NetworkRatingObserver, IsAtc: true,
+	})
+	atc.Auth = &auth.AuthState{}
+	if err := srv.attemptAuthentication(atc, "secret"); err != nil {
+		t.Fatalf("ATC must not be gated by pilot PPL: %v", err)
+	}
+
+	// Raise pilot rating to PPL → pilot OK.
+	f.byCID[9].PilotRating = int(protocol.PilotRatingPPL)
+	pilot2 := session.New(context.Background(), &discardConn{}, nil, session.LoginData{
+		Callsign: "N9B", CID: 9, NetworkRating: protocol.NetworkRatingObserver, IsAtc: false,
+	})
+	pilot2.Auth = &auth.AuthState{}
+	if err := srv.attemptAuthentication(pilot2, "secret"); err != nil {
+		t.Fatalf("PPL pilot should connect: %v", err)
 	}
 }
 
