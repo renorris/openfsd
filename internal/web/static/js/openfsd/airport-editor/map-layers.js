@@ -131,7 +131,7 @@ export function countSurfacesByKind(surfaces) {
 /**
  * Titlebar chip strings from document (pure).
  * @param {import('./model.js').EditorDocument} doc
- * @returns {{ icao: string, apt: string, air: string, counts: string }}
+ * @returns {{ icao: string, apt: string, air: string, counts: string, issues: string, issuesTone: 'ok'|'err'|'warn'|'empty' }}
  */
 export function titlebarChips(doc) {
   const icao = doc.airport?.icao ? String(doc.airport.icao).toUpperCase() : '—';
@@ -145,7 +145,30 @@ export function titlebarChips(doc) {
   if (sc.taxi) parts.push(`${sc.taxi} taxi`);
   if (sc.hold) parts.push(`${sc.hold} hold`);
   if (acN) parts.push(`${acN} ac`);
-  return { icao, apt, air, counts: parts.join(' · ') };
+
+  const aptN = Array.isArray(doc.aptErrors) ? doc.aptErrors.length : 0;
+  const airN = Array.isArray(doc.airErrors) ? doc.airErrors.length : 0;
+  const softN = Array.isArray(doc.softWarnings) ? doc.softWarnings.length : 0;
+  const total = aptN + airN + softN;
+  const hasContent = !!doc.airport || acN > 0;
+  /** @type {'ok'|'err'|'warn'|'empty'} */
+  let issuesTone = 'empty';
+  let issues = '—';
+  if (!hasContent && total === 0) {
+    issues = '—';
+    issuesTone = 'empty';
+  } else if (total === 0) {
+    issues = 'OK';
+    issuesTone = 'ok';
+  } else if (aptN + airN > 0) {
+    issues = `${total} issue${total === 1 ? '' : 's'}`;
+    issuesTone = 'err';
+  } else {
+    issues = `${softN} warn${softN === 1 ? '' : 's'}`;
+    issuesTone = 'warn';
+  }
+
+  return { icao, apt, air, counts: parts.join(' · '), issues, issuesTone };
 }
 
 /**

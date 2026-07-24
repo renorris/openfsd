@@ -95,6 +95,16 @@ func TestAirportEditorAdminShell(t *testing.T) {
 		`data-mode="select"`,
 		`data-mode="park"`,
 		`data-mode="aircraft"`,
+		// PR8: validation UX hooks + sweatbox handoff
+		`data-validate-apt="/api/v1/editor/validate-apt"`,
+		`data-validate-air="/api/v1/editor/validate-air"`,
+		`data-js="chip-issues"`,
+		`data-action="confirm-server"`,
+		`data-js="confirm-server"`,
+		`data-js="panel-validate"`,
+		`data-js="sweatbox-handoff"`,
+		`href="/sweatbox"`,
+		`Confirm with server`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected body to contain %q, body=%s", want, clip(body, 800))

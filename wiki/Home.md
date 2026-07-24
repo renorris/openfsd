@@ -13,6 +13,13 @@ Operator documentation for [openfsd](https://github.com/renorris/openfsd).
 | [Client Connection](Client-Connection.md) | VRC, Euroscope, Swift, vPilot, xPilot |
 | [Migrating from PostgreSQL](Migrating-from-PostgreSQL.md) | Convert an existing Postgres DB to SQLite |
 
+## Admin web tools (in the product UI)
+
+| URL | Who | Notes |
+|-----|-----|--------|
+| `/sweatbox` | Administrator | Live ground/taxi simulator control (needs FSD + sweatbox enabled) |
+| `/airport-editor` | Administrator | Map-first `.apt` / `.air` authoring; **download only** (no server save). Validate tab has live client checks + optional server confirm. Download files, then load them on `/sweatbox`. Design: repo `docs/design/apt-air-editor.md` |
+
 ## Quick links
 
 - Images: `ghcr.io/renorris/openfsd` (`:latest`, `:dev`, `sha-*`)

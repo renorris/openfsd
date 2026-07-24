@@ -23,6 +23,7 @@ As of May 2025, FSD is still used to facilitate over 140,000 active members conn
 cmd/openfsd/          # Binary entrypoint (FSD + web; image CMD is /openfsd)
 pkg/protocol/         # Pure wire format (parse/marshal; no I/O)
 pkg/fsdclient/        # Mock/real FSD client for e2e and tools
+pkg/twrfiles/         # Pure .apt/.air parse + format (sweatbox + editor)
 internal/server/      # TCP accept, login, handlers, service HTTP
 internal/session/     # Per-connection state + outbound send worker
 internal/postoffice/  # Callsign registry + geospatial index
@@ -47,6 +48,19 @@ go run ./cmd/aptdat2apt -download -out generated-apt -quiet
 
 Sources, licensing (Gateway / Global Airports GPLv2), and packaging rules:
 [docs/xplane-airport-data.md](docs/xplane-airport-data.md).
+
+### Airport editor (web)
+
+Administrators can author paired **`.apt`** (geometry) and **`.air`** (scenario
+aircraft) files in the browser at **`/airport-editor`**:
+
+- Map-first editing (Leaflet; JS required for the map; text paste + echo-download works without JS)
+- **No server persistence** of APT/AIR — open/download only (Blob download with JS; form echo-download without)
+- Validate tab: live client parse + soft cross-file warnings; optional **Confirm with server**
+  (`POST /api/v1/editor/validate-apt` and `validate-air`)
+- Workflow: download files → load them on **`/sweatbox`** (editor never pushes into a live session)
+
+Design notes: [docs/design/apt-air-editor.md](docs/design/apt-air-editor.md).
 
 ## Build and run
 
@@ -130,6 +144,7 @@ docker compose down
 ```bash
 go test -race ./...
 bash scripts/check-coverage.sh 80    # overall ≥80%; pure-pkg floors (see AGENTS.md)
+bash scripts/check-webjs.sh          # Node ≥20 unit tests for airport-editor JS modules
 go test -bench=. -benchmem ./internal/postoffice/ ./pkg/protocol/
 go test -tags=stress -count=1 -timeout=120s ./internal/server/ -run TestStress -v
 ```

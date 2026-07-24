@@ -104,6 +104,58 @@
   color: #664d03;
 }
 
+.apted-chip-issues.is-ok {
+  border-color: #a3cfbb;
+  background: #d1e7dd;
+  color: var(--apted-ok);
+}
+
+.apted-chip-issues.is-err {
+  border-color: #f1aeb5;
+  background: #f8d7da;
+  color: var(--apted-danger);
+}
+
+.apted-chip-issues.is-warn {
+  border-color: #c9a227;
+  background: var(--apted-warn-bg);
+  color: #664d03;
+}
+
+.apted-chip-issues.is-empty {
+  color: var(--apted-muted);
+  font-weight: 500;
+}
+
+.apted-tab-badge {
+  display: inline-block;
+  margin-left: 0.25rem;
+  padding: 0 0.3rem;
+  border-radius: 2px;
+  font-family: var(--apted-mono);
+  font-size: 0.65rem;
+  font-weight: 700;
+  line-height: 1.35;
+  vertical-align: middle;
+  background: #e9ecef;
+  color: var(--apted-muted);
+}
+
+.apted-tab-badge.is-ok {
+  background: #d1e7dd;
+  color: var(--apted-ok);
+}
+
+.apted-tab-badge.is-err {
+  background: #f8d7da;
+  color: var(--apted-danger);
+}
+
+.apted-tab-badge.is-warn {
+  background: var(--apted-warn-bg);
+  color: #664d03;
+}
+
 .apted-flash {
   margin: 0;
   padding: 0.35rem 0.6rem;
@@ -525,6 +577,57 @@
 
 .apted-err-list-warn {
   color: #664d03;
+  background: var(--apted-warn-bg);
+  border: 1px solid #e6d28a;
+  border-radius: 2px;
+  padding: 0.35rem 0.5rem 0.35rem 1.25rem;
+}
+
+.apted-soft-hd {
+  color: #664d03;
+}
+
+.apted-soft-note {
+  margin-bottom: 0.25rem;
+}
+
+.apted-validate-summary {
+  margin: 0 0 0.5rem;
+  font-weight: 600;
+  font-size: var(--apted-fs-sm);
+}
+
+.apted-server-validate {
+  margin-top: 0.75rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--apted-border);
+}
+
+.apted-server-side {
+  margin-top: 0.4rem;
+}
+
+.apted-server-ok {
+  color: var(--apted-ok);
+  font-weight: 600;
+}
+
+.apted-server-stale {
+  color: #664d03;
+  background: var(--apted-warn-bg);
+  border: 1px solid #e6d28a;
+  border-radius: 2px;
+  padding: 0.25rem 0.4rem;
+}
+
+.apted-handoff {
+  margin-top: 0.75rem;
+  padding-top: 0.5rem;
+  border-top: 1px dashed var(--apted-border);
+}
+
+.apted-handoff a {
+  font-weight: 600;
 }
 
 .apted-mini-table {

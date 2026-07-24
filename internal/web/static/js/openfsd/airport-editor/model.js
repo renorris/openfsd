@@ -72,6 +72,24 @@
  * @property {string|null} lastAptDownloadHash
  * @property {string|null} lastAirDownloadHash
  * @property {number} _nextSurfaceId
+ * @property {ServerValidationState|null} [serverValidation] - last server confirm result (UI)
+ */
+
+/**
+ * @typedef {Object} ServerValidationSide
+ * @property {boolean} ok
+ * @property {string|null} error
+ * @property {string[]} errors
+ * @property {{ icao?: string, surface_count?: number, aircraft_count?: number }} summary
+ */
+
+/**
+ * @typedef {Object} ServerValidationState
+ * @property {boolean} loading
+ * @property {boolean} stale - true after local edits since last confirm
+ * @property {ServerValidationSide|null} [apt]
+ * @property {ServerValidationSide|null} [air]
+ * @property {string} [message] - top-level status (e.g. nothing to send)
  */
 
 // Surface kind identifiers (TWRTrainer section types).
@@ -178,7 +196,18 @@ export function createEmptyDocument() {
     lastAptDownloadHash: null,
     lastAirDownloadHash: null,
     _nextSurfaceId: 1,
+    serverValidation: null,
   };
+}
+
+/**
+ * Mark last server confirm result as stale after local edits (if any).
+ * @param {EditorDocument} doc
+ */
+export function markServerValidationStale(doc) {
+  if (doc?.serverValidation && !doc.serverValidation.loading) {
+    doc.serverValidation = { ...doc.serverValidation, stale: true };
+  }
 }
 
 /**

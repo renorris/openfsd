@@ -24,6 +24,7 @@ import {
   updateAircraft,
   updateAirportHeaders,
   snapAircraftToParking,
+  markServerValidationStale,
   MODE_SELECT,
   MODE_PARK,
   MODE_TAXI,
@@ -40,6 +41,7 @@ import { parseAIR } from './parse-air.js';
 import { formatAPT } from './format-apt.js';
 import { formatAIR } from './format-air.js';
 import { validateDocument } from './validate.js';
+import { postServerValidate } from './server-validate.js';
 import {
   createMap,
   OverlayController,
@@ -273,6 +275,9 @@ function main() {
         );
       }
     },
+    onConfirmServer() {
+      void confirmWithServer();
+    },
   });
 
   const toolbar = mountToolbar(root, {
@@ -291,6 +296,7 @@ function main() {
           markDirty: false,
         });
         doc.lastAptDownloadHash = null;
+        doc.serverValidation = null;
         syncFallbackTextareas();
         validateDocument(doc);
         doc.selection = null;
@@ -321,6 +327,7 @@ function main() {
           markDirty: false,
         });
         doc.lastAirDownloadHash = null;
+        doc.serverValidation = null;
         syncFallbackTextareas();
         validateDocument(doc);
         doc.selection = null;
@@ -386,6 +393,7 @@ function main() {
         if (!window.confirm('Discard unsaved APT/AIR changes and start new?')) return;
       }
       resetDocument(doc);
+      doc.serverValidation = null;
       cancelDraw(draw);
       overlays.clearDrawPreview();
       toolbar.setMode(MODE_SELECT);
@@ -591,6 +599,7 @@ function main() {
    */
   function afterAptMutation(opts = {}) {
     validateDocument(doc);
+    markServerValidationStale(doc);
     syncFallbackTextareas();
     refresh(opts);
   }
@@ -600,8 +609,107 @@ function main() {
    */
   function afterAirMutation(opts = {}) {
     validateDocument(doc);
+    markServerValidationStale(doc);
     syncFallbackTextareas();
     refresh(opts);
+  }
+
+  /**
+   * POST formatted document text to Admin validate-apt / validate-air APIs.
+   */
+  async function confirmWithServer() {
+    if (doc.serverValidation?.loading) return;
+
+    const aptURL =
+      root.getAttribute('data-validate-apt') || '/api/v1/editor/validate-apt';
+    const airURL =
+      root.getAttribute('data-validate-air') || '/api/v1/editor/validate-air';
+
+    const hasApt = !!doc.airport;
+    const hasAir = Array.isArray(doc.aircraft) && doc.aircraft.length > 0;
+    if (!hasApt && !hasAir) {
+      doc.serverValidation = {
+        loading: false,
+        stale: false,
+        message: 'Nothing to confirm — load or draw APT/AIR first.',
+      };
+      refresh();
+      showStatus('Nothing to confirm with server.', true);
+      return;
+    }
+
+    doc.serverValidation = {
+      loading: true,
+      stale: false,
+      apt: null,
+      air: null,
+    };
+    refresh();
+    showStatus('Confirming with server…', false);
+
+    /** @type {import('./model.js').ServerValidationSide|null} */
+    let aptResult = null;
+    /** @type {import('./model.js').ServerValidationSide|null} */
+    let airResult = null;
+    let transportErr = null;
+
+    try {
+      if (hasApt) {
+        const text = formatAPT(doc.airport);
+        const r = await postServerValidate(aptURL, text, { side: 'apt' });
+        aptResult = {
+          ok: r.ok && r.httpOk,
+          error: r.httpOk ? r.error : r.error || `HTTP ${r.status}`,
+          errors: r.errors || [],
+          summary: r.summary || {},
+        };
+      }
+      if (hasAir) {
+        const text = formatAIR(doc.aircraft);
+        const r = await postServerValidate(airURL, text, { side: 'air' });
+        airResult = {
+          ok: r.ok && r.httpOk,
+          error: r.httpOk ? r.error : r.error || `HTTP ${r.status}`,
+          errors: r.errors || [],
+          summary: r.summary || {},
+        };
+      }
+    } catch (err) {
+      transportErr = errMessage(err);
+    }
+
+    doc.serverValidation = {
+      loading: false,
+      stale: false,
+      apt: aptResult,
+      air: airResult,
+      message: transportErr || undefined,
+    };
+    refresh();
+
+    if (transportErr) {
+      showStatus(`Server confirm failed: ${transportErr}`, true);
+      return;
+    }
+    const aptN = aptResult?.errors?.length || 0;
+    const airN = airResult?.errors?.length || 0;
+    const aptFail = aptResult && !aptResult.ok;
+    const airFail = airResult && !airResult.ok;
+    if (aptFail || airFail) {
+      showStatus(
+        `Server confirm request error${aptFail && aptResult?.error ? `: ${aptResult.error}` : airFail && airResult?.error ? `: ${airResult.error}` : ''}.`,
+        true,
+      );
+      return;
+    }
+    const total = aptN + airN;
+    showStatus(
+      total
+        ? `Server confirm: ${total} error(s) (APT ${aptN}, AIR ${airN}).`
+        : 'Server confirm: OK.',
+      total > 0,
+    );
+    rail.setTab('validate');
   }
 
   /**

@@ -39,6 +39,7 @@ export const RAIL_TABS = ['airport', 'surfaces', 'aircraft', 'validate', 'raw'];
  * @property {(index: number) => void} [onDeleteAircraft]
  * @property {(acIndex: number, parkingSurfaceIndex: number) => void} [onSnap]
  * @property {(side: 'apt'|'air', text: string) => void} [onApplyRaw]
+ * @property {() => void} [onConfirmServer] - POST current text to validate-apt/air
  */
 
 /**
@@ -192,6 +193,10 @@ export function mountRail(root, handlers) {
         ta.readOnly = false;
         ta.focus();
       }
+      return;
+    }
+    if (action === 'confirm-server' && handlers.onConfirmServer) {
+      handlers.onConfirmServer();
       return;
     }
   }
@@ -482,17 +487,43 @@ function renderValidatePanel(root, doc) {
   const el = root.querySelector('[data-js="panel-validate"]');
   if (!el) return;
   clearEl(el);
+
   const aptErrs = doc.aptErrors || [];
   const airErrs = doc.airErrors || [];
   const soft = doc.softWarnings || [];
-  if (!aptErrs.length && !airErrs.length && !soft.length) {
-    if (!doc.airport && !(doc.aircraft && doc.aircraft.length)) {
-      el.appendChild(hint('Load or draw geometry / aircraft to see issues.'));
-    } else {
-      el.appendChild(hint('No parse errors or soft warnings.'));
-    }
-    return;
+  const hasAirport = !!doc.airport;
+  const hasAircraft = Array.isArray(doc.aircraft) && doc.aircraft.length > 0;
+  const empty = !hasAirport && !hasAircraft;
+  const clientTotal = aptErrs.length + airErrs.length + soft.length;
+  const loading = !!doc.serverValidation?.loading;
+
+  // Live summary
+  const summary = document.createElement('p');
+  summary.className = 'apted-validate-summary';
+  summary.setAttribute('data-js', 'validate-summary');
+  if (empty) {
+    summary.textContent = 'No APT/AIR loaded.';
+  } else if (clientTotal === 0) {
+    summary.textContent = 'Client: no parse errors or soft warnings.';
+  } else {
+    const parts = [];
+    if (aptErrs.length) parts.push(`${aptErrs.length} APT error${aptErrs.length === 1 ? '' : 's'}`);
+    if (airErrs.length) parts.push(`${airErrs.length} AIR error${airErrs.length === 1 ? '' : 's'}`);
+    if (soft.length) parts.push(`${soft.length} soft warning${soft.length === 1 ? '' : 's'}`);
+    summary.textContent = `Client: ${parts.join(' · ')}.`;
   }
+  el.appendChild(summary);
+
+  if (empty) {
+    el.appendChild(
+      hint(
+        'No airport geometry or aircraft loaded. Open a .apt / .air file, paste via Raw Apply, or draw on the map (Park / Taxi / Rwy / Hold / Aircraft modes). Live parse issues and soft cross-file warnings appear here.',
+      ),
+    );
+  } else if (clientTotal === 0) {
+    el.appendChild(hint('Live client parse matches the in-memory document. Soft cross-file checks (dep ICAO, aircraft distance) also look clean.'));
+  }
+
   if (aptErrs.length) {
     el.appendChild(sectionTitle(`APT errors (${aptErrs.length})`));
     el.appendChild(errorList(aptErrs));
@@ -502,9 +533,118 @@ function renderValidatePanel(root, doc) {
     el.appendChild(errorList(airErrs));
   }
   if (soft.length) {
-    el.appendChild(sectionTitle(`Soft warnings (${soft.length})`));
+    const softHd = sectionTitle(`Soft warnings (${soft.length})`);
+    softHd.classList.add('apted-soft-hd');
+    el.appendChild(softHd);
+    const softNote = document.createElement('p');
+    softNote.className = 'apted-hint apted-soft-note';
+    softNote.textContent =
+      'Not parse failures — dep ICAO ≠ airport ICAO, or aircraft farther than ~50 NM from the field.';
+    el.appendChild(softNote);
     el.appendChild(errorList(soft, 'warn'));
   }
+
+  // Server confirm
+  const serverBox = document.createElement('div');
+  serverBox.className = 'apted-server-validate';
+  serverBox.setAttribute('data-js', 'server-validate');
+
+  const serverHd = sectionTitle('Server confirm');
+  serverBox.appendChild(serverHd);
+
+  const serverHint = document.createElement('p');
+  serverHint.className = 'apted-hint';
+  serverHint.textContent =
+    'Optional: re-check formatted text with the Go ParseAPT / ParseAIR path (Admin API). Does not save files.';
+  serverBox.appendChild(serverHint);
+
+  const btnRow = document.createElement('div');
+  btnRow.className = 'apted-btn-row';
+  const confirmBtn = document.createElement('button');
+  confirmBtn.type = 'button';
+  confirmBtn.className = 'btn btn-sm btn-outline-primary';
+  confirmBtn.setAttribute('data-action', 'confirm-server');
+  confirmBtn.setAttribute('data-js', 'confirm-server');
+  confirmBtn.textContent = loading ? 'Confirming…' : 'Confirm with server';
+  confirmBtn.disabled = loading || empty;
+  if (empty) confirmBtn.title = 'Load or draw APT/AIR first';
+  btnRow.appendChild(confirmBtn);
+  serverBox.appendChild(btnRow);
+
+  const sv = doc.serverValidation;
+  if (sv?.message && !sv.apt && !sv.air) {
+    serverBox.appendChild(hint(sv.message));
+  }
+  if (sv?.stale && (sv.apt || sv.air) && !loading) {
+    const stale = document.createElement('p');
+    stale.className = 'apted-hint apted-server-stale';
+    stale.setAttribute('data-js', 'server-stale');
+    stale.textContent = 'Document changed since last server confirm — results may be stale.';
+    serverBox.appendChild(stale);
+  }
+  if (sv?.apt) {
+    serverBox.appendChild(serverSideBlock('APT', sv.apt));
+  }
+  if (sv?.air) {
+    serverBox.appendChild(serverSideBlock('AIR', sv.air));
+  }
+  el.appendChild(serverBox);
+
+  // Sweatbox handoff
+  const handoff = document.createElement('div');
+  handoff.className = 'apted-handoff';
+  handoff.setAttribute('data-js', 'sweatbox-handoff');
+  const handoffP = document.createElement('p');
+  handoffP.className = 'apted-hint';
+  handoffP.appendChild(document.createTextNode('When ready: Download files, then load in '));
+  const link = document.createElement('a');
+  link.href = '/sweatbox';
+  link.textContent = 'Sweatbox';
+  link.setAttribute('data-js', 'sweatbox-link');
+  handoffP.appendChild(link);
+  handoffP.appendChild(document.createTextNode('. The editor never pushes into a live session.'));
+  handoff.appendChild(handoffP);
+  el.appendChild(handoff);
+}
+
+/**
+ * @param {'APT'|'AIR'} label
+ * @param {import('./model.js').ServerValidationSide} side
+ */
+function serverSideBlock(label, side) {
+  const wrap = document.createElement('div');
+  wrap.className = 'apted-server-side';
+  wrap.setAttribute('data-js', `server-${label.toLowerCase()}`);
+
+  if (!side.ok || side.error) {
+    wrap.appendChild(sectionTitle(`Server ${label} — failed`));
+    wrap.appendChild(hint(side.error || 'Request failed'));
+    return wrap;
+  }
+
+  const n = side.errors?.length || 0;
+  let meta = '';
+  if (label === 'APT') {
+    meta = `ICAO ${side.summary?.icao || '—'} · ${side.summary?.surface_count ?? 0} surfaces`;
+  } else {
+    meta = `${side.summary?.aircraft_count ?? 0} aircraft`;
+  }
+
+  if (n === 0) {
+    const ok = document.createElement('p');
+    ok.className = 'apted-hint apted-server-ok';
+    ok.textContent = `Server ${label}: OK — ${meta}`;
+    wrap.appendChild(ok);
+    return wrap;
+  }
+
+  wrap.appendChild(sectionTitle(`Server ${label} errors (${n})`));
+  const metaP = document.createElement('p');
+  metaP.className = 'apted-hint';
+  metaP.textContent = meta;
+  wrap.appendChild(metaP);
+  wrap.appendChild(errorList(side.errors));
+  return wrap;
 }
 
 /**
@@ -696,13 +836,33 @@ function renderInspector(root, doc) {
 
 /**
  * @param {HTMLElement} root
- * @param {{ icao: string, apt: string, air: string, counts: string }} chips
+ * @param {{ icao: string, apt: string, air: string, counts: string, issues?: string, issuesTone?: 'ok'|'err'|'warn'|'empty' }} chips
  */
 export function applyTitlebarChips(root, chips) {
   setText(root.querySelector('[data-js="chip-icao"]'), chips.icao);
   setText(root.querySelector('[data-js="chip-apt"]'), chips.apt);
   setText(root.querySelector('[data-js="chip-air"]'), chips.air);
   setText(root.querySelector('[data-js="chip-counts"]'), chips.counts);
+  const issuesEl = root.querySelector('[data-js="chip-issues"]');
+  if (issuesEl) {
+    setText(issuesEl, chips.issues != null ? chips.issues : '—');
+    issuesEl.classList.remove('is-ok', 'is-err', 'is-warn', 'is-empty');
+    const tone = chips.issuesTone || 'empty';
+    if (tone === 'ok') issuesEl.classList.add('is-ok');
+    else if (tone === 'err') issuesEl.classList.add('is-err');
+    else if (tone === 'warn') issuesEl.classList.add('is-warn');
+    else issuesEl.classList.add('is-empty');
+    issuesEl.setAttribute(
+      'title',
+      tone === 'ok'
+        ? 'No client parse errors or soft warnings'
+        : tone === 'err'
+          ? 'Client parse errors and/or soft warnings — see Validate tab'
+          : tone === 'warn'
+            ? 'Soft cross-file warnings only — see Validate tab'
+            : 'Load APT/AIR to validate',
+    );
+  }
   const aptChip = root.querySelector('[data-js="chip-apt"]');
   const airChip = root.querySelector('[data-js="chip-air"]');
   if (aptChip) {
@@ -722,6 +882,29 @@ export function applyTitlebarChips(root, chips) {
         ? 'Unsaved AIR changes (download to save locally)'
         : 'Scenario aircraft',
     );
+  }
+  // Validate tab badge (issue count on the tab button)
+  const valTab = root.querySelector('[data-tab="validate"]');
+  if (valTab && chips.issues != null) {
+    let badge = valTab.querySelector('[data-js="tab-issues-badge"]');
+    if (!badge) {
+      badge = document.createElement('span');
+      badge.className = 'apted-tab-badge';
+      badge.setAttribute('data-js', 'tab-issues-badge');
+      valTab.appendChild(badge);
+    }
+    const tone = chips.issuesTone || 'empty';
+    if (tone === 'empty' || chips.issues === '—' || chips.issues === 'OK') {
+      badge.hidden = tone === 'empty' || chips.issues === '—';
+      badge.textContent = chips.issues === 'OK' ? 'OK' : '';
+      if (chips.issues === 'OK') badge.hidden = false;
+    } else {
+      badge.hidden = false;
+      badge.textContent = chips.issues;
+    }
+    badge.classList.toggle('is-ok', tone === 'ok');
+    badge.classList.toggle('is-err', tone === 'err');
+    badge.classList.toggle('is-warn', tone === 'warn');
   }
 }
 

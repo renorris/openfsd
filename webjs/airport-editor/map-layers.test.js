@@ -95,6 +95,8 @@ test('titlebarChips', () => {
   assert.equal(chips.apt, 'APT');
   assert.equal(chips.air, 'AIR');
   assert.equal(chips.counts, '');
+  assert.equal(chips.issues, '—');
+  assert.equal(chips.issuesTone, 'empty');
 
   doc.airport = {
     icao: 'kbtv',
@@ -112,6 +114,19 @@ test('titlebarChips', () => {
   assert.match(chips.counts, /1 park/);
   assert.match(chips.counts, /1 rwy/);
   assert.match(chips.counts, /2 ac/);
+  assert.equal(chips.issues, 'OK');
+  assert.equal(chips.issuesTone, 'ok');
+
+  doc.aptErrors = ['bad header'];
+  doc.softWarnings = ['dep mismatch'];
+  chips = titlebarChips(doc);
+  assert.equal(chips.issuesTone, 'err');
+  assert.match(chips.issues, /2 issue/);
+
+  doc.aptErrors = [];
+  chips = titlebarChips(doc);
+  assert.equal(chips.issuesTone, 'warn');
+  assert.match(chips.issues, /1 warn/);
 });
 
 test('normalizeSelection', () => {

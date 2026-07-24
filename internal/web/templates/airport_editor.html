@@ -16,7 +16,9 @@
 <link href="/static/css/openfsd/airport-editor.css" rel="stylesheet">
 
 <main id="apted-root" class="apted container-fluid"
-      data-js="airport-editor">
+      data-js="airport-editor"
+      data-validate-apt="/api/v1/editor/validate-apt"
+      data-validate-air="/api/v1/editor/validate-air">
 
     <header class="apted-titlebar">
         <h1>Airport Editor</h1>
@@ -24,6 +26,8 @@
             <span class="apted-chip apted-chip-icao" data-js="chip-icao">—</span>
             <span class="apted-chip" data-js="chip-apt" title="Airport geometry">APT</span>
             <span class="apted-chip" data-js="chip-air" title="Scenario aircraft">AIR</span>
+            <span class="apted-chip apted-chip-issues is-empty" data-js="chip-issues"
+                  title="Load APT/AIR to validate">—</span>
             <span class="apted-hint" data-js="chip-counts"></span>
         </div>
         <p class="apted-hint apted-title-hint">
@@ -141,10 +145,33 @@
                          role="tabpanel" aria-labelledby="apted-tab-validate">
                     <div class="apted-panel-hd">
                         <h2>Validate</h2>
-                        <span class="apted-hint">Parse errors</span>
+                        <span class="apted-hint">Client + server</span>
                     </div>
                     <div class="apted-panel-bd" data-js="panel-validate">
-                        <p class="apted-hint">Load .apt / .air to see parse issues.</p>
+                        <p class="apted-hint apted-validate-summary" data-js="validate-summary">
+                            No APT/AIR loaded. Open files or draw on the map to see live parse
+                            errors and soft cross-file warnings.
+                        </p>
+                        <div class="apted-server-validate" data-js="server-validate">
+                            <h3 class="apted-subhd">Server confirm</h3>
+                            <p class="apted-hint">
+                                Optional Go ParseAPT / ParseAIR check via Admin API (does not save).
+                            </p>
+                            <div class="apted-btn-row">
+                                <button type="button" class="btn btn-sm btn-outline-primary"
+                                        data-action="confirm-server" data-js="confirm-server"
+                                        disabled
+                                        title="Requires JavaScript and a loaded document">
+                                    Confirm with server
+                                </button>
+                            </div>
+                        </div>
+                        <div class="apted-handoff" data-js="sweatbox-handoff">
+                            <p class="apted-hint">
+                                When ready: Download files, then load in
+                                <a href="/sweatbox" data-js="sweatbox-link">Sweatbox</a>.
+                            </p>
+                        </div>
                     </div>
                 </section>
 

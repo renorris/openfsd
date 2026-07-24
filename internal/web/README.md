@@ -18,10 +18,17 @@ JSON under `/api/v1` for external tools and map polling. First-party UI is a pro
 
 JSON under `/api/v1` remains for external consumers and map polling. Admin mutations work with **cookie + CSRF only** (no `Authorization` header required).
 
+### Airport editor validation
+
+- **Live client:** JS `parseAPT` / `parseAIR` + soft cross-file warnings (dep ICAO, aircraft far from field) on the Validate tab.
+- **Confirm with server (optional):** `POST /api/v1/editor/validate-apt` and `POST /api/v1/editor/validate-air` with JSON `{"text":"…"}` (Admin, dual-accept Bearer | cookie; CSRF when cookie). Response is standard `APIV1Response` with `data.errors`, plus `icao` / `surface_count` or `aircraft_count`. Transient request body only — never written to disk/DB.
+- **Handoff:** download `.apt`/`.air`, then load on `/sweatbox` (no automatic push from editor → live session).
+- Design: `docs/design/apt-air-editor.md`. JS unit tests: `webjs/` + `bash scripts/check-webjs.sh`.
+
 ### JS budget / map exception
 First-party openfsd modules stay small and vanilla (no jQuery). The **dashboard route** may load **Leaflet** (vendor) + `dashboard.js` as a documented exception to the 30–50 KB compressed first-party budget. Failure mode: map is absent; connection summary HTML still works.
 
-The **airport editor** (`/airport-editor`) is a second complexity-gate exception for map geometry authoring (Leaflet + first-party modules, landed in later PRs). Essential data path without JS: paste `apt_text` / `air_text` + CSRF form echo-download. Map region is inert when JS is off. Download handlers never write APT/AIR to disk or DB.
+The **airport editor** (`/airport-editor`) is a second complexity-gate exception for map geometry authoring (Leaflet + first-party modules). Essential data path without JS: paste `apt_text` / `air_text` + CSRF form echo-download. Map region is inert when JS is off. Download handlers never write APT/AIR to disk or DB.
 
 ---
 
