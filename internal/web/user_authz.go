@@ -11,12 +11,6 @@ import (
 // - Supervisor+: full mutation (create, name, password) in addition to ratings.
 //   Full profile mutation still cannot target users with a higher network rating.
 
-const (
-	// pilotRatingMin/Max bound stored pilot_rating values.
-	pilotRatingMin = 0
-	pilotRatingMax = 5
-)
-
 func canAccessUserEditor(r protocol.NetworkRating) bool {
 	return r >= protocol.NetworkRatingInstructor1
 }
@@ -30,46 +24,58 @@ func canAdjustUserRatings(r protocol.NetworkRating) bool {
 }
 
 // canFullMutateTarget is true when the actor may change name/password (and
-// create is separate). Requires SUP+ and target.network_rating <= actor.
+// create is separate). Requires SUP+ and target.network_rating ≤ actor.
 func canFullMutateTarget(actor, targetNetworkRating protocol.NetworkRating) bool {
 	return canFullMutateUsers(actor) && targetNetworkRating <= actor
 }
 
 func pilotRatingLabel(v int) string {
-	switch v {
-	case 0:
-		return "None (0)"
-	case 1:
-		return "P1"
-	case 2:
-		return "P2"
-	case 3:
-		return "P3"
-	case 4:
-		return "P4"
-	case 5:
-		return "P5"
-	default:
-		return "Unknown"
+	// "PPL — Private Pilot License" style for selects / tooltips.
+	short := protocol.PilotRatingShort(v)
+	long := protocol.PilotRatingLong(v)
+	if short == "?" {
+		return long
 	}
+	return short + " — " + long
 }
 
-// pilotRatingOptionsUpTo returns pilot rating select options 0..maxInclusive
-// (clamped to pilotRatingMax).
+func pilotRatingShort(v int) string {
+	return protocol.PilotRatingShort(v)
+}
+
+// pilotRatingOptionsUpTo returns official pilot rating options at or below
+// maxInclusive (VATSIM scale IDs). maxInclusive that is not an official value
+// is treated as the highest official ID ≤ maxInclusive (or P0).
 func pilotRatingOptionsUpTo(maxInclusive int, selected int) []ratingOption {
-	if maxInclusive > pilotRatingMax {
-		maxInclusive = pilotRatingMax
-	}
-	if maxInclusive < pilotRatingMin {
-		maxInclusive = pilotRatingMin
-	}
-	out := make([]ratingOption, 0, maxInclusive-pilotRatingMin+1)
-	for v := pilotRatingMin; v <= maxInclusive; v++ {
+	ceiling := maxValidPilotRatingAtMost(maxInclusive)
+	out := make([]ratingOption, 0, len(protocol.PilotRatingScale))
+	for _, p := range protocol.PilotRatingScale {
+		id := int(p)
+		if id > ceiling {
+			break
+		}
 		out = append(out, ratingOption{
-			Value:    v,
-			Label:    pilotRatingLabel(v),
-			Selected: v == selected,
+			Value:    id,
+			Label:    pilotRatingLabel(id),
+			Selected: id == selected,
 		})
 	}
 	return out
+}
+
+// maxValidPilotRatingAtMost returns the highest official pilot rating ID ≤ n.
+// If n is below P0, returns P0.
+func maxValidPilotRatingAtMost(n int) int {
+	best := int(protocol.PilotRatingNone)
+	for _, p := range protocol.PilotRatingScale {
+		id := int(p)
+		if id <= n && id >= best {
+			best = id
+		}
+	}
+	return best
+}
+
+func isValidPilotRating(v int) bool {
+	return protocol.IsValidPilotRating(v)
 }

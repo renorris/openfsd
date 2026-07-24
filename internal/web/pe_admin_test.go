@@ -642,9 +642,9 @@ func TestSupervisorCannotUpdateHigherRatedUserViaForm(t *testing.T) {
 
 func TestInstructorCanAdjustRatingsButNotCreate(t *testing.T) {
 	ts := newTestServer(t)
-	// Give instructor a pilot ceiling so they can assign pilot ratings.
+	// Give instructor a pilot ceiling (IR=3) so they can assign P0/PPL/IR.
 	inst := createTestUser(t, ts, "inst-pass", int(protocol.NetworkRatingInstructor1))
-	inst.PilotRating = 3
+	inst.PilotRating = int(protocol.PilotRatingIR)
 	inst.Password = ""
 	if err := ts.dbRepo.UserRepo.UpdateUser(inst); err != nil {
 		t.Fatal(err)
@@ -672,11 +672,11 @@ func TestInstructorCanAdjustRatingsButNotCreate(t *testing.T) {
 		t.Fatal("instructor must not create users")
 	}
 
-	// Rating adjust allowed.
+	// Rating adjust allowed (network S1; pilot PPL=1 ≤ IR ceiling).
 	form = url.Values{}
 	form.Set("cid", itoa(obs.CID))
 	form.Set("network_rating", "2") // S1 ≤ I1
-	form.Set("pilot_rating", "2")
+	form.Set("pilot_rating", itoa(int(protocol.PilotRatingPPL)))
 	form.Set("password", "")
 	w, _ = formPOST(t, ts, "/usereditor/update", form, cookies)
 	if w.Code != http.StatusSeeOther {
@@ -689,8 +689,8 @@ func TestInstructorCanAdjustRatingsButNotCreate(t *testing.T) {
 	if u.NetworkRating != 2 {
 		t.Fatalf("network = %d want 2", u.NetworkRating)
 	}
-	if u.PilotRating != 2 {
-		t.Fatalf("pilot = %d want 2", u.PilotRating)
+	if u.PilotRating != int(protocol.PilotRatingPPL) {
+		t.Fatalf("pilot = %d want PPL(%d)", u.PilotRating, protocol.PilotRatingPPL)
 	}
 }
 

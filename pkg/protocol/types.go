@@ -78,3 +78,85 @@ const (
 	NetworkRatingSupervisor
 	NetworkRatingAdministator
 )
+
+// PilotRating is a VATSIM pilot rating wire/API value.
+// Values are not a dense 0..N sequence; higher qualifications use increasing IDs
+// (historically bitmask-shaped: 0, 1, 3, 7, 15, 31, 63).
+// Source: https://vatsim.dev/resources/ratings/ (Pilot table).
+type PilotRating int
+
+const (
+	PilotRatingNone PilotRating = 0  // P0 — No Pilot Rating
+	PilotRatingPPL  PilotRating = 1  // PPL — Private Pilot License
+	PilotRatingIR   PilotRating = 3  // IR — Instrument Rating
+	PilotRatingCMEL PilotRating = 7  // CMEL — Commercial Multi-Engine License
+	PilotRatingATPL PilotRating = 15 // ATPL — Air Transport Pilot License
+	PilotRatingFI   PilotRating = 31 // FI — Flight Instructor
+	PilotRatingFE   PilotRating = 63 // FE — Flight Examiner
+)
+
+// PilotRatingScale is the ordered list of valid pilot ratings (lowest → highest).
+// Use this for UI selects and validation; do not assume every integer in range is valid.
+var PilotRatingScale = []PilotRating{
+	PilotRatingNone,
+	PilotRatingPPL,
+	PilotRatingIR,
+	PilotRatingCMEL,
+	PilotRatingATPL,
+	PilotRatingFI,
+	PilotRatingFE,
+}
+
+// IsValidPilotRating reports whether v is one of the official VATSIM pilot rating IDs.
+func IsValidPilotRating(v int) bool {
+	for _, p := range PilotRatingScale {
+		if int(p) == v {
+			return true
+		}
+	}
+	return false
+}
+
+// PilotRatingShort returns the short code (P0, PPL, IR, …) for a pilot rating ID.
+func PilotRatingShort(v int) string {
+	switch PilotRating(v) {
+	case PilotRatingNone:
+		return "P0"
+	case PilotRatingPPL:
+		return "PPL"
+	case PilotRatingIR:
+		return "IR"
+	case PilotRatingCMEL:
+		return "CMEL"
+	case PilotRatingATPL:
+		return "ATPL"
+	case PilotRatingFI:
+		return "FI"
+	case PilotRatingFE:
+		return "FE"
+	default:
+		return "?"
+	}
+}
+
+// PilotRatingLong returns the long name for a pilot rating ID.
+func PilotRatingLong(v int) string {
+	switch PilotRating(v) {
+	case PilotRatingNone:
+		return "No Pilot Rating"
+	case PilotRatingPPL:
+		return "Private Pilot License"
+	case PilotRatingIR:
+		return "Instrument Rating"
+	case PilotRatingCMEL:
+		return "Commercial Multi-Engine License"
+	case PilotRatingATPL:
+		return "Air Transport Pilot License"
+	case PilotRatingFI:
+		return "Flight Instructor"
+	case PilotRatingFE:
+		return "Flight Examiner"
+	default:
+		return "Unknown"
+	}
+}

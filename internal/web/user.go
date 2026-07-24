@@ -78,7 +78,7 @@ func (s *Server) updateUser(c *gin.Context) {
 		FirstName     *string `json:"first_name"`
 		LastName      *string `json:"last_name"`
 		NetworkRating *int    `json:"network_rating" binding:"omitempty,min=-1,max=12"`
-		PilotRating   *int    `json:"pilot_rating" binding:"omitempty,min=0,max=5"`
+		PilotRating   *int    `json:"pilot_rating" binding:"omitempty,min=0,max=63"`
 	}
 
 	var reqBody RequestBody
@@ -127,6 +127,11 @@ func (s *Server) updateUser(c *gin.Context) {
 		targetUser.NetworkRating = *reqBody.NetworkRating
 	}
 	if reqBody.PilotRating != nil {
+		if !isValidPilotRating(*reqBody.PilotRating) {
+			res := newAPIV1Failure("invalid pilot rating")
+			writeAPIV1Response(c, http.StatusBadRequest, &res)
+			return
+		}
 		if *reqBody.PilotRating > actorPilotMax &&
 			*reqBody.PilotRating != targetUser.PilotRating {
 			res := newAPIV1Failure("cannot set pilot rating above your own")
@@ -172,7 +177,7 @@ func (s *Server) createUser(c *gin.Context) {
 		FirstName     *string `json:"first_name"`
 		LastName      *string `json:"last_name"`
 		NetworkRating int     `json:"network_rating" binding:"min=-1,max=12,required"`
-		PilotRating   int     `json:"pilot_rating" binding:"omitempty,min=0,max=5"`
+		PilotRating   int     `json:"pilot_rating" binding:"omitempty,min=0,max=63"`
 	}
 
 	var reqBody RequestBody
@@ -185,6 +190,11 @@ func (s *Server) createUser(c *gin.Context) {
 	if !canFullMutateUsers(claims.NetworkRating) ||
 		reqBody.NetworkRating > int(claims.NetworkRating) {
 		writeAPIV1Response(c, http.StatusForbidden, &genericAPIV1Forbidden)
+		return
+	}
+	if !isValidPilotRating(reqBody.PilotRating) {
+		res := newAPIV1Failure("invalid pilot rating")
+		writeAPIV1Response(c, http.StatusBadRequest, &res)
 		return
 	}
 	actorPilotMax := s.actorPilotRatingCeiling(claims.CID)

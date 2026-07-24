@@ -48,19 +48,18 @@ func actorMaxRating(page *userEditorPage) int {
 	return page.User.NetworkRating
 }
 
-// actorPilotRatingCeiling loads the actor's stored pilot_rating (0 if missing).
+// actorPilotRatingCeiling loads the actor's stored pilot_rating (VATSIM scale).
+// Invalid stored values fall back to the highest official rating at or below
+// the stored number (or P0).
 func (s *Server) actorPilotRatingCeiling(cid int) int {
 	u, err := s.dbRepo.UserRepo.GetUserByCID(cid)
 	if err != nil || u == nil {
-		return pilotRatingMin
+		return int(protocol.PilotRatingNone)
 	}
-	if u.PilotRating < pilotRatingMin {
-		return pilotRatingMin
+	if protocol.IsValidPilotRating(u.PilotRating) {
+		return u.PilotRating
 	}
-	if u.PilotRating > pilotRatingMax {
-		return pilotRatingMax
-	}
-	return u.PilotRating
+	return maxValidPilotRatingAtMost(u.PilotRating)
 }
 
 // loadUserDirectory fills Dir totals/pages and Users rows for the current query.
@@ -107,6 +106,7 @@ func (s *Server) loadUserDirectory(page *userEditorPage, selectedCID int) {
 			RatingShort: networkRatingShort(u.NetworkRating),
 			RatingLabel: networkRatingLabel(u.NetworkRating),
 			PilotRating: u.PilotRating,
+			PilotShort:  pilotRatingShort(u.PilotRating),
 			PilotLabel:  pilotRatingLabel(u.PilotRating),
 			Selected:    selectedCID >= 1 && u.CID == selectedCID,
 			EditHref:    directoryHref(base, extras),
@@ -194,7 +194,7 @@ func (s *Server) loadUserIntoEditForm(page *userEditorPage, cidStr string) {
 	}
 	page.EditLoaded = true
 	actorMax := actorMaxRating(page)
-	actorPilotMax := pilotRatingMin
+	actorPilotMax := int(protocol.PilotRatingNone)
 	if page.User != nil {
 		actorPilotMax = s.actorPilotRatingCeiling(page.User.CID)
 	}
@@ -312,10 +312,10 @@ func (s *Server) handleFrontendUserCreate(c *gin.Context) {
 	page.Create.NetworkRating = rating
 	page.RatingOptions = ratingOptionsUpTo(maxRating, rating)
 
-	pilotRating := 0
+	pilotRating := int(protocol.PilotRatingNone)
 	if pilotStr != "" {
 		pilotRating, err = strconv.Atoi(pilotStr)
-		if err != nil || pilotRating < pilotRatingMin || pilotRating > pilotRatingMax {
+		if err != nil || !isValidPilotRating(pilotRating) {
 			page.Create.PilotError = "Invalid pilot rating"
 			page.PilotRatingOptions = pilotRatingOptionsUpTo(actorPilotMax, 0)
 			s.reRenderUserEditor(c, &page, dir)
@@ -433,12 +433,12 @@ func (s *Server) handleFrontendUserUpdate(c *gin.Context) {
 	page.Edit.NetworkRating = rating
 	page.RatingOptions = ratingOptionsUpTo(maxRating, rating)
 
-	pilotRating := 0
+	pilotRating := int(protocol.PilotRatingNone)
 	if pilotStr != "" {
 		pilotRating, err = strconv.Atoi(pilotStr)
-		if err != nil || pilotRating < pilotRatingMin || pilotRating > pilotRatingMax {
+		if err != nil || !isValidPilotRating(pilotRating) {
 			page.Edit.PilotError = "Invalid pilot rating"
-			page.Edit.PilotRating = 0
+			page.Edit.PilotRating = int(protocol.PilotRatingNone)
 			page.PilotRatingOptions = pilotRatingOptionsUpTo(actorPilotMax, 0)
 			s.reRenderUserEditor(c, &page, dir)
 			return

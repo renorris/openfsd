@@ -6,7 +6,8 @@ type User struct {
 	FirstName     *string
 	LastName      *string
 	NetworkRating int
-	// PilotRating is the pilot certificate rating (0 = none; typically 0–5).
+	// PilotRating is the VATSIM pilot rating wire ID (0, 1, 3, 7, 15, 31, 63).
+	// See protocol.PilotRating / protocol.PilotRatingScale.
 	PilotRating int
 }
 

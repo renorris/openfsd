@@ -78,7 +78,7 @@ Public VATSIM FSD JWTs have been observed in the following shape (example payloa
 | `sub` | VATSIM CID | Subject |
 | `aud` | Audience | Observed `fsd-live` on the public network; other audiences **unconfirmed** |
 | `controller_rating` | ATC rating claim | Numeric; full mapping to wire [Network Ratings](enumerations.md#network-ratings) is **not fully documented here** |
-| `pilot_rating` | Pilot rating claim | Numeric; treat wire meaning as **unconfirmed** without a current official table |
+| `pilot_rating` | Pilot rating claim | Numeric VATSIM pilot rating ID (`0`, `1`, `3`, `7`, `15`, `31`, `63`) — see [enumerations.md](enumerations.md#pilot-ratings) |
 
 openfsd’s **private** JWT path uses its own claims (including a single network rating), which is **not** identical to the public VATSIM payload above.
 

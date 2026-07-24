@@ -93,7 +93,8 @@ type userDirectoryRow struct {
 	RatingShort string
 	RatingLabel string
 	PilotRating int
-	PilotLabel  string
+	PilotShort  string // P0, PPL, IR, …
+	PilotLabel  string // "PPL — Private Pilot License"
 	Selected    bool
 	// EditHref is the full relative URL with directory params + this cid.
 	EditHref string
