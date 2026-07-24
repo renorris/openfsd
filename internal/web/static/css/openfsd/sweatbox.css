@@ -1,0 +1,478 @@
+/*
+ * Sweatbox instructor control panel — dense utilitarian layout.
+ *
+ * Target: 16:9 landscape operator console. Progressive enhancement only;
+ * forms and table work without this stylesheet.
+ *
+ * Intentional scroll regions (table + paste areas): clipping is deliberate so
+ * the control surface fits one viewport rather than page-scrolling.
+ */
+
+/* --- tokens --- */
+.sbx {
+  --sbx-gap: 0.5rem;
+  --sbx-pad: 0.5rem 0.75rem;
+  --sbx-border: #c5c9ce;
+  --sbx-border-strong: #8b9198;
+  --sbx-bg: #f4f5f6;
+  --sbx-panel: #fff;
+  --sbx-muted: #5c636a;
+  --sbx-accent: #1a1a1a;
+  --sbx-sel: #dce8f5;
+  --sbx-sel-border: #4a7ab0;
+  --sbx-danger: #842029;
+  --sbx-ok: #0f5132;
+  --sbx-warn-bg: #fff3cd;
+  --sbx-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --sbx-font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --sbx-fs: 0.8125rem;
+  --sbx-fs-sm: 0.75rem;
+  --sbx-header-approx: 3.25rem;
+
+  box-sizing: border-box;
+  font-family: var(--sbx-font);
+  font-size: var(--sbx-fs);
+  line-height: 1.35;
+  color: var(--sbx-accent);
+  background: var(--sbx-bg);
+  /* Prefer fitting one 16:9 viewport; fall back to natural height if content needs it */
+  min-height: calc(100dvh - var(--sbx-header-approx));
+  max-width: none;
+  margin: 0;
+  padding: var(--sbx-pad);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sbx-gap);
+}
+
+.sbx *,
+.sbx *::before,
+.sbx *::after {
+  box-sizing: border-box;
+}
+
+/* --- title / flash --- */
+.sbx-titlebar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.25rem 1rem;
+  margin: 0;
+}
+
+.sbx-titlebar h1 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.sbx-titlebar .sbx-hint {
+  margin: 0;
+  color: var(--sbx-muted);
+  font-size: var(--sbx-fs-sm);
+}
+
+.sbx-flash {
+  margin: 0;
+  padding: 0.35rem 0.6rem;
+  font-size: var(--sbx-fs-sm);
+  border: 1px solid var(--sbx-border);
+  border-radius: 2px;
+}
+
+.sbx-flash-ok {
+  background: #d1e7dd;
+  color: var(--sbx-ok);
+  border-color: #a3cfbb;
+}
+
+.sbx-flash-err {
+  background: #f8d7da;
+  color: var(--sbx-danger);
+  border-color: #f1aeb5;
+}
+
+.sbx-flash-warn {
+  background: var(--sbx-warn-bg);
+  color: #664d03;
+  border-color: #ffecb5;
+}
+
+/* --- status strip --- */
+.sbx-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.75rem;
+  padding: 0.35rem 0.5rem;
+  background: var(--sbx-panel);
+  border: 1px solid var(--sbx-border-strong);
+  border-radius: 2px;
+}
+
+.sbx-status dl {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.15rem 0.85rem;
+  margin: 0;
+  flex: 1 1 auto;
+}
+
+.sbx-status .sbx-kv {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.3rem;
+  margin: 0;
+}
+
+.sbx-status dt {
+  margin: 0;
+  font-size: var(--sbx-fs-sm);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--sbx-muted);
+}
+
+.sbx-status dd {
+  margin: 0;
+  font-family: var(--sbx-mono);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.sbx-status-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0;
+}
+
+.sbx-live {
+  margin: 0;
+  font-size: var(--sbx-fs-sm);
+  font-family: var(--sbx-mono);
+  color: var(--sbx-muted);
+}
+
+.sbx-live.is-error {
+  color: var(--sbx-danger);
+  font-weight: 600;
+}
+
+/* --- body grid: aircraft + rail --- */
+.sbx-body {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: 1fr;
+  grid-template-rows: minmax(12rem, 1fr) auto;
+  gap: var(--sbx-gap);
+  min-height: 0;
+}
+
+@media (min-width: 900px) {
+  .sbx-body {
+    grid-template-columns: minmax(0, 1fr) minmax(17rem, 22rem);
+    grid-template-rows: minmax(0, 1fr);
+    /* Cap shell to ~16:9 usable height so rail + table share one screen */
+    max-height: calc(100dvh - var(--sbx-header-approx) - 5.5rem);
+  }
+}
+
+.sbx-panel {
+  background: var(--sbx-panel);
+  border: 1px solid var(--sbx-border);
+  border-radius: 2px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+.sbx-panel-hd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.25rem 0.5rem;
+  padding: 0.3rem 0.5rem;
+  border-bottom: 1px solid var(--sbx-border);
+  background: #e9ecef;
+}
+
+.sbx-panel-hd h2 {
+  margin: 0;
+  font-size: var(--sbx-fs-sm);
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.sbx-panel-bd {
+  padding: 0.45rem 0.5rem;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+/* aircraft table region — intentional scroll */
+.sbx-table-scroll {
+  flex: 1 1 auto;
+  overflow: auto;
+  min-height: 8rem;
+  border: 1px solid var(--sbx-border);
+  max-height: min(55dvh, 28rem);
+}
+
+@media (min-width: 900px) {
+  .sbx-table-scroll {
+    max-height: none;
+    height: 100%;
+  }
+}
+
+.sbx-table {
+  width: 100%;
+  margin: 0;
+  border-collapse: collapse;
+  font-size: var(--sbx-fs-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.sbx-table th,
+.sbx-table td {
+  padding: 0.2rem 0.35rem;
+  border-bottom: 1px solid #e2e4e7;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.sbx-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #e9ecef;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  font-size: 0.68rem;
+  color: var(--sbx-muted);
+  border-bottom: 1px solid var(--sbx-border-strong);
+}
+
+.sbx-table tbody tr {
+  cursor: pointer;
+}
+
+.sbx-table tbody tr:hover {
+  background: #f0f4f8;
+}
+
+.sbx-table tbody tr.sbx-row-selected {
+  background: var(--sbx-sel);
+  outline: 1px solid var(--sbx-sel-border);
+  outline-offset: -1px;
+}
+
+.sbx-table tbody tr:focus-visible {
+  outline: 2px solid var(--sbx-sel-border);
+  outline-offset: -2px;
+}
+
+.sbx-table .sbx-cs {
+  font-family: var(--sbx-mono);
+  font-weight: 600;
+}
+
+.sbx-table .sbx-instr {
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sbx-empty {
+  margin: 0.5rem;
+  color: var(--sbx-muted);
+  font-size: var(--sbx-fs-sm);
+}
+
+.sbx-danger-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding-top: 0.25rem;
+  border-top: 1px dashed var(--sbx-border);
+  margin-top: auto;
+}
+
+/* --- forms (compact) --- */
+.sbx-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin: 0;
+}
+
+.sbx-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  margin: 0;
+}
+
+.sbx-field > label,
+.sbx-check {
+  font-size: var(--sbx-fs-sm);
+  font-weight: 600;
+  color: var(--sbx-muted);
+  margin: 0;
+}
+
+.sbx-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.35rem;
+  font-weight: 500;
+  color: var(--sbx-accent);
+}
+
+.sbx-check input {
+  margin-top: 0.15rem;
+}
+
+.sbx-field input[type="text"],
+.sbx-field input[type="file"],
+.sbx-field textarea,
+.sbx .form-control {
+  font-size: var(--sbx-fs);
+  padding: 0.25rem 0.4rem;
+  border: 1px solid var(--sbx-border-strong);
+  border-radius: 2px;
+  background: #fff;
+  width: 100%;
+}
+
+.sbx-field input[type="text"]:focus,
+.sbx-field textarea:focus,
+.sbx .form-control:focus {
+  outline: 2px solid var(--sbx-sel-border);
+  outline-offset: 1px;
+  border-color: var(--sbx-sel-border);
+}
+
+.sbx-field textarea {
+  font-family: var(--sbx-mono);
+  font-size: var(--sbx-fs-sm);
+  resize: vertical;
+  min-height: 4.5rem;
+  max-height: 12rem;
+}
+
+.sbx-cmd-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: stretch;
+}
+
+.sbx-cmd-row .sbx-field {
+  flex: 1 1 8rem;
+}
+
+.sbx-field input.sbx-cmd-input {
+  font-family: var(--sbx-mono);
+}
+
+.sbx-help {
+  margin: 0;
+  padding: 0.3rem 0.4rem;
+  background: #f8f9fa;
+  border: 1px solid var(--sbx-border);
+  border-radius: 2px;
+  font-size: 0.68rem;
+  line-height: 1.4;
+  color: var(--sbx-muted);
+  font-family: var(--sbx-mono);
+  max-height: 6.5rem;
+  overflow: auto;
+}
+
+.sbx-help strong {
+  color: var(--sbx-accent);
+  font-weight: 700;
+}
+
+.sbx-history {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.sbx-history button {
+  font-family: var(--sbx-mono);
+  font-size: 0.65rem;
+  padding: 0.1rem 0.35rem;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sbx-rail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sbx-gap);
+  min-height: 0;
+  overflow: auto;
+}
+
+.sbx-rail .sbx-panel {
+  flex: 0 0 auto;
+}
+
+.sbx-rail .sbx-panel-cmd {
+  flex: 0 0 auto;
+}
+
+/* compact buttons */
+.sbx .btn {
+  font-size: var(--sbx-fs-sm);
+  padding: 0.2rem 0.5rem;
+  line-height: 1.3;
+  border-radius: 2px;
+}
+
+.sbx .btn:focus-visible {
+  outline: 2px solid var(--sbx-sel-border);
+  outline-offset: 2px;
+}
+
+.sbx-btn-run {
+  align-self: flex-end;
+}
+
+.sbx-muted {
+  color: var(--sbx-muted);
+}
+
+/* disabled / unavailable full-width messages */
+.sbx-banner {
+  margin: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sbx {
+    scroll-behavior: auto;
+  }
+}
