@@ -275,6 +275,18 @@ func (s *Server) attemptAuthentication(client *session.Session, token string) (e
 		}
 		client.MaxNetworkRating = claims.NetworkRating
 
+		// Pilot PPL gate needs DB pilot_rating (JWT claims do not carry it).
+		user, userErr := s.users.GetUserByCID(client.CID)
+		if userErr != nil {
+			s.authFails.recordFailure(ip, now)
+			err = ErrInvalidAddPacket
+			sendError(client.Conn, InvalidLogonError, invalidLogonMsg)
+			return
+		}
+		if err = s.enforcePilotPPLRequirement(client, user); err != nil {
+			return
+		}
+
 		return
 	}
 
@@ -309,7 +321,32 @@ func (s *Server) attemptAuthentication(client *session.Session, token string) (e
 	}
 	client.MaxNetworkRating = NetworkRating(user.NetworkRating)
 
+	if err = s.enforcePilotPPLRequirement(client, user); err != nil {
+		return
+	}
+
 	return
+}
+
+// enforcePilotPPLRequirement rejects pilot (#AP) logins when REQUIRE_PILOT_PPL is
+// enabled and the certificate's pilot_rating is below PPL. ATC is unaffected.
+func (s *Server) enforcePilotPPLRequirement(client *session.Session, user *db.User) error {
+	if client.IsAtc {
+		return nil
+	}
+	if s.configKV == nil {
+		return nil
+	}
+	raw, err := s.configKV.Get(db.ConfigRequirePilotPPL)
+	if err != nil || !db.ParseBoolConfig(raw) {
+		return nil
+	}
+	if user == nil || !protocol.MeetsMinimumPilotRating(user.PilotRating, protocol.PilotRatingPPL) {
+		err := ErrInvalidAddPacket
+		sendError(client.Conn, RequestedLevelTooHighError, "Pilot rating PPL or higher required")
+		return err
+	}
+	return nil
 }
 
 func (s *Server) broadcastAddPacket(client *session.Session) {

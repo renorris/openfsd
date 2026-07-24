@@ -117,6 +117,15 @@ func IsValidPilotRating(v int) bool {
 	return false
 }
 
+// MeetsMinimumPilotRating reports whether v is a valid pilot rating at least min.
+// Ordering follows PilotRatingScale numeric IDs (0 < 1 < 3 < 7 < 15 < 31 < 63).
+func MeetsMinimumPilotRating(v int, min PilotRating) bool {
+	if !IsValidPilotRating(v) {
+		return false
+	}
+	return v >= int(min)
+}
+
 // PilotRatingShort returns the short code (P0, PPL, IR, …) for a pilot rating ID.
 func PilotRatingShort(v int) string {
 	switch PilotRating(v) {

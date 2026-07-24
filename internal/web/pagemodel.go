@@ -367,6 +367,12 @@ var editableConfigKeys = []struct {
 		Description: "API server base URL advertised to clients",
 		Placeholder: "https://example.com",
 	},
+	{
+		Key:         db.ConfigRequirePilotPPL,
+		Label:       "Require PPL for pilot connections",
+		Description: "When true, pilots must hold pilot rating PPL (or higher) to connect as a pilot. ATC is unaffected. Values: true/false (default false).",
+		Placeholder: "false",
+	},
 }
 
 func isEditableConfigKey(key string) bool {

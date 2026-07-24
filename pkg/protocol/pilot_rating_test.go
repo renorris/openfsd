@@ -42,4 +42,17 @@ func TestPilotRatingScaleMatchesVATSIM(t *testing.T) {
 			t.Errorf("IsValidPilotRating(%d) = true, want false", bad)
 		}
 	}
+
+	if MeetsMinimumPilotRating(int(PilotRatingNone), PilotRatingPPL) {
+		t.Error("P0 should not meet PPL minimum")
+	}
+	if !MeetsMinimumPilotRating(int(PilotRatingPPL), PilotRatingPPL) {
+		t.Error("PPL should meet PPL minimum")
+	}
+	if !MeetsMinimumPilotRating(int(PilotRatingATPL), PilotRatingPPL) {
+		t.Error("ATPL should meet PPL minimum")
+	}
+	if MeetsMinimumPilotRating(2, PilotRatingPPL) {
+		t.Error("invalid rating 2 should not meet PPL")
+	}
 }
