@@ -320,6 +320,19 @@ export function createMap(L, mapEl, opts = {}) {
     if (prev && map.hasLayer(prev)) map.removeLayer(prev);
     if (!map.hasLayer(next)) next.addTo(map);
     activeBase = key;
+    // Basemap swap after layout changes can leave a half-covered tile pane.
+    if (typeof map.invalidateSize === 'function') {
+      map.invalidateSize({ animate: false });
+    }
+  }
+
+  // Force a remeasure after the first paint of this host (flex/grid settle).
+  if (typeof map.whenReady === 'function') {
+    map.whenReady(() => {
+      if (typeof map.invalidateSize === 'function') {
+        map.invalidateSize({ animate: false });
+      }
+    });
   }
 
   return { map, baseLayers, get activeBase() { return activeBase; }, setBase };

@@ -66,12 +66,6 @@ func TestAirportEditorAdminShell(t *testing.T) {
 	for _, want := range []string{
 		`id="apted-root"`,
 		`data-js="airport-editor"`,
-		`name="apt_text"`,
-		`name="air_text"`,
-		`name="filename"`,
-		`name="csrf_token"`,
-		`action="/airport-editor/download-apt"`,
-		`action="/airport-editor/download-air"`,
 		`id="apted-map"`,
 		`requires JavaScript`,
 		`href="/airport-editor"`,
@@ -108,6 +102,18 @@ func TestAirportEditorAdminShell(t *testing.T) {
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected body to contain %q, body=%s", want, clip(body, 800))
+		}
+	}
+	// No-JS text backup forms were removed (map is JS-primary; reclaim screen space).
+	for _, ban := range []string{
+		`name="apt_text"`,
+		`name="air_text"`,
+		`apted-fallback`,
+		`action="/airport-editor/download-apt"`,
+		`action="/airport-editor/download-air"`,
+	} {
+		if strings.Contains(body, ban) {
+			t.Fatalf("shell should not contain removed fallback UI %q", ban)
 		}
 	}
 }

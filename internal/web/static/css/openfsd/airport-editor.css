@@ -1,8 +1,9 @@
 /*
  * Airport editor — dense utilitarian 16:9 console (map + rail).
  *
- * Aligned with sweatbox tokens. Progressive enhancement: map/rail JS
- * enhances layout; forms and text fallback work without this stylesheet.
+ * Aligned with sweatbox tokens. Map authoring is JS-primary (Leaflet);
+ * this stylesheet sizes the enhanced shell so the map host has a definite
+ * height (required for correct OSM tile coverage).
  */
 
 /* --- tokens (mirrors sweatbox density; --apted-* namespace) --- */
@@ -25,6 +26,8 @@
   --apted-fs: 0.8125rem;
   --apted-fs-sm: 0.75rem;
   --apted-header-approx: 3.25rem;
+  /* Remaining chrome below site header: titlebar + toolbar + gaps + padding */
+  --apted-chrome-approx: 7.5rem;
 
   box-sizing: border-box;
   font-family: var(--apted-font);
@@ -39,6 +42,18 @@
   display: flex;
   flex-direction: column;
   gap: var(--apted-gap);
+}
+
+/*
+ * JS-enhanced shell: pin to the viewport so map+rail share one definite height.
+ * Leaflet tiles glitch (half-map / wrong pan) when the container is taller than
+ * the size measured at init — height:100% of an auto parent is the usual cause.
+ */
+.apted.is-enhanced {
+  height: calc(100dvh - var(--apted-header-approx));
+  max-height: calc(100dvh - var(--apted-header-approx));
+  min-height: 0;
+  overflow: hidden;
 }
 
 .apted *,
@@ -337,14 +352,41 @@
   flex: 1 1 auto;
   display: grid;
   grid-template-columns: 1fr;
+  grid-template-rows: minmax(16rem, auto) auto;
   min-height: 0;
   gap: var(--apted-gap);
+}
+
+.apted.is-enhanced .apted-body {
+  flex: 1 1 0;
+  min-height: 0;
+  /* Single row fills leftover height so map height:100% is definite */
+  grid-template-rows: minmax(0, 1fr);
 }
 
 @media (min-width: 900px) {
   .apted-body {
     grid-template-columns: minmax(0, 1fr) minmax(18rem, 24rem);
-    max-height: calc(100dvh - var(--apted-header-approx) - 7.5rem);
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .apted:not(.is-enhanced) .apted-body {
+    max-height: calc(100dvh - var(--apted-header-approx) - var(--apted-chrome-approx));
+  }
+}
+
+/* Narrow enhanced: stack map over rail; keep map a fixed band so Leaflet size is stable */
+@media (max-width: 899.98px) {
+  .apted.is-enhanced {
+    height: auto;
+    max-height: none;
+    overflow: visible;
+    min-height: calc(100dvh - var(--apted-header-approx));
+  }
+
+  .apted.is-enhanced .apted-body {
+    flex: 1 1 auto;
+    grid-template-rows: minmax(16rem, 45dvh) minmax(12rem, auto);
   }
 }
 
@@ -360,19 +402,22 @@
   padding: 1rem;
   position: relative;
   z-index: 0;
+  /* Clip tile overflow if Leaflet size lags a frame behind CSS */
+  overflow: hidden;
 }
 
 .apted.is-enhanced .apted-map {
   display: block;
   padding: 0;
-  min-height: 20rem;
+  min-height: 0;
+  height: 100%;
+  width: 100%;
 }
 
-@media (min-width: 900px) {
-  .apted.is-enhanced .apted-map {
-    min-height: 0;
-    height: 100%;
-  }
+/* Leaflet host must fill the grid cell — never rely on content-sized height */
+.apted.is-enhanced .apted-map.leaflet-container {
+  height: 100%;
+  width: 100%;
 }
 
 .apted-map-placeholder {
@@ -663,39 +708,7 @@
   background: #f8f9fa;
 }
 
-/* --- no-JS text fallback --- */
-.apted-fallback {
-  background: var(--apted-panel);
-  border: 1px solid var(--apted-border);
-  border-radius: 2px;
-  padding: 0.6rem 0.75rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-
-.apted.is-enhanced .apted-fallback {
-  /* Keep available for PE text path / download forms; collapse visually slightly */
-  opacity: 0.95;
-}
-
-.apted-fallback h2 {
-  margin: 0;
-  font-size: var(--apted-fs-sm);
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-}
-
-.apted-form {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  margin: 0;
-  padding-top: 0.35rem;
-  border-top: 1px dashed var(--apted-border);
-}
-
+/* Field blocks (inspector / raw panels) */
 .apted-field {
   display: flex;
   flex-direction: column;
@@ -722,7 +735,7 @@
 }
 
 .apted-field textarea {
-  min-height: 8rem;
+  min-height: 5rem;
   resize: vertical;
   line-height: 1.4;
 }

@@ -28,7 +28,7 @@ JSON under `/api/v1` remains for external consumers and map polling. Admin mutat
 ### JS budget / map exception
 First-party openfsd modules stay small and vanilla (no jQuery). The **dashboard route** may load **Leaflet** (vendor) + `dashboard.js` as a documented exception to the 30–50 KB compressed first-party budget. Failure mode: map is absent; connection summary HTML still works.
 
-The **airport editor** (`/airport-editor`) is a second complexity-gate exception for map geometry authoring (Leaflet + first-party modules). Essential data path without JS: paste `apt_text` / `air_text` + CSRF form echo-download. Map region is inert when JS is off. Download handlers never write APT/AIR to disk or DB.
+The **airport editor** (`/airport-editor`) is a second complexity-gate exception for map geometry authoring (Leaflet + first-party modules). Open/edit/download are JS-primary (toolbar FileReader + Blob download; Raw tab for text). Map region is inert when JS is off. Optional `POST /airport-editor/download-*` echo handlers remain for tests/tools and never write APT/AIR to disk or DB.
 
 ---
 

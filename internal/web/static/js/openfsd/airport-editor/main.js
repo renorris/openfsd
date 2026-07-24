@@ -4,8 +4,8 @@
  * Modes, draw, vertex/aircraft drag, Blob download, dirty hash,
  * beforeunload, replace confirms, Raw Apply, shortcuts 1–6 / Del / Esc.
  *
- * Progressive enhancement: requires Leaflet (global L) + this module.
- * Without JS: textareas + echo-download forms still work.
+ * Requires Leaflet (global L) + this module. Map authoring is JS-primary
+ * (complexity-gate exception); no no-JS text fallback on this page.
  */
 
 import {
@@ -50,7 +50,7 @@ import {
 } from './map-layers.js';
 import { mountToolbar, readFileAsText, modeFromDigitKey } from './ui-toolbar.js';
 import { mountRail, applyTitlebarChips } from './ui-rail.js';
-import { downloadApt, downloadAir, sanitizeFilename } from './download.js';
+import { downloadApt, downloadAir } from './download.js';
 import {
   createDrawSession,
   beginDraw,
@@ -70,7 +70,7 @@ function main() {
   if (!root || root.getAttribute('data-js') !== 'airport-editor') return;
 
   if (typeof L === 'undefined') {
-    // Leaflet failed to load; leave no-JS fallback visible.
+    // Leaflet failed to load; leave placeholder message visible.
     return;
   }
 
@@ -89,6 +89,18 @@ function main() {
   const mapCtl = createMap(L, mapEl, { blankTiles });
   /** @type {string} */
   let activeBase = mapCtl.activeBase; // 'osm' | 'esri' | 'blank'
+
+  /**
+   * Leaflet measures container size at init; flex/grid can settle a frame later.
+   * Re-measure whenever the host box changes so OSM tiles fill the full map.
+   */
+  function invalidateMapSize() {
+    try {
+      mapCtl.map.invalidateSize({ animate: false });
+    } catch {
+      /* map may be torn down in tests */
+    }
+  }
 
   // Double-click finish flag (map fires click then dblclick).
   let suppressNextClick = false;
@@ -297,7 +309,6 @@ function main() {
         });
         doc.lastAptDownloadHash = null;
         doc.serverValidation = null;
-        syncFallbackTextareas();
         validateDocument(doc);
         doc.selection = null;
         rail.setTab('surfaces');
@@ -328,7 +339,6 @@ function main() {
         });
         doc.lastAirDownloadHash = null;
         doc.serverValidation = null;
-        syncFallbackTextareas();
         validateDocument(doc);
         doc.selection = null;
         rail.setTab('aircraft');
@@ -344,6 +354,7 @@ function main() {
       }
     },
     onFit() {
+      invalidateMapSize();
       const ok = overlays.fitBounds();
       if (!ok) showStatus('Nothing to fit — open or draw geometry first.', false);
     },
@@ -370,7 +381,6 @@ function main() {
         showStatus('Download failed (browser blocked Blob?).', true);
         return;
       }
-      syncFallbackTextareas();
       refresh();
       showStatus(`Downloading ${res.filename}…`, false);
     },
@@ -384,7 +394,6 @@ function main() {
         showStatus('Download failed (browser blocked Blob?).', true);
         return;
       }
-      syncFallbackTextareas();
       refresh();
       showStatus(`Downloading ${res.filename}…`, false);
     },
@@ -399,7 +408,6 @@ function main() {
       toolbar.setMode(MODE_SELECT);
       rail.setTab('airport');
       mapCtl.map.setView([30, 0], 2);
-      syncFallbackTextareas();
       refresh();
       showStatus('New empty document.', false);
     },
@@ -436,12 +444,20 @@ function main() {
   window.addEventListener('keydown', onKeyDown);
   window.addEventListener('beforeunload', onBeforeUnload);
 
+  // Size after layout paints (double rAF + short delay covers flex settle).
   requestAnimationFrame(() => {
-    mapCtl.map.invalidateSize();
+    requestAnimationFrame(() => {
+      invalidateMapSize();
+    });
   });
-  window.addEventListener('resize', () => {
-    mapCtl.map.invalidateSize();
-  });
+  window.setTimeout(invalidateMapSize, 100);
+  window.addEventListener('resize', invalidateMapSize);
+  if (typeof ResizeObserver === 'function') {
+    const ro = new ResizeObserver(() => {
+      invalidateMapSize();
+    });
+    ro.observe(mapEl);
+  }
 
   /**
    * @param {KeyboardEvent} ev
@@ -600,7 +616,6 @@ function main() {
   function afterAptMutation(opts = {}) {
     validateDocument(doc);
     markServerValidationStale(doc);
-    syncFallbackTextareas();
     refresh(opts);
   }
 
@@ -610,7 +625,6 @@ function main() {
   function afterAirMutation(opts = {}) {
     validateDocument(doc);
     markServerValidationStale(doc);
-    syncFallbackTextareas();
     refresh(opts);
   }
 
@@ -725,26 +739,8 @@ function main() {
     // Mode indicator on root for CSS/cursor
     root.setAttribute('data-mode', doc.mode || MODE_SELECT);
     if (opts.fit) {
+      invalidateMapSize();
       overlays.fitBounds();
-    }
-  }
-
-  function syncFallbackTextareas() {
-    const aptTa = document.getElementById('apt_text');
-    const airTa = document.getElementById('air_text');
-    if (aptTa instanceof HTMLTextAreaElement && doc.airport) {
-      aptTa.value = formatAPT(doc.airport);
-    }
-    if (airTa instanceof HTMLTextAreaElement) {
-      airTa.value = doc.aircraft?.length ? formatAIR(doc.aircraft) : '';
-    }
-    const aptFn = document.getElementById('apt_filename');
-    const airFn = document.getElementById('air_filename');
-    if (aptFn instanceof HTMLInputElement && doc.aptFilename) {
-      aptFn.value = sanitizeFilename(doc.aptFilename, 'airport.apt');
-    }
-    if (airFn instanceof HTMLInputElement && doc.airFilename) {
-      airFn.value = sanitizeFilename(doc.airFilename, 'scenario.air');
     }
   }
 

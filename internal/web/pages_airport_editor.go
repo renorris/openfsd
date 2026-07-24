@@ -21,8 +21,8 @@ const airportEditorFlashMsgMaxRunes = 240
 var airportEditorSafeFilenameRE = regexp.MustCompile(`^[A-Za-z0-9._\-]{1,64}$`)
 
 // handleFrontendAirportEditor GET /airport-editor — server-rendered shell.
-// No-JS path: dual textareas + CSRF echo-download forms. Map region is inert
-// without JS (message only). No server-side parse or persistence.
+// Map authoring is JS-primary (Leaflet + modules). Without JS the map region
+// shows a placeholder only. No server-side parse or persistence of APT/AIR.
 func (s *Server) handleFrontendAirportEditor(c *gin.Context) {
 	page := s.newAirportEditorPage(c)
 	s.applyAirportEditorFlash(c, &page)
