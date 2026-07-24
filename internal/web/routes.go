@@ -40,6 +40,7 @@ func (s *Server) setupRoutes() (*gin.Engine, error) {
 	s.setupDataRoutes(apiV1Group)
 	s.setupFsdConnRoutes(apiV1Group)
 	s.setupSweatboxAPIRoutes(apiV1Group)
+	s.setupEditorAPIRoutes(apiV1Group)
 
 	// Frontend groups
 	s.setupFrontendRoutes(e.Group(""))
