@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/renorris/openfsd/internal/db"
 	"github.com/renorris/openfsd/internal/server"
 	"github.com/renorris/openfsd/pkg/fsdclient"
 	"github.com/renorris/openfsd/pkg/protocol"
@@ -193,4 +194,45 @@ func TestE2E_MaxConnectionsRejectsExcess(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected Dial/handshake failure when at connection cap")
 	}
+}
+
+// TestE2E_RequirePilotPPL gates pilot #AP logins when REQUIRE_PILOT_PPL is true.
+func TestE2E_RequirePilotPPL(t *testing.T) {
+	ts := server.StartTestServer(t)
+
+	// Default (false): P0 pilot may connect.
+	c := dial(t, ts)
+	loginPilot(t, c, "PPLGATE0", ts.PilotCID, ts.PilotPassword, protocol.NetworkRatingObserver)
+	waitMOTD(t, c, "PPLGATE0")
+	_ = c.Close(context.Background())
+
+	// Enable gate.
+	if err := ts.ConfigRepo.Set(db.ConfigRequirePilotPPL, "true"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Pilot still at P0 → rejected.
+	c2 := dial(t, ts)
+	loginPilot(t, c2, "PPLGATE1", ts.PilotCID, ts.PilotPassword, protocol.NetworkRatingObserver)
+	waitError(t, c2, protocol.RequestedLevelTooHighError)
+
+	// Raise pilot certificate to PPL → allowed.
+	u, err := ts.UserRepo.GetUserByCID(ts.PilotCID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u.PilotRating = int(protocol.PilotRatingPPL)
+	u.Password = "" // keep hash
+	if err := ts.UserRepo.UpdateUser(u); err != nil {
+		t.Fatal(err)
+	}
+
+	c3 := dial(t, ts)
+	loginPilot(t, c3, "PPLGATE2", ts.PilotCID, ts.PilotPassword, protocol.NetworkRatingObserver)
+	waitMOTD(t, c3, "PPLGATE2")
+
+	// ATC unaffected by the gate (still P0 pilot_rating on ATC user is fine).
+	atc := dial(t, ts)
+	loginATC(t, atc, "PPL_ATC", ts.ATCCID, ts.ATCPassword, protocol.NetworkRatingController1)
+	waitMOTD(t, atc, "PPL_ATC")
 }

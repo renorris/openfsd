@@ -27,6 +27,7 @@ func (s *Server) handleGetConfig(c *gin.Context) {
 		db.ConfigFsdServerIdent,
 		db.ConfigFsdServerLocation,
 		db.ConfigApiServerBaseURL,
+		db.ConfigRequirePilotPPL,
 	}
 
 	type ResponseBody struct {

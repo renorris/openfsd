@@ -104,6 +104,10 @@ type TestServer struct {
 	// Second pilot for multi-client scenarios (same password as Pilot).
 	Pilot2CID int
 
+	// ConfigRepo / UserRepo expose seeded stores for e2e policy tests.
+	ConfigRepo db.ConfigRepository
+	UserRepo   db.UserRepository
+
 	sqlDB  *sql.DB
 	cancel context.CancelFunc
 	done   <-chan error
@@ -328,6 +332,8 @@ func StartTestServerOpts(t testing.TB, opts TestServerOptions) *TestServer {
 		SupCID:        sup.CID,
 		SupPassword:   TestSupPassword,
 		Pilot2CID:     pilot2.CID,
+		ConfigRepo:    repos.ConfigRepo,
+		UserRepo:      repos.UserRepo,
 		sqlDB:         sqlDB,
 		cancel:        cancel,
 		done:          done,

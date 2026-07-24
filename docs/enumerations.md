@@ -54,11 +54,21 @@ Serialization values for ATC facility types in `%` position packets.
 
 ## Pilot Ratings
 
-JWT payloads on the public network carry a numeric `pilot_rating` claim ([authentication-token.md](authentication-token.md)). **Human-readable names for values 1–5 are unconfirmed** and should be treated as opaque integers until proven.
+JWT payloads on the public network carry a numeric `pilot_rating` claim ([authentication-token.md](authentication-token.md)).
 
-| Protocol value | Notes |
-|----------------|--------|
-| `1`–`5` | Labels vary across older documentation; **do not treat as official** |
+IDs and names match the [VATSIM.dev pilot ratings table](https://vatsim.dev/resources/ratings/). Values are **not** a dense 0…N sequence; they increase with qualification (bitmask-shaped):
+
+| ID | Short | Long name | Informal P-code |
+|----|-------|-----------|-----------------|
+| `0` | P0 | No Pilot Rating | P0 |
+| `1` | PPL | Private Pilot License | P1 |
+| `3` | IR | Instrument Rating | P2 |
+| `7` | CMEL | Commercial Multi-Engine License | P3 |
+| `15` | ATPL | Air Transport Pilot License | P4 |
+| `31` | FI | Flight Instructor | P5 |
+| `63` | FE | Flight Examiner | P6 |
+
+openfsd type: `protocol.PilotRating` (`PilotRatingNone = 0` … `PilotRatingFE = 63`). Only these IDs are valid; other integers are rejected on create/update.
 
 ## Client Capabilities
 

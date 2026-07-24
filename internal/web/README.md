@@ -11,7 +11,7 @@ JSON under `/api/v1` for external tools and map polling. First-party UI is a pro
 |------|--------|-------|
 | Login | `GET/POST /login`, `POST /logout` | public / session |
 | Dashboard | `GET /dashboard` | session; **server-rendered connection summary** (table/counts from FSD service). Leaflet map is PE only (`credentials: 'same-origin'`) |
-| User editor | `GET /usereditor[?cid=]`, `POST /usereditor/create`, `POST /usereditor/update` | Supervisor+; CSRF on mutations |
+| Users (directory) | `GET /usereditor[?q&rating&sort&dir&page&cid&new&flash]`, `POST /usereditor/create`, `POST /usereditor/update` | Instructor1+: directory + rating adjust; Supervisor+: create + name/password. CSRF; URL-owned filters; `dir_*` on POST for PRG |
 | Config editor | `GET/POST /configeditor`, `POST /configeditor/create-token`, `POST /configeditor/reset-secret` | Administrator; CSRF on mutations |
 | Sweatbox | `GET /sweatbox`, form POSTs under `/sweatbox/*` | Administrator; CSRF on mutations; proxies FSD service HTTP |
 | Airport editor | `GET /airport-editor`, `POST /airport-editor/download-apt`, `POST /airport-editor/download-air` | Administrator; CSRF on download; **echo-only** (no disk/DB persistence of `.apt`/`.air`) |
@@ -67,7 +67,8 @@ Authorization: Bearer <access_token>
 
 ## Network Ratings
 The API enforces role-based access control using `NetworkRating` values defined in `pkg/protocol`. Key thresholds:
-- **Supervisor (11)**: Can manage users (create, update, retrieve) and kick active connections.
+- **Instructor1–3 (8–10)**: Can open the Users directory and adjust network/pilot ratings up to their own ceilings (any target). Cannot create users or change name/password.
+- **Supervisor (11)**: Full user mutation (create, name, password) when target network rating ≤ own; rating adjust as above; kick active connections.
 - **Administrator (12)**: Can manage server configuration, reset JWT secret keys, and create API tokens.
 - **Suspended (0) / Inactive (-1)**: Cannot log in to the web UI or obtain FSD JWTs.
 

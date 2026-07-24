@@ -145,7 +145,7 @@ func TestMultipleSets(t *testing.T) {
 	}
 	err = repo.Set("key2", "value2")
 	if err != nil {
-		t.Errorf("expected no{kcal error, got %v", err)
+		t.Errorf("expected no error, got %v", err)
 	}
 
 	// Retrieve and verify
@@ -172,5 +172,46 @@ func TestMultipleSets(t *testing.T) {
 	val2, err = repo.Get("key2")
 	if err != nil || val2 != "value2" {
 		t.Errorf("expected value2, got %s, err %v", val2, err)
+	}
+}
+
+func TestParseBoolConfig(t *testing.T) {
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		{"", false},
+		{"false", false},
+		{"0", false},
+		{"no", false},
+		{"true", true},
+		{"TRUE", true},
+		{"1", true},
+		{"yes", true},
+		{"on", true},
+		{"  yes  ", true},
+		{"maybe", false},
+	}
+	for _, tc := range cases {
+		if got := ParseBoolConfig(tc.in); got != tc.want {
+			t.Errorf("ParseBoolConfig(%q)=%v want %v", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestRequirePilotPPLDefault(t *testing.T) {
+	dbConn, repo := setupConfigTestDB(t)
+	defer dbConn.Close()
+	if err := InitDefaultConfig(repo); err != nil {
+		t.Fatal(err)
+	}
+	if RequirePilotPPL(repo) {
+		t.Fatal("default REQUIRE_PILOT_PPL should be false")
+	}
+	if err := repo.Set(ConfigRequirePilotPPL, "true"); err != nil {
+		t.Fatal(err)
+	}
+	if !RequirePilotPPL(repo) {
+		t.Fatal("expected true after Set")
 	}
 }

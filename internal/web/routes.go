@@ -118,12 +118,13 @@ func (s *Server) setupFrontendRoutes(parent *gin.RouterGroup) {
 	authed.Use(s.requireSessionHTML)
 	authed.GET("/dashboard", s.handleFrontendDashboard)
 
-	// Supervisor+ user admin: list/load via GET; create/update via form POST + CSRF.
-	sup := authed.Group("")
-	sup.Use(s.requireMinRatingHTML(protocol.NetworkRatingSupervisor))
-	sup.GET("/usereditor", s.handleFrontendUserEditor)
-	sup.POST("/usereditor/create", s.handleFrontendUserCreate)
-	sup.POST("/usereditor/update", s.handleFrontendUserUpdate)
+	// Instructor1+ user directory: list/load + rating updates (handlers enforce ceilings).
+	// Create + full profile mutation require Supervisor+ (checked in handlers).
+	userAdmin := authed.Group("")
+	userAdmin.Use(s.requireMinRatingHTML(protocol.NetworkRatingInstructor1))
+	userAdmin.GET("/usereditor", s.handleFrontendUserEditor)
+	userAdmin.POST("/usereditor/create", s.handleFrontendUserCreate)
+	userAdmin.POST("/usereditor/update", s.handleFrontendUserUpdate)
 
 	// Admin config: form POST mutations with CSRF; no JS required.
 	admin := authed.Group("")

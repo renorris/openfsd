@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"strings"
 )
 
 type ConfigRepository interface {
@@ -30,6 +31,11 @@ const (
 	ConfigApiServerBaseURL = "API_SERVER_BASE_URL"
 
 	ConfigWelcomeMessage = "WELCOME_MESSAGE"
+
+	// ConfigRequirePilotPPL, when true, rejects pilot (#AP) connections unless the
+	// certificate's pilot_rating is PPL (1) or higher. ATC connections are unaffected.
+	// Default false (see InitDefaultConfig). Values: true/false, 1/0, yes/no.
+	ConfigRequirePilotPPL = "REQUIRE_PILOT_PPL"
 )
 
 var ErrConfigKeyNotFound = errors.New("config: key not found")
@@ -53,6 +59,27 @@ func GetWelcomeMessage(r ConfigRepository) (msg string) {
 	return
 }
 
+// ParseBoolConfig interprets common config string booleans.
+// Empty / unknown / missing → false (safe default for restrictive flags).
+func ParseBoolConfig(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+// RequirePilotPPL reports whether pilot connections require pilot_rating ≥ PPL.
+// Missing key or parse failure → false (disabled by default).
+func RequirePilotPPL(r ConfigRepository) bool {
+	v, err := r.Get(ConfigRequirePilotPPL)
+	if err != nil {
+		return false
+	}
+	return ParseBoolConfig(v)
+}
+
 func InitDefaultConfig(r ConfigRepository) (err error) {
 	secretKey, err := GenerateJwtSecretKey()
 	if err != nil {
@@ -66,6 +93,7 @@ func InitDefaultConfig(r ConfigRepository) (err error) {
 		ConfigFsdServerIdent:    "OPENFSD",
 		ConfigFsdServerLocation: "Earth",
 		ConfigApiServerBaseURL:  "http://localhost",
+		ConfigRequirePilotPPL:   "false",
 	}
 
 	for k, v := range defaultConfig {

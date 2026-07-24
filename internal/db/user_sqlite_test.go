@@ -475,3 +475,459 @@ func TestUpdateUser(t *testing.T) {
 		}
 	})
 }
+
+func TestListUsersAndCount(t *testing.T) {
+	db, repo := setupTestDB(t)
+	defer db.Close()
+
+	// Seed a few users with known names/ratings
+	seeds := []struct {
+		first, last string
+		rating      int
+	}{
+		{"Alice", "Smith", 1},
+		{"Bob", "Jones", 2},
+		{"Carol", "Smith", 11},
+		{"Dave", "Brown", 1},
+	}
+	for _, s := range seeds {
+		u := &User{
+			Password:      "password1",
+			FirstName:     ptr(s.first),
+			LastName:      ptr(s.last),
+			NetworkRating: s.rating,
+		}
+		if err := repo.CreateUser(u); err != nil {
+			t.Fatalf("CreateUser: %v", err)
+		}
+	}
+
+	t.Run("list all ordered by cid", func(t *testing.T) {
+		users, err := repo.ListUsers(UserListFilter{Sort: "cid", Limit: 100})
+		if err != nil {
+			t.Fatalf("ListUsers: %v", err)
+		}
+		if len(users) != 4 {
+			t.Fatalf("got %d users, want 4", len(users))
+		}
+		for i := 1; i < len(users); i++ {
+			if users[i].CID <= users[i-1].CID {
+				t.Fatalf("expected ascending cid, got %d then %d", users[i-1].CID, users[i].CID)
+			}
+		}
+	})
+
+	t.Run("count all", func(t *testing.T) {
+		n, err := repo.CountUsers(UserListFilter{})
+		if err != nil {
+			t.Fatalf("CountUsers: %v", err)
+		}
+		if n != 4 {
+			t.Fatalf("count=%d want 4", n)
+		}
+	})
+
+	t.Run("count with query", func(t *testing.T) {
+		n, err := repo.CountUsers(UserListFilter{Query: "smith"})
+		if err != nil {
+			t.Fatalf("CountUsers: %v", err)
+		}
+		if n != 2 {
+			t.Fatalf("count smith=%d want 2", n)
+		}
+	})
+
+	t.Run("count ignores limit and offset", func(t *testing.T) {
+		n, err := repo.CountUsers(UserListFilter{Limit: 1, Offset: 100})
+		if err != nil {
+			t.Fatalf("CountUsers: %v", err)
+		}
+		if n != 4 {
+			t.Fatalf("count with Limit/Offset=%d want 4 (full total)", n)
+		}
+		n, err = repo.CountUsers(UserListFilter{Query: "smith", Limit: 1, Offset: 50})
+		if err != nil {
+			t.Fatalf("CountUsers: %v", err)
+		}
+		if n != 2 {
+			t.Fatalf("count smith with Limit/Offset=%d want 2", n)
+		}
+	})
+
+	t.Run("filter by rating", func(t *testing.T) {
+		r := 1
+		users, err := repo.ListUsers(UserListFilter{Rating: &r, Sort: "cid"})
+		if err != nil {
+			t.Fatalf("ListUsers: %v", err)
+		}
+		if len(users) != 2 {
+			t.Fatalf("got %d, want 2 rating=1 users", len(users))
+		}
+		n, err := repo.CountUsers(UserListFilter{Rating: &r})
+		if err != nil {
+			t.Fatalf("CountUsers: %v", err)
+		}
+		if n != 2 {
+			t.Fatalf("count=%d want 2", n)
+		}
+	})
+
+	t.Run("search by last name", func(t *testing.T) {
+		users, err := repo.ListUsers(UserListFilter{Query: "smith", Sort: "name"})
+		if err != nil {
+			t.Fatalf("ListUsers: %v", err)
+		}
+		if len(users) != 2 {
+			t.Fatalf("got %d smiths, want 2", len(users))
+		}
+	})
+
+	t.Run("search by full name", func(t *testing.T) {
+		users, err := repo.ListUsers(UserListFilter{Query: "alice smith"})
+		if err != nil {
+			t.Fatalf("ListUsers: %v", err)
+		}
+		if len(users) != 1 {
+			t.Fatalf("got %d, want 1", len(users))
+		}
+		if *users[0].FirstName != "Alice" {
+			t.Fatalf("first=%q", *users[0].FirstName)
+		}
+	})
+
+	t.Run("search by cid substring", func(t *testing.T) {
+		// First created user typically has cid=1
+		users, err := repo.ListUsers(UserListFilter{Query: "1", Sort: "cid"})
+		if err != nil {
+			t.Fatalf("ListUsers: %v", err)
+		}
+		if len(users) < 1 {
+			t.Fatal("expected at least one match for cid containing 1")
+		}
+	})
+
+	t.Run("sort by rating desc", func(t *testing.T) {
+		users, err := repo.ListUsers(UserListFilter{Sort: "rating", Desc: true, Limit: 10})
+		if err != nil {
+			t.Fatalf("ListUsers: %v", err)
+		}
+		if len(users) < 2 {
+			t.Fatal("need users")
+		}
+		if users[0].NetworkRating < users[1].NetworkRating {
+			t.Fatalf("expected desc rating, got %d then %d", users[0].NetworkRating, users[1].NetworkRating)
+		}
+	})
+
+	t.Run("pagination", func(t *testing.T) {
+		page1, err := repo.ListUsers(UserListFilter{Sort: "cid", Limit: 2, Offset: 0})
+		if err != nil {
+			t.Fatalf("page1: %v", err)
+		}
+		page2, err := repo.ListUsers(UserListFilter{Sort: "cid", Limit: 2, Offset: 2})
+		if err != nil {
+			t.Fatalf("page2: %v", err)
+		}
+		if len(page1) != 2 || len(page2) != 2 {
+			t.Fatalf("page sizes %d %d", len(page1), len(page2))
+		}
+		if page1[0].CID == page2[0].CID {
+			t.Fatal("pages should not overlap")
+		}
+	})
+
+	t.Run("like metacharacters escaped", func(t *testing.T) {
+		// Literal metacharacters must not act as wildcards against existing names
+		for _, q := range []string{"%", "_", `\`} {
+			users, err := repo.ListUsers(UserListFilter{Query: q})
+			if err != nil {
+				t.Fatalf("ListUsers Query=%q: %v", q, err)
+			}
+			if len(users) != 0 {
+				t.Fatalf("literal %q should match none among seed names, got %d", q, len(users))
+			}
+		}
+	})
+
+	t.Run("password empty on list results", func(t *testing.T) {
+		users, err := repo.ListUsers(UserListFilter{Sort: "cid", Limit: 100})
+		if err != nil {
+			t.Fatalf("ListUsers: %v", err)
+		}
+		if len(users) == 0 {
+			t.Fatal("expected users")
+		}
+		for _, u := range users {
+			if u.Password != "" {
+				t.Fatalf("list result Password must be empty, got %q for cid=%d", u.Password, u.CID)
+			}
+		}
+	})
+
+	t.Run("limit default when <=0", func(t *testing.T) {
+		// Zero-value Limit → default 50; with only 4 users we still get all 4
+		users, err := repo.ListUsers(UserListFilter{Limit: 0})
+		if err != nil {
+			t.Fatalf("ListUsers: %v", err)
+		}
+		if len(users) != 4 {
+			t.Fatalf("got %d, want 4 (default limit 50 still returns all)", len(users))
+		}
+		users, err = repo.ListUsers(UserListFilter{Limit: -5})
+		if err != nil {
+			t.Fatalf("ListUsers: %v", err)
+		}
+		if len(users) != 4 {
+			t.Fatalf("got %d, want 4 for negative limit", len(users))
+		}
+	})
+
+	t.Run("limit hard cap 200", func(t *testing.T) {
+		// Cap is applied; with only 4 users result size is still 4
+		users, err := repo.ListUsers(UserListFilter{Limit: 1000})
+		if err != nil {
+			t.Fatalf("ListUsers: %v", err)
+		}
+		if len(users) != 4 {
+			t.Fatalf("got %d, want 4", len(users))
+		}
+	})
+
+	t.Run("offset negative clamps to 0", func(t *testing.T) {
+		users, err := repo.ListUsers(UserListFilter{Sort: "cid", Limit: 2, Offset: -10})
+		if err != nil {
+			t.Fatalf("ListUsers: %v", err)
+		}
+		if len(users) != 2 {
+			t.Fatalf("got %d, want 2", len(users))
+		}
+		// Should match offset 0 page
+		page0, err := repo.ListUsers(UserListFilter{Sort: "cid", Limit: 2, Offset: 0})
+		if err != nil {
+			t.Fatalf("ListUsers: %v", err)
+		}
+		if users[0].CID != page0[0].CID {
+			t.Fatalf("negative offset should clamp to 0, got cid %d want %d", users[0].CID, page0[0].CID)
+		}
+	})
+
+	t.Run("invalid sort falls back to cid", func(t *testing.T) {
+		users, err := repo.ListUsers(UserListFilter{Sort: "nope", Limit: 100})
+		if err != nil {
+			t.Fatalf("ListUsers: %v", err)
+		}
+		if len(users) != 4 {
+			t.Fatalf("got %d, want 4", len(users))
+		}
+		for i := 1; i < len(users); i++ {
+			if users[i].CID <= users[i-1].CID {
+				t.Fatalf("expected ascending cid fallback, got %d then %d", users[i-1].CID, users[i].CID)
+			}
+		}
+	})
+
+	t.Run("rating filter zero and negative", func(t *testing.T) {
+		// Seed suspended (0) and inactive (-1)
+		if err := repo.CreateUser(&User{Password: "password1", FirstName: ptr("Eve"), LastName: ptr("Suspended"), NetworkRating: 0}); err != nil {
+			t.Fatalf("CreateUser: %v", err)
+		}
+		if err := repo.CreateUser(&User{Password: "password1", FirstName: ptr("Frank"), LastName: ptr("Inactive"), NetworkRating: -1}); err != nil {
+			t.Fatalf("CreateUser: %v", err)
+		}
+		r0 := 0
+		users, err := repo.ListUsers(UserListFilter{Rating: &r0})
+		if err != nil {
+			t.Fatalf("ListUsers: %v", err)
+		}
+		if len(users) != 1 || users[0].NetworkRating != 0 {
+			t.Fatalf("rating=0: got %d users", len(users))
+		}
+		rm1 := -1
+		users, err = repo.ListUsers(UserListFilter{Rating: &rm1})
+		if err != nil {
+			t.Fatalf("ListUsers: %v", err)
+		}
+		if len(users) != 1 || users[0].NetworkRating != -1 {
+			t.Fatalf("rating=-1: got %d users", len(users))
+		}
+		// nil rating still means all
+		n, err := repo.CountUsers(UserListFilter{})
+		if err != nil {
+			t.Fatalf("CountUsers: %v", err)
+		}
+		if n != 6 {
+			t.Fatalf("count all after seed=%d want 6", n)
+		}
+	})
+}
+
+func TestEscapeLike(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{`\`, `\\`},
+		{`%`, `\%`},
+		{`_`, `\_`},
+		{`a%b_c\d`, `a\%b\_c\\d`},
+		{`plain`, `plain`},
+		{``, ``},
+	}
+	for _, tc := range cases {
+		got := escapeLike(tc.in)
+		if got != tc.want {
+			t.Errorf("escapeLike(%q)=%q want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// TestListUsersLikeLiteralMetacharacters seeds names that literally contain
+// %, _, \ and asserts Query finds those rows without treating the chars as wildcards.
+func TestListUsersLikeLiteralMetacharacters(t *testing.T) {
+	db, repo := setupTestDB(t)
+	defer db.Close()
+
+	// Decoy users so unescaped wildcards would match widely
+	for _, s := range []struct{ first, last string }{
+		{"Alice", "Smith"},
+		{"Bob", "Jones"},
+	} {
+		if err := repo.CreateUser(&User{
+			Password: "password1", FirstName: ptr(s.first), LastName: ptr(s.last), NetworkRating: 1,
+		}); err != nil {
+			t.Fatalf("CreateUser decoy: %v", err)
+		}
+	}
+
+	if err := repo.CreateUser(&User{
+		Password: "password1", FirstName: ptr("Pat"), LastName: ptr("100%"), NetworkRating: 1,
+	}); err != nil {
+		t.Fatalf("CreateUser %%: %v", err)
+	}
+	if err := repo.CreateUser(&User{
+		Password: "password1", FirstName: ptr("Und"), LastName: ptr("a_b"), NetworkRating: 1,
+	}); err != nil {
+		t.Fatalf("CreateUser _: %v", err)
+	}
+	if err := repo.CreateUser(&User{
+		Password: "password1", FirstName: ptr("Back"), LastName: ptr(`x\y`), NetworkRating: 1,
+	}); err != nil {
+		t.Fatalf("CreateUser \\: %v", err)
+	}
+
+	users, err := repo.ListUsers(UserListFilter{Query: "100%"})
+	if err != nil {
+		t.Fatalf("ListUsers: %v", err)
+	}
+	if len(users) != 1 || *users[0].LastName != "100%" {
+		t.Fatalf("literal 100%%: got %d users", len(users))
+	}
+
+	users, err = repo.ListUsers(UserListFilter{Query: "a_b"})
+	if err != nil {
+		t.Fatalf("ListUsers: %v", err)
+	}
+	if len(users) != 1 || *users[0].LastName != "a_b" {
+		t.Fatalf("literal a_b: got %d users", len(users))
+	}
+
+	// Bare "_" must not widen to every single-char-gap match of other names
+	users, err = repo.ListUsers(UserListFilter{Query: "_"})
+	if err != nil {
+		t.Fatalf("ListUsers: %v", err)
+	}
+	if len(users) != 1 || *users[0].LastName != "a_b" {
+		t.Fatalf("literal _: want only a_b row, got %d", len(users))
+	}
+
+	users, err = repo.ListUsers(UserListFilter{Query: `x\y`})
+	if err != nil {
+		t.Fatalf("ListUsers: %v", err)
+	}
+	if len(users) != 1 || *users[0].LastName != `x\y` {
+		t.Fatalf(`literal x\y: got %d users`, len(users))
+	}
+
+	// Bare "%" still matches only names that contain a percent sign
+	users, err = repo.ListUsers(UserListFilter{Query: "%"})
+	if err != nil {
+		t.Fatalf("ListUsers: %v", err)
+	}
+	if len(users) != 1 || *users[0].LastName != "100%" {
+		t.Fatalf("literal %%: want only 100%% row, got %d", len(users))
+	}
+}
+
+func TestListUsersEmptyDB(t *testing.T) {
+	db, repo := setupTestDB(t)
+	defer db.Close()
+
+	users, err := repo.ListUsers(UserListFilter{})
+	if err != nil {
+		t.Fatalf("ListUsers: %v", err)
+	}
+	if len(users) != 0 {
+		t.Fatalf("got %d, want 0", len(users))
+	}
+	n, err := repo.CountUsers(UserListFilter{})
+	if err != nil {
+		t.Fatalf("CountUsers: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("count=%d want 0", n)
+	}
+}
+
+// TestListUsersLimitDefaultWithManyRows verifies Limit<=0 applies default 50
+// and Limit>200 is capped at 200 against a larger seed set.
+// Users are bulk-inserted via SQL (fixed bcrypt hash) to avoid bcrypt cost.
+func TestListUsersLimitDefaultWithManyRows(t *testing.T) {
+	db, repo := setupTestDB(t)
+	defer db.Close()
+
+	// Precomputed bcrypt hash for "x" (not verified here; list omits password).
+	const hash = "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy"
+	const total = 220
+	for i := 0; i < total; i++ {
+		if _, err := db.Exec(
+			`INSERT INTO users (password, first_name, last_name, network_rating) VALUES (?, ?, ?, ?)`,
+			hash, "User", "X", 1,
+		); err != nil {
+			t.Fatalf("bulk insert: %v", err)
+		}
+	}
+
+	// Default limit 50
+	users, err := repo.ListUsers(UserListFilter{Limit: 0})
+	if err != nil {
+		t.Fatalf("ListUsers: %v", err)
+	}
+	if len(users) != 50 {
+		t.Fatalf("default limit: got %d, want 50", len(users))
+	}
+
+	// Negative limit also defaults to 50
+	users, err = repo.ListUsers(UserListFilter{Limit: -1})
+	if err != nil {
+		t.Fatalf("ListUsers: %v", err)
+	}
+	if len(users) != 50 {
+		t.Fatalf("negative limit default: got %d, want 50", len(users))
+	}
+
+	// Hard cap 200
+	users, err = repo.ListUsers(UserListFilter{Limit: 1000})
+	if err != nil {
+		t.Fatalf("ListUsers: %v", err)
+	}
+	if len(users) != 200 {
+		t.Fatalf("hard cap: got %d, want 200", len(users))
+	}
+
+	n, err := repo.CountUsers(UserListFilter{})
+	if err != nil {
+		t.Fatalf("CountUsers: %v", err)
+	}
+	if n != total {
+		t.Fatalf("total=%d want %d", n, total)
+	}
+}
