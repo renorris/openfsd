@@ -52,15 +52,34 @@ export function mountRail(root, handlers) {
 
   // List row selection (event delegation on rail body).
   const rail = root.querySelector('[data-js="rail"]') || root;
-  on(rail, 'click', (ev) => {
-    const t = /** @type {HTMLElement} */ (ev.target);
-    const row = t.closest('[data-select-type]');
+
+  /**
+   * @param {Element} row
+   */
+  function selectRow(row) {
     if (!row || !rail.contains(row)) return;
     const type = row.getAttribute('data-select-type');
     const index = parseInt(row.getAttribute('data-select-index') || '', 10);
     if ((type === 'surface' || type === 'aircraft') && Number.isInteger(index)) {
       handlers.onSelect({ type, index });
     }
+  }
+
+  on(rail, 'click', (ev) => {
+    const t = /** @type {HTMLElement} */ (ev.target);
+    const row = t.closest('[data-select-type]');
+    if (row) selectRow(row);
+  });
+
+  // Keyboard: Enter/Space activate focused option (listbox incomplete without this).
+  on(rail, 'keydown', (ev) => {
+    const kev = /** @type {KeyboardEvent} */ (ev);
+    if (kev.key !== 'Enter' && kev.key !== ' ') return;
+    const t = /** @type {HTMLElement} */ (kev.target);
+    const row = t.closest('[data-select-type]');
+    if (!row || !rail.contains(row)) return;
+    kev.preventDefault();
+    selectRow(row);
   });
 
   /**

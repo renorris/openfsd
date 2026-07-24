@@ -9,6 +9,7 @@ import {
   normalizeSelection,
   surfaceLabel,
   kindShort,
+  escapeHtml,
   OSM_TILE_URL,
   OSM_ATTRIBUTION,
   ESRI_TILE_URL,
@@ -144,4 +145,16 @@ test('basemap attribution strings are non-empty', () => {
   assert.ok(ESRI_TILE_URL.includes('arcgisonline'));
   assert.ok(ESRI_ATTRIBUTION.length > 10);
   assert.ok(ESRI_ATTRIBUTION.toLowerCase().includes('esri'));
+});
+
+test('escapeHtml neutralizes markup in freeform AIR-like strings', () => {
+  assert.equal(escapeHtml(null), '');
+  assert.equal(escapeHtml('plain'), 'plain');
+  assert.equal(
+    escapeHtml('<IMG SRC=X ONERROR=ALERT(1)>'),
+    '&lt;IMG SRC=X ONERROR=ALERT(1)&gt;',
+  );
+  assert.equal(escapeHtml(`a&b<'">`), 'a&amp;b&lt;&#39;&quot;&gt;');
+  // Surface-style label still escapes if ever routed through HTML
+  assert.equal(escapeHtml('G1 (park)'), 'G1 (park)');
 });

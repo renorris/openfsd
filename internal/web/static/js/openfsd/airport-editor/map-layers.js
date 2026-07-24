@@ -165,6 +165,47 @@ export function normalizeSelection(sel) {
 }
 
 /**
+ * Escape text for safe inclusion where a consumer might treat the string as HTML.
+ * Pure — Node-testable. Prefer bindTextTooltip (textContent) for Leaflet.
+ * @param {unknown} s
+ * @returns {string}
+ */
+export function escapeHtml(s) {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/**
+ * Build a Leaflet tooltip content node with textContent only (never innerHTML).
+ * Leaflet 1.9 uses innerHTML for string content — always pass an Element.
+ * @param {string} text
+ * @returns {HTMLElement}
+ */
+export function tooltipTextNode(text) {
+  const span = document.createElement('span');
+  span.textContent = String(text ?? '');
+  return span;
+}
+
+/**
+ * Bind a plain-text tooltip (file-derived labels must not go through innerHTML).
+ * @param {*} layer Leaflet layer
+ * @param {string} text
+ * @param {object} [opts]
+ */
+export function bindTextTooltip(layer, text, opts = {}) {
+  layer.bindTooltip(tooltipTextNode(text), {
+    sticky: true,
+    direction: 'top',
+    ...opts,
+  });
+}
+
+/**
  * Create blank tile layer for e2e (no network). Uses L.tileLayer with data-URI
  * or L.gridLayer empty tiles when available.
  * @param {typeof globalThis.L} L
@@ -242,19 +283,9 @@ export function createMap(L, mapEl, opts = {}) {
   };
   layerByKey[activeBase].addTo(map);
 
-  // Standard layer control when not blank (OSM / Esri).
-  if (!opts.blankTiles) {
-    L.control
-      .layers(
-        {
-          'OSM Standard': baseLayers.osm,
-          'Esri Imagery': baseLayers.esri,
-        },
-        null,
-        { position: 'topright', collapsed: true },
-      )
-      .addTo(map);
-  }
+  // Toolbar Layer button is the sole basemap control (dense console; avoids
+  // desync with a second L.control.layers widget). Attribution still updates
+  // when the active tile layer changes.
 
   /**
    * @param {string} key
@@ -377,6 +408,7 @@ export class OverlayController {
         fillOpacity: style.fillOpacity ?? 0.85,
       });
     } else {
+      // Multi-point surfaces (runway/taxi/hold polyline). Hold dash is in style.
       const latlngs = pts.map((p) => [p.lat, p.lon]);
       layer = L.polyline(latlngs, {
         color: style.color,
@@ -384,14 +416,9 @@ export class OverlayController {
         opacity: style.opacity,
         dashArray: style.dashArray,
       });
-      // Hold with multiple points: still polyline with dash.
-      if (surface.kind === SurfaceHold && pts.length === 1) {
-        // already handled above
-      }
     }
 
-    const label = surfaceLabel(surface);
-    layer.bindTooltip(label, { sticky: true, direction: 'top' });
+    bindTextTooltip(layer, surfaceLabel(surface));
     layer.on('click', (ev) => {
       if (ev.originalEvent) L.DomEvent.stopPropagation(ev.originalEvent);
       this.onSelect({ type: 'surface', index });
@@ -414,13 +441,14 @@ export class OverlayController {
       icon: this._planeIcon,
       rotationAngle: hdg,
       rotationOrigin: 'center center',
-      title: ac.callsign || '',
+      // title is a plain attribute (not HTML); still use plain text only.
+      title: String(ac.callsign || ''),
       opacity: selected ? 1 : 0.92,
       zIndexOffset: selected ? 1000 : 0,
     };
     const marker = L.marker([ac.lat, ac.lon], opts);
     const tip = `${ac.callsign || '?'} · ${ac.type || ''} · hdg ${hdg}`;
-    marker.bindTooltip(tip, { sticky: true, direction: 'top' });
+    bindTextTooltip(marker, tip);
     marker.on('click', (ev) => {
       if (ev.originalEvent) L.DomEvent.stopPropagation(ev.originalEvent);
       this.onSelect({ type: 'aircraft', index });
