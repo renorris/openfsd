@@ -248,6 +248,85 @@ func exchangeInRangePositions(t *testing.T, a, b *fsdclient.Client, callA, callB
 	}
 }
 
+// exchangeATCPositions pumps % ATC positions until each controller sees the other.
+// Required before ranged ATC-only traffic (@49999 chat, @94835 queries): a single
+// SendATCPosition is not enough under race/gnet load because peer geo may still
+// be unset when the fan-out SearchATC runs on another connection's event loop.
+func exchangeATCPositions(t *testing.T, a, b *fsdclient.Client, posA, posB protocol.ATCPosition) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	seenB := make(chan error, 1)
+	seenA := make(chan error, 1)
+	go func() {
+		defer wg.Done()
+		_, err := a.WaitFor(ctx, func(r fsdclient.Received) bool {
+			return r.Type == protocol.PacketTypeATCPosition && bytes.Contains(r.Raw, []byte(posB.Callsign))
+		})
+		seenB <- err
+	}()
+	go func() {
+		defer wg.Done()
+		_, err := b.WaitFor(ctx, func(r fsdclient.Received) bool {
+			return r.Type == protocol.PacketTypeATCPosition && bytes.Contains(r.Raw, []byte(posA.Callsign))
+		})
+		seenA <- err
+	}()
+
+	ticker := time.NewTicker(40 * time.Millisecond)
+	defer ticker.Stop()
+	gotA, gotB := false, false
+	var errA, errB error
+	for !gotA || !gotB {
+		if err := a.SendATCPosition(posA); err != nil {
+			cancel()
+			wg.Wait()
+			t.Fatal(err)
+		}
+		if err := b.SendATCPosition(posB); err != nil {
+			cancel()
+			wg.Wait()
+			t.Fatal(err)
+		}
+		if !gotA {
+			select {
+			case errA = <-seenA:
+				gotA = true
+			default:
+			}
+		}
+		if !gotB {
+			select {
+			case errB = <-seenB:
+				gotB = true
+			default:
+			}
+		}
+		if gotA && gotB {
+			break
+		}
+		select {
+		case <-ticker.C:
+		case <-ctx.Done():
+			cancel()
+			wg.Wait()
+			t.Fatalf("ATC position exchange timeout gotA=%v gotB=%v (A=%v B=%v)",
+				gotA, gotB, a.Recorder().Received(), b.Recorder().Received())
+		}
+	}
+	cancel()
+	wg.Wait()
+	if errA != nil {
+		t.Fatalf("B did not see A ATC pos: %v (B recv=%v)", errA, b.Recorder().Received())
+	}
+	if errB != nil {
+		t.Fatalf("A did not see B ATC pos: %v (A recv=%v)", errB, a.Recorder().Received())
+	}
+}
+
 func TestE2E_PilotLoginPassword(t *testing.T) {
 	ts := server.StartTestServer(t)
 	c := dial(t, ts)
