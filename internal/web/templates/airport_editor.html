@@ -50,9 +50,34 @@
             <input type="file" accept=".air,text/plain" data-js="open-air" hidden>
         </label>
         <span class="apted-toolbar-sep" aria-hidden="true"></span>
-        <button type="button" class="btn btn-sm btn-outline-secondary" data-js="fit">Fit</button>
+        <button type="button" class="btn btn-sm btn-outline-primary" data-js="dl-apt"
+                title="Download .apt (Blob)">DL .apt</button>
+        <button type="button" class="btn btn-sm btn-outline-primary" data-js="dl-air"
+                title="Download .air (Blob)">DL .air</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-js="new"
+                title="New empty document">New</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-js="mark-clean"
+                title="Mark APT/AIR clean without download">Mark clean</button>
+        <span class="apted-toolbar-sep" aria-hidden="true"></span>
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-js="fit"
+                title="Fit bounds (F)">Fit</button>
         <button type="button" class="btn btn-sm btn-outline-secondary" data-js="layer"
                 aria-label="Basemap layer: OSM. Click to switch.">Layer: OSM</button>
+        <span class="apted-toolbar-sep" aria-hidden="true"></span>
+        <div class="apted-mode-group" role="group" aria-label="Edit mode" data-js="mode-group">
+            <button type="button" class="btn btn-sm btn-outline-dark apted-mode-btn is-active"
+                    data-mode="select" aria-pressed="true" title="Select (1)">1 Select</button>
+            <button type="button" class="btn btn-sm btn-outline-dark apted-mode-btn"
+                    data-mode="park" aria-pressed="false" title="Parking (2)">2 Park</button>
+            <button type="button" class="btn btn-sm btn-outline-dark apted-mode-btn"
+                    data-mode="taxi" aria-pressed="false" title="Taxiway (3)">3 Taxi</button>
+            <button type="button" class="btn btn-sm btn-outline-dark apted-mode-btn"
+                    data-mode="runway" aria-pressed="false" title="Runway (4)">4 Rwy</button>
+            <button type="button" class="btn btn-sm btn-outline-dark apted-mode-btn"
+                    data-mode="hold" aria-pressed="false" title="Hold (5)">5 Hold</button>
+            <button type="button" class="btn btn-sm btn-outline-dark apted-mode-btn"
+                    data-mode="aircraft" aria-pressed="false" title="Aircraft (6)">6 Acft</button>
+        </div>
     </div>
 
     <div class="apted-body">
@@ -127,7 +152,7 @@
                          role="tabpanel" aria-labelledby="apted-tab-raw">
                     <div class="apted-panel-hd">
                         <h2>Raw</h2>
-                        <span class="apted-hint">Read-only preview</span>
+                        <span class="apted-hint">Preview · Apply to re-parse</span>
                     </div>
                     <div class="apted-panel-bd apted-raw-panel">
                         <div class="apted-field">
@@ -146,7 +171,7 @@
                 <section class="apted-panel apted-inspector-panel" aria-labelledby="apted-inspector-heading">
                     <div class="apted-panel-hd">
                         <h2 id="apted-inspector-heading">Inspector</h2>
-                        <span class="apted-hint">View only</span>
+                        <span class="apted-hint">Edit fields · Del deletes</span>
                     </div>
                     <div class="apted-panel-bd" data-js="inspector">
                         <p class="apted-hint">Select a surface or aircraft on the map or in a list.</p>

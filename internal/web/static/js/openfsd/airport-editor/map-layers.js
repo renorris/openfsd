@@ -303,21 +303,40 @@ export function createMap(L, mapEl, opts = {}) {
 }
 
 /**
- * Overlay controller: surfaces + aircraft on a feature group.
- * Read-only: click selects; no drag/edit.
+ * Overlay controller: surfaces + aircraft + vertex handles + draw preview.
+ * PR7: vertex drag, aircraft drag, draw-preview polyline.
  */
 export class OverlayController {
   /**
    * @param {typeof globalThis.L} L
    * @param {*} map Leaflet map
-   * @param {{ planeIconUrl?: string, onSelect?: (sel: {type:string,index:number}|null) => void }} [opts]
+   * @param {{
+   *   planeIconUrl?: string,
+   *   onSelect?: (sel: {type:string,index:number}|null) => void,
+   *   onVertexDrag?: (surfaceIndex: number, vertexIndex: number, lat: number, lon: number) => void,
+   *   onVertexDragEnd?: (surfaceIndex: number, vertexIndex: number, lat: number, lon: number) => void,
+   *   onAircraftDrag?: (index: number, lat: number, lon: number) => void,
+   *   onAircraftDragEnd?: (index: number, lat: number, lon: number) => void,
+   *   onMapClick?: (lat: number, lon: number, originalEvent: MouseEvent|undefined) => void,
+   *   onMapDblClick?: (lat: number, lon: number) => void,
+   *   editable?: boolean,
+   * }} [opts]
    */
   constructor(L, map, opts = {}) {
     this.L = L;
     this.map = map;
     this.onSelect = opts.onSelect || (() => {});
+    this.onVertexDrag = opts.onVertexDrag || (() => {});
+    this.onVertexDragEnd = opts.onVertexDragEnd || (() => {});
+    this.onAircraftDrag = opts.onAircraftDrag || (() => {});
+    this.onAircraftDragEnd = opts.onAircraftDragEnd || (() => {});
+    this.onMapClick = opts.onMapClick || null;
+    this.onMapDblClick = opts.onMapDblClick || null;
+    this.editable = opts.editable !== false;
     this.planeIconUrl = opts.planeIconUrl || '/static/images/plane.png';
     this.group = L.featureGroup().addTo(map);
+    this.vertexGroup = L.featureGroup().addTo(map);
+    this.previewGroup = L.featureGroup().addTo(map);
     /** @type {Map<string, *>} */
     this._layerByKey = new Map();
     /** @type {{ type: string, index: number }|null} */
@@ -326,11 +345,27 @@ export class OverlayController {
     this._airport = null;
     /** @type {import('./model.js').Aircraft[]} */
     this._aircraft = [];
+    /** @type {boolean} */
+    this._dragging = false;
     this._planeIcon = L.icon({
       iconUrl: this.planeIconUrl,
       iconSize: [16, 16],
       iconAnchor: [8, 8],
     });
+
+    if (this.onMapClick) {
+      map.on('click', (ev) => {
+        if (this._dragging) return;
+        const ll = ev.latlng;
+        this.onMapClick(ll.lat, ll.lng, ev.originalEvent);
+      });
+    }
+    if (this.onMapDblClick) {
+      map.on('dblclick', (ev) => {
+        const ll = ev.latlng;
+        this.onMapDblClick(ll.lat, ll.lng);
+      });
+    }
   }
 
   /**
@@ -343,6 +378,7 @@ export class OverlayController {
     this._aircraft = Array.isArray(aircraft) ? aircraft : [];
     this._selection = normalizeSelection(selection);
     this.group.clearLayers();
+    this.vertexGroup.clearLayers();
     this._layerByKey.clear();
 
     const surfaces = airport?.surfaces || [];
@@ -352,6 +388,55 @@ export class OverlayController {
     for (let i = 0; i < this._aircraft.length; i++) {
       this._addAircraft(this._aircraft[i], i);
     }
+
+    // Vertex handles for selected surface (edit mode).
+    if (this.editable && this._selection?.type === 'surface') {
+      const s = surfaces[this._selection.index];
+      if (s) this._addVertexHandles(s, this._selection.index);
+    }
+  }
+
+  /**
+   * Draw preview polyline for in-progress draw session.
+   * @param {{ lat: number, lon: number }[]} points
+   * @param {string} [kind]
+   */
+  setDrawPreview(points, kind = SurfaceTaxiway) {
+    this.previewGroup.clearLayers();
+    if (!points || points.length === 0) return;
+    const L = this.L;
+    const style = surfaceStyle(kind, true);
+    if (points.length === 1) {
+      const p = points[0];
+      L.circleMarker([p.lat, p.lon], {
+        radius: 5,
+        color: style.color,
+        weight: 2,
+        fillColor: style.color,
+        fillOpacity: 0.5,
+      }).addTo(this.previewGroup);
+      return;
+    }
+    const latlngs = points.map((p) => [p.lat, p.lon]);
+    L.polyline(latlngs, {
+      color: style.color,
+      weight: style.weight,
+      opacity: 0.7,
+      dashArray: '4 6',
+    }).addTo(this.previewGroup);
+    for (const p of points) {
+      L.circleMarker([p.lat, p.lon], {
+        radius: 4,
+        color: style.color,
+        weight: 1,
+        fillColor: '#fff',
+        fillOpacity: 0.9,
+      }).addTo(this.previewGroup);
+    }
+  }
+
+  clearDrawPreview() {
+    this.previewGroup.clearLayers();
   }
 
   /**
@@ -359,7 +444,6 @@ export class OverlayController {
    */
   setSelection(selection) {
     this._selection = normalizeSelection(selection);
-    // Re-render styles for selection highlight without full data replace.
     this.render(this._airport, this._aircraft, this._selection);
   }
 
@@ -428,6 +512,58 @@ export class OverlayController {
   }
 
   /**
+   * Draggable vertex handles for selected surface.
+   * @param {import('./model.js').Surface} surface
+   * @param {number} surfaceIndex
+   */
+  _addVertexHandles(surface, surfaceIndex) {
+    const L = this.L;
+    const pts = surface.points || [];
+    for (let vi = 0; vi < pts.length; vi++) {
+      const p = pts[vi];
+      if (!Number.isFinite(p.lat) || !Number.isFinite(p.lon)) continue;
+      const marker = L.circleMarker([p.lat, p.lon], {
+        radius: 6,
+        color: '#4a7ab0',
+        weight: 2,
+        fillColor: '#fff',
+        fillOpacity: 1,
+        opacity: 1,
+      });
+      // Use drag via map events on mousedown — circleMarker is not draggable by default.
+      // Prefer Leaflet.Marker with divIcon for drag support when available.
+      const handle = L.marker([p.lat, p.lon], {
+        draggable: true,
+        zIndexOffset: 2000,
+        icon: L.divIcon({
+          className: 'apted-vertex-handle',
+          iconSize: [12, 12],
+          iconAnchor: [6, 6],
+        }),
+        title: `Vertex ${vi + 1}`,
+      });
+      handle.on('dragstart', () => {
+        this._dragging = true;
+      });
+      handle.on('drag', (ev) => {
+        const ll = ev.target.getLatLng();
+        this.onVertexDrag(surfaceIndex, vi, ll.lat, ll.lng);
+      });
+      handle.on('dragend', (ev) => {
+        const ll = ev.target.getLatLng();
+        this.onVertexDragEnd(surfaceIndex, vi, ll.lat, ll.lng);
+        // Small delay so map click from drag end is ignored.
+        setTimeout(() => {
+          this._dragging = false;
+        }, 50);
+      });
+      handle.addTo(this.vertexGroup);
+      // Keep circle under for visibility if divIcon fails in tests.
+      marker.addTo(this.vertexGroup);
+    }
+  }
+
+  /**
    * @param {import('./model.js').Aircraft} ac
    * @param {number} index
    */
@@ -445,6 +581,7 @@ export class OverlayController {
       title: String(ac.callsign || ''),
       opacity: selected ? 1 : 0.92,
       zIndexOffset: selected ? 1000 : 0,
+      draggable: this.editable,
     };
     const marker = L.marker([ac.lat, ac.lon], opts);
     const tip = `${ac.callsign || '?'} · ${ac.type || ''} · hdg ${hdg}`;
@@ -453,6 +590,22 @@ export class OverlayController {
       if (ev.originalEvent) L.DomEvent.stopPropagation(ev.originalEvent);
       this.onSelect({ type: 'aircraft', index });
     });
+    if (this.editable) {
+      marker.on('dragstart', () => {
+        this._dragging = true;
+      });
+      marker.on('drag', (ev) => {
+        const ll = ev.target.getLatLng();
+        this.onAircraftDrag(index, ll.lat, ll.lng);
+      });
+      marker.on('dragend', (ev) => {
+        const ll = ev.target.getLatLng();
+        this.onAircraftDragEnd(index, ll.lat, ll.lng);
+        setTimeout(() => {
+          this._dragging = false;
+        }, 50);
+      });
+    }
     marker.addTo(this.group);
     this._layerByKey.set(`aircraft:${index}`, marker);
 

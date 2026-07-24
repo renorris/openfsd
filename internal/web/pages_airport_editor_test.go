@@ -87,6 +87,14 @@ func TestAirportEditorAdminShell(t *testing.T) {
 		`data-js="rail-tabs"`,
 		`data-js="inspector"`,
 		`data-js="chip-icao"`,
+		// PR7: draw modes + Blob download controls
+		`data-js="dl-apt"`,
+		`data-js="dl-air"`,
+		`data-js="mark-clean"`,
+		`data-js="mode-group"`,
+		`data-mode="select"`,
+		`data-mode="park"`,
+		`data-mode="aircraft"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected body to contain %q, body=%s", want, clip(body, 800))

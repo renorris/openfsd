@@ -148,6 +148,138 @@
   cursor: pointer;
 }
 
+/* Mode group: dense utilitarian toggles for 16:9 console */
+.apted-mode-group {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.15rem;
+  align-items: center;
+}
+
+.apted-mode-btn {
+  font-family: var(--apted-mono);
+  font-size: var(--apted-fs-sm);
+  font-variant-numeric: tabular-nums;
+  padding: 0.2rem 0.4rem;
+  min-width: 0;
+}
+
+.apted-mode-btn.is-active,
+.apted-mode-btn[aria-pressed="true"] {
+  background: var(--apted-sel);
+  border-color: var(--apted-sel-border);
+  color: var(--apted-accent);
+  font-weight: 700;
+  box-shadow: inset 0 0 0 1px var(--apted-sel-border);
+}
+
+/* Map cursor hints by mode */
+.apted[data-mode="park"] .apted-map,
+.apted[data-mode="taxi"] .apted-map,
+.apted[data-mode="runway"] .apted-map,
+.apted[data-mode="hold"] .apted-map,
+.apted[data-mode="aircraft"] .apted-map {
+  cursor: crosshair;
+}
+
+.apted[data-mode="select"] .apted-map {
+  cursor: default;
+}
+
+/* Vertex drag handles (Leaflet divIcon) */
+.apted-vertex-handle {
+  width: 12px !important;
+  height: 12px !important;
+  margin-left: -6px !important;
+  margin-top: -6px !important;
+  border: 2px solid #4a7ab0;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25);
+  cursor: move;
+}
+
+/* Inspector form density */
+.apted-form-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.apted-field-inline {
+  display: grid;
+  grid-template-columns: 6.5rem minmax(0, 1fr);
+  gap: 0.3rem;
+  align-items: center;
+}
+
+.apted-field-inline > label {
+  font-size: var(--apted-fs-sm);
+  font-weight: 600;
+  color: var(--apted-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  margin: 0;
+}
+
+.apted-field-inline > input,
+.apted-field-inline > select,
+.apted-field-inline > span {
+  font-family: var(--apted-mono);
+  font-size: var(--apted-fs-sm);
+  font-variant-numeric: tabular-nums;
+  border: 1px solid var(--apted-border);
+  border-radius: 2px;
+  padding: 0.2rem 0.35rem;
+  width: 100%;
+  min-width: 0;
+  background: #fff;
+}
+
+.apted-field-inline > span {
+  border: 0;
+  padding: 0.2rem 0;
+  background: transparent;
+}
+
+.apted-btn-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  align-items: center;
+  margin-top: 0.35rem;
+}
+
+.apted-btn-row select {
+  font-family: var(--apted-mono);
+  font-size: var(--apted-fs-sm);
+  border: 1px solid var(--apted-border);
+  border-radius: 2px;
+  padding: 0.2rem 0.35rem;
+  max-width: 8rem;
+}
+
+.apted-icon-btn {
+  padding: 0 0.35rem !important;
+  line-height: 1.1;
+  min-width: 1.5rem;
+}
+
+.apted-mono {
+  font-family: var(--apted-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Compact toolbar on narrow heights (16:9 laptop) */
+@media (max-height: 700px) {
+  .apted-toolbar {
+    padding: 0.2rem 0.35rem;
+  }
+  .apted-mode-btn {
+    padding: 0.12rem 0.3rem;
+  }
+}
+
 /* --- body grid: map + rail --- */
 .apted-body {
   flex: 1 1 auto;
