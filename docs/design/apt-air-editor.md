@@ -45,7 +45,7 @@ Instructor workflow (target):
 | APT parser | `internal/sweatbox/apt.go` `ParseAPT` | TWRTrainer-compatible; non-fatal `[]string` errors |
 | AIR parser | `internal/sweatbox/air.go` `ParseAIR` | 16 colon fields; best-effort rows + errors |
 | Domain types | `internal/sweatbox/types.go` | `Airport`, `Surface`, `Aircraft`, `Point` |
-| Fixtures | `pkg/twrfiles/testdata/KBTV_example.{apt,air}` | Golden samples |
+| Fixtures | `internal/sweatbox/testdata/KBTV_example.{apt,air}` | Golden samples |
 | Format (write) | **missing** | No `FormatAPT` / `FormatAIR` today — only parse |
 | Sweatbox UI | `internal/web/templates/sweatbox.html` + `sweatbox.css` + `sweatbox.js` | 16:9 rail; forms + PE poll |
 | Sweatbox routes | Admin-only under `requireMinRatingHTML(Administrator)` | `/sweatbox`, form POSTs, CSRF |
@@ -483,7 +483,7 @@ L.tileLayer(
 
 **OSMF tile usage:** editor is admin-only, low concurrency. Still: no aggressive prefetch; rely on Leaflet default tile loading; cache via browser.
 
-**E2E / offline:** production editor loads real tiles; Playwright must **not** depend on OSM/Esri network success (see Testing §5 — blank/local tile layer hook).
+**E2E / offline:** production editor loads real tiles. Map PE is covered by pure JS unit tests + manual smoke — **no Playwright** (house boring-web policy).
 
 ### Integrated APT + AIR document model
 
@@ -1207,7 +1207,15 @@ Zero production npm dependencies for unit tests. Add `node_modules/` to `.gitign
 | map-layers, ui-* | Best-effort with mocks |
 | main.js bootstrap | Smoke only |
 
-### 5. JS e2e tests (Playwright) — harness requirements
+### 5. JS browser automation — **not used**
+
+**Policy:** openfsd does **not** ship Playwright/Cypress/Selenium. boring-web forbids drive-by browser automation. Prefer Go PE + pure Node unit tests + manual map smoke.
+
+~~Former harness notes retained only for archaeology; do not implement.~~
+
+<details><summary>Superseded Playwright notes (cancelled)</summary>
+
+### 5. JS e2e tests (Playwright) — harness requirements (CANCELLED)
 
 **Scope:** map/editor flows only. **No-JS download stays Go PE** (Testing §3).
 
@@ -1232,9 +1240,9 @@ Zero production npm dependencies for unit tests. Add `node_modules/` to `.gitign
 ```bash
 go test -race ./pkg/twrfiles/... ./internal/web/...
 bash scripts/check-webjs.sh
-# optional:
-cd e2e && npx playwright test
 ```
+
+</details>
 
 ### 6. Manual smoke
 
@@ -1252,7 +1260,7 @@ cd e2e && npx playwright test
 | 3 | PR4: JS pure modules + Node CI |
 | 4 | PR5: validate API (can parallel map PRs after PR1–2) |
 | 5 | PR6: read-only map; PR7: edit + Blob; PR8: validation polish |
-| 6 | PR9: optional Playwright; docs |
+| 6 | ~~PR9 Playwright~~ **cancelled** — docs only; no browser automation |
 
 **Feature flag:** not required — Admin-only page is the gate. If needed, env `AIRPORT_EDITOR_ENABLED=false` can hide route; **default on** once shipped.
 
@@ -1267,7 +1275,7 @@ cd e2e && npx playwright test
 1. **Should Supervisors access the editor?** Default Admin-only; product call.
 2. **Esri imagery ToS** for each deployer's traffic profile — keep optional and documented.
 3. **Undo stack?** Highly useful; implement simple in-memory undo (50 steps) in model if time permits in map PR; otherwise v1.1.
-4. **Playwright CI:** optional job until green ~7 days, then consider hard gate — product/CI preference.
+4. **~~Playwright CI~~** — **cancelled.** No browser automation suite.
 
 Resolved by this rev: WIP download allowed (yes); fixture path = `pkg/twrfiles/testdata`; dirty = hash + Mark clean; Format contract frozen; API authz = 403 JSON; JS import path relative from `webjs/`.
 
@@ -1298,7 +1306,7 @@ Resolved by this rev: WIP download allowed (yes); fixture path = `pkg/twrfiles/t
 | 19 | **Normative Format contract + golden files** | Dual-language byte parity |
 | 20 | **Dirty via download hash + Mark clean** | Blob has no reliable completion event |
 | 21 | **Raw tab = preview + Apply** (not live two-way) | Avoid dual-write races |
-| 22 | **Playwright optional CI; blank tiles; assert DOM/Blob** | Tile network flakiness |
+| 22 | **No Playwright** — Go PE + pure Node tests + manual map smoke | House boring-web; no browser automation suite in repo |
 | 23 | **`pkg/` not `internal/` for twrfiles** | protocol symmetry + cmd reuse |
 
 ---
@@ -1309,7 +1317,7 @@ Resolved by this rev: WIP download allowed (yes); fixture path = `pkg/twrfiles/t
 |------|----------|------------|
 | JS ↔ Go parser drift | **High** | `pkg/twrfiles` canonical; parity JSON; Format goldens |
 | Large first-party JS untested | **High** | Pure modules + `check-webjs.sh` in PR4 CI |
-| Playwright flaky on tiles | **High** | Blank tile hook; assert DOM/Blob; optional CI job |
+| ~~Playwright flaky on tiles~~ | — | **N/A** — Playwright not shipping |
 | OSM tile policy / outage | Med | Attribution required; Raw/fallback still work |
 | Vertex editing UX too crude | Med | Iterate; optional leaflet-draw later via decision test |
 | Embed FS bloat (Leaflet already in) | Low | Already paid cost on dashboard |
@@ -1379,7 +1387,7 @@ AAL123:B738/F:J:I:KBTV:KBOS:29000:BTV4 MPV LEB MHT:/v/charts:2200:S:44.469758:-7
 - `Agents.md` — package ownership, import edges, boring-web, coverage floors
 - `docs/design/sweatbox-integrated-simulator.md` — sweatbox architecture; `.apt`/`.air` role
 - `internal/sweatbox/apt.go`, `air.go`, `types.go` — current parsers & types
-- `pkg/twrfiles/testdata/KBTV_example.apt`, `KBTV_example.air` — golden samples
+- `internal/sweatbox/testdata/KBTV_example.apt`, `KBTV_example.air` — golden samples
 - `internal/web/templates/sweatbox.html`, `static/css/openfsd/sweatbox.css`, `static/js/openfsd/sweatbox.js` — console UX to mirror
 - `internal/web/templates/dashboard.html`, `static/js/openfsd/dashboard.js` — Leaflet PE exception pattern
 - `internal/web/routes.go`, `pages_sweatbox.go`, `pe_test.go` — authz & PE test patterns
@@ -1481,12 +1489,11 @@ Each PR independently reviewable; green `go test -race ./...`, gofmt. Import-gra
 
 ---
 
-### PR 9 — Playwright e2e (map flows, optional CI)
+### PR 9 — ~~Playwright e2e~~ **CANCELLED**
 
-- **Title:** `e2e: airport-editor Playwright (blank tiles, optional CI)`
-- **Files:** `e2e/` harness (start web + temp SQLite + admin seed), Playwright tests, README (`playwright install --with-deps`)
-- **Dependencies:** PR 7–8
-- **Description:** DOM/list/Blob assertions only; blank tiles; **no** no-JS Playwright (Go PE owns that). CI job **optional** until stable.
+- **Status:** **Not shipping.** Product / house decision: **no Playwright** (openfsd has no browser automation suite; boring-web forbids drive-by Playwright).
+- **Coverage instead:** Go PE tests for shell/authz/echo-download; pure Node `webjs/` tests for parse/format/model/download/validate; manual keyboard smoke for map PE.
+- **Do not reintroduce** `e2e/` Playwright harness without an explicit product override of boring-web.
 
 ---
 
