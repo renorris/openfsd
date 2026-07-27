@@ -49,10 +49,14 @@ scan_files() {
 
 files="$( { list_non_test_go pkg; list_non_test_go internal; } | grep -v '^$' || true)"
 
+# Process substitution feeds stdin without a pipeline subshell so failed=1
+# sticks in this shell. Do not use printf | scan_files (subshell loses failed).
+# Manual self-check: temporary non-test panic( under internal/ → expect exit 1.
+
 echo "==> Hygiene: panic( in non-test Go under pkg/ and internal/"
 if [[ -z "$files" ]]; then
   echo "    OK (no hits, or dirs absent)"
-elif printf '%s\n' "$files" | scan_files '\bpanic\s*\('; then
+elif scan_files '\bpanic\s*\(' < <(printf '%s\n' "$files"); then
   echo "    OK"
 fi
 
@@ -63,7 +67,7 @@ else
   proto_files="$(list_non_test_go pkg/protocol | grep -v '^$' || true)"
   if [[ -z "$proto_files" ]]; then
     echo "    OK"
-  elif printf '%s\n' "$proto_files" | scan_files '"reflect"|\breflect\.'; then
+  elif scan_files '"reflect"|\breflect\.' < <(printf '%s\n' "$proto_files"); then
     echo "    OK"
   fi
 fi
@@ -73,13 +77,13 @@ if [[ -z "$files" ]]; then
   echo "    OK (no hits, or dirs absent)"
 else
   print_clean=1
-  if ! printf '%s\n' "$files" | scan_files '\bfmt\.Print(f|ln)?\s*\('; then
+  if ! scan_files '\bfmt\.Print(f|ln)?\s*\(' < <(printf '%s\n' "$files"); then
     print_clean=0
   fi
-  if ! printf '%s\n' "$files" | scan_files '\blog\.Print(f|ln)?\s*\('; then
+  if ! scan_files '\blog\.Print(f|ln)?\s*\(' < <(printf '%s\n' "$files"); then
     print_clean=0
   fi
-  if ! printf '%s\n' "$files" | scan_files '\blog\.(Fatal|Fatalf|Fatalln|Panic|Panicf|Panicln)\s*\('; then
+  if ! scan_files '\blog\.(Fatal|Fatalf|Fatalln|Panic|Panicf|Panicln)\s*\(' < <(printf '%s\n' "$files"); then
     print_clean=0
   fi
   if [[ "$print_clean" -eq 1 ]]; then

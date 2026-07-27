@@ -23,6 +23,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+      - name: gofmt
+        run: test -z "$(gofmt -l .)"
+      - name: Hygiene (no panic/reflect/fmt.Print in library code)
+        run: bash scripts/check-hygiene.sh
+      - name: Import graph
+        run: bash scripts/check-import-graph.sh
       - name: Race tests
         run: go test -race -count=1 ./...
       - name: Coverage floor ≥80% (exclude cmd/)
