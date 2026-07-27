@@ -25,6 +25,7 @@ Shipped. Summary of the tree as of closeout:
 | Persistence | **None** durable (no disk/DB); Blob download + transient request bodies only |
 | Playwright | **Cancelled** — no browser automation suite |
 | Vertex drag | **Fixed** (live geometry + handles); see `docs/design/airport-editor-vertex-drag.md`. Vertex delete remains rail-only (Del/Backspace deletes the whole surface). |
+| Undo / redo | **Shipped** (keyboard-only snapshot history); see `docs/design/airport-editor-undo-redo.md`. `history.js` + `main.js` wiring; clean-content hash seeded at bootstrap / successful Open / New (field names `last*DownloadHash` mean last clean content). |
 
 Design history below is retained. Stale “Format missing / JS tests none” rows are updated in Background.
 
@@ -530,10 +531,12 @@ L.tileLayer(
 Browser Blob + temporary `<a download>` has **no reliable completion signal** (and can be blocked by the browser). Therefore:
 
 1. On any model mutation → set `aptDirty` / `airDirty` as appropriate.
-2. Maintain `lastAptDownloadHash` / `lastAirDownloadHash` (hash of last successfully **formatted** text the user initiated a download for).
-3. **Do not** clear dirty merely on click. After `format*` succeeds and the download is **initiated** (Blob URL created + click dispatched), set `last*DownloadHash` to that text’s hash and set dirty = false **only if** current formatted text still equals that hash (it will at that instant). If the user edits again, dirty becomes true again.
-4. Expose explicit toolbar action **“Mark clean”** (per side or both) for users who cancelled a dialog or know the file is saved elsewhere — never claim the OS saved the file.
-5. Titlebar chips: `APT` / `APT*` / `AIR` / `AIR*` reflecting dirty flags; tooltip: “Unsaved changes (download to save locally)”.
+2. Maintain `lastAptDownloadHash` / `lastAirDownloadHash` as the **last clean content hash** (FNV-1a of download-format text via `formatAptForDownload` / `formatAirForDownload`). Field names retain “Download” for compatibility; they are **not** download-only anchors.
+3. **Seed** those hashes (and leave dirty flags false) via `seedCleanContentHashes` at: **editor bootstrap** (immediately after `createEmptyDocument`), successful **Open** APT/AIR (that side only), and **New** (both sides). **Never** leave or reset hashes to `null` for a clean state — `syncDirtyFromHash` treats null as always dirty. Open no longer leaves hashes null-as-clean.
+4. **Blob download** still overwrites the baseline via `noteDownload`: after `format*` succeeds and the download is **initiated** (Blob URL created + click dispatched), set `last*DownloadHash` to that text’s hash and set dirty = false **only if** current formatted text still equals that hash (it will at that instant). If the user edits again, dirty becomes true again.
+5. Expose explicit toolbar action **“Mark clean”** (per side or both) for users who cancelled a dialog or know the file is saved elsewhere — never claim the OS saved the file. Mark-clean does not rewrite hashes; undo/redo recompute dirty from the live hashes.
+6. Titlebar chips: `APT` / `APT*` / `AIR` / `AIR*` reflecting dirty flags; tooltip: “Unsaved changes (download to save locally)”.
+7. **Undo/redo** restores content snapshots then recomputes dirty via `syncDirtyAfterHistoryApply` against the **live** clean-content hashes (hashes are not rewound by history). See `docs/design/airport-editor-undo-redo.md`.
 
 **UX state table (dual document):**
 
@@ -636,6 +639,8 @@ Serialize with **16 colon fields** exactly as `ParseAIR` expects; preserve route
 | `Ctrl/Cmd+O` | Focus/open the APT file input (toolbar “Open .apt”); no multi-key chord sequences |
 | `Ctrl/Cmd+Shift+O` | Open AIR file input |
 | `Ctrl/Cmd+S` | Download **dirty** side only; if both dirty, confirm “Download both?” then APT then AIR |
+| `Ctrl/Cmd+Z` | **Undo** last document mutation (map/chrome focus only; not in fields) |
+| `Ctrl/Cmd+Shift+Z`, `Ctrl/Cmd+Y` | **Redo** (map/chrome focus only; not in fields). No toolbar buttons; no `Ctrl/Cmd+X` binding |
 | `Delete` / `Backspace` | Delete selection (ignored when focus is in inputs/textareas) |
 | `Esc` | Cancel draw mode → select |
 | `F` | Fit bounds |
@@ -649,7 +654,7 @@ Serialize with **16 colon fields** exactly as `ParseAIR` expects; preserve route
 
 Hold has its own quick key (`5`); aircraft is `6`. No `O` then `A`/`R` chords (easy to miss and conflict with typing).
 
-When focus is in `<input>` / `<textarea>`, letter shortcuts are disabled except Ctrl/Cmd combos.
+When focus is in `<input>` / `<textarea>` / `<select>` / contenteditable, letter shortcuts are disabled. **Save/Open** remain the only `Ctrl/Cmd+*` chords that work inside fields; document undo/redo leave `Mod+Z` / redo chords to the browser (native text undo). Full history semantics: `docs/design/airport-editor-undo-redo.md`.
 
 ### Progressive enhancement matrix
 
@@ -795,6 +800,7 @@ sequenceDiagram
   UI->>V: parseAPT(text)
   V-->>UI: airport + errs
   UI->>M: setAirport; aptDirty=false
+  UI->>M: seed lastAptDownloadHash from download-format text (clean baseline)
   UI->>UI: redraw map; fit bounds
 
   U->>UI: Edit taxi vertex
@@ -804,10 +810,12 @@ sequenceDiagram
   UI->>V: formatAPT(airport)
   UI->>U: Initiate Blob download (filename KBTV.apt)
   Note over UI,S: No durable server write
-  UI->>M: lastAptDownloadHash=hash(text); aptDirty=false if still matches
+  UI->>M: noteDownload → lastAptDownloadHash=hash(text); aptDirty=false if still matches
 ```
 
-**New document:** if dirty, confirm; clear airport to defaults (`registration=N`, pattern size 1, climbs 3000/5000 matching Go defaults), clear aircraft, reset map to world view or last center.
+**Clean-content hash baseline:** at bootstrap (empty document), successful Open (opened side), and New (both sides), seed `last*DownloadHash` from download-format text so never-downloaded clean state survives undo/recompute. Failed open does not rewrite hashes. Blob download still overwrites via `noteDownload`.
+
+**New document:** if dirty, confirm; clear airport to defaults (`registration=N`, pattern size 1, climbs 3000/5000 matching Go defaults), clear aircraft, reset map to world view or last center; seed empty clean hashes; clear undo history.
 
 **Unload warning:** `beforeunload` when any dirty flag set (PE only).
 
@@ -974,6 +982,7 @@ internal/web/static/js/openfsd/airport-editor/
   ui-toolbar.js     # DOM
   shortcuts.js
   download.js       # Blob helpers
+  history.js        # pure undo/redo stack + clean-hash seed helpers
   main.js           # bootstrap; may read data-test-tiles=blank for e2e
 ```
 
@@ -1293,10 +1302,10 @@ bash scripts/check-webjs.sh
 
 1. **Should Supervisors access the editor?** **Resolved for v1:** Admin-only (product default; Supervisor access deferred).
 2. **Esri imagery ToS** for each deployer's traffic profile — keep optional and documented.
-3. **Undo stack?** **Deferred v1.1** — not a v1 ship requirement.
+3. **Undo stack?** **Shipped** — keyboard-only snapshot history; see `docs/design/airport-editor-undo-redo.md`. (Earlier “deferred v1.1” superseded.)
 4. **~~Playwright CI~~** — **cancelled.** No browser automation suite.
 
-Resolved by this rev: WIP download allowed (yes); fixture path = `pkg/twrfiles/testdata`; dirty = hash + Mark clean; Format contract frozen; API authz = 403 JSON; JS import path relative from `webjs/`.
+Resolved by this rev: WIP download allowed (yes); fixture path = `pkg/twrfiles/testdata`; dirty = last clean-content hash (seeded at bootstrap/Open/New; download overwrites via `noteDownload`) + Mark clean; Format contract frozen; API authz = 403 JSON; JS import path relative from `webjs/`.
 
 ---
 
@@ -1323,7 +1332,7 @@ Resolved by this rev: WIP download allowed (yes); fixture path = `pkg/twrfiles/t
 | 17 | **No auto-push to live sweatbox v1** | Avoid surprising production traffic injection |
 | 18 | **API Admin check = 403 JSON inline** (sweatbox API style) | Never redirect API clients |
 | 19 | **Normative Format contract + golden files** | Dual-language byte parity |
-| 20 | **Dirty via download hash + Mark clean** | Blob has no reliable completion event |
+| 20 | **Dirty via last clean-content hash + Mark clean** | Blob has no reliable completion event; field names `last*DownloadHash` mean last clean content (seeded at bootstrap/Open/New; download overwrites via `noteDownload`) |
 | 21 | **Raw tab = preview + Apply** (not live two-way) | Avoid dual-write races |
 | 22 | **No Playwright** — Go PE + pure Node tests + manual map smoke | House boring-web; no browser automation suite in repo |
 | 23 | **`pkg/` not `internal/` for twrfiles** | protocol symmetry + cmd reuse |
