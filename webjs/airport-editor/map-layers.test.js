@@ -361,21 +361,52 @@ test('stopLeafletClickBubble sets originalEvent._stopped (Leaflet map bubble gua
   stopLeafletClickBubble({}, null);
 });
 
-test('buildVertexHandleStyle: circleMarker centered on lat/lng (no iconAnchor)', () => {
+test('buildVertexHandleStyle: kind colors match surface palette', () => {
   assert.equal(VERTEX_HANDLE_RADIUS, 5);
   assert.equal(VERTEX_HANDLE_PX, VERTEX_HANDLE_RADIUS * 2);
-  const style = buildVertexHandleStyle(2, { selected: false, dragging: false });
-  assert.equal(style.radius, VERTEX_HANDLE_RADIUS);
-  assert.equal(style.interactive, false);
-  assert.equal(style.bubblingMouseEvents, false);
-  assert.equal(style.fillOpacity, 1);
-  assert.match(style.className, /apted-vertex-handle/);
-  assert.ok(!style.className.includes('is-selected'));
-  const sel = buildVertexHandleStyle(0, { selected: true, dragging: false });
+
+  const taxi = buildVertexHandleStyle(0, { kind: SurfaceTaxiway });
+  const rwy = buildVertexHandleStyle(0, { kind: SurfaceRunway });
+  const hold = buildVertexHandleStyle(0, { kind: SurfaceHold });
+  const park = buildVertexHandleStyle(0, { kind: SurfaceParking });
+
+  // Differentiated strokes (same palette as surfaceStyle unselected).
+  assert.equal(taxi.color, surfaceStyle(SurfaceTaxiway, false).color);
+  assert.equal(rwy.color, surfaceStyle(SurfaceRunway, false).color);
+  assert.equal(hold.color, surfaceStyle(SurfaceHold, false).color);
+  assert.equal(park.color, surfaceStyle(SurfaceParking, false).color);
+  assert.notEqual(taxi.color, rwy.color);
+  assert.notEqual(taxi.color, hold.color);
+  assert.notEqual(hold.color, park.color);
+
+  // Taxi/rwy/hold: white fill disc; parking: green fill like parking markers.
+  assert.equal(taxi.fillColor, '#ffffff');
+  assert.equal(rwy.fillColor, '#ffffff');
+  assert.equal(hold.fillColor, '#ffffff');
+  assert.equal(park.fillColor, surfaceStyle(SurfaceParking, false).fillColor);
+
+  assert.equal(taxi.interactive, false);
+  assert.match(taxi.className, /apted-vertex-taxi/);
+  assert.match(rwy.className, /apted-vertex-rwy/);
+  assert.match(hold.className, /apted-vertex-hold/);
+  assert.match(park.className, /apted-vertex-park/);
+
+  const sel = buildVertexHandleStyle(0, {
+    kind: SurfaceTaxiway,
+    selected: true,
+  });
   assert.match(sel.className, /is-selected/);
-  const drag = buildVertexHandleStyle(0, { selected: true, dragging: true });
+  assert.equal(sel.color, taxi.color); // selection keeps kind hue
+  assert.ok(sel.radius > taxi.radius);
+
+  const drag = buildVertexHandleStyle(0, {
+    kind: SurfaceHold,
+    selected: true,
+    dragging: true,
+  });
   assert.match(drag.className, /is-dragging/);
-  // Legacy divIcon helpers still export centered anchors if ever reused.
+  assert.equal(drag.color, hold.color);
+
   const icon = buildVertexHandleIconOptions();
   assert.equal(icon.iconAnchor[0] * 2, icon.iconSize[0]);
   assert.equal(buildVertexHandleOptions(2).interactive, false);

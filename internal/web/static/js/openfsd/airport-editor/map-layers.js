@@ -236,31 +236,48 @@ export const VERTEX_PANE = 'aptedVertex';
 
 /**
  * Pure: Leaflet circleMarker options for a vertex node (always lat/lng-centered).
+ * Colors follow surfaceStyle kind palette so taxi / rwy / hold / park stay distinct.
  * Drag is NOT Marker.draggable — OverlayController uses capture-phase map hit-test.
+ *
  * @param {number} vertexIndex
- * @param {{ selected?: boolean, dragging?: boolean }} [state]
+ * @param {{ kind?: string, selected?: boolean, dragging?: boolean }} [state]
  * @returns {object}
  */
 export function buildVertexHandleStyle(vertexIndex, state = {}) {
   const selected = !!state.selected;
   const dragging = !!state.dragging;
+  const kind = state.kind || SurfaceTaxiway;
+  // Kind colors always (not selection-blue) so types stay readable when all nodes show.
+  const base = surfaceStyle(kind, false);
+  const stroke = base.color;
+  // Polylines: white disc + kind stroke. Parking: green fill like parking markers.
+  let fillColor = '#ffffff';
+  let fillOpacity = 1;
+  if (kind === SurfaceParking) {
+    fillColor = base.fillColor || '#40916c';
+    fillOpacity = 0.95;
+  }
+  if (dragging) {
+    // Slightly emphasize without losing kind hue.
+    fillColor = kind === SurfaceParking ? '#7dcea0' : '#ffffff';
+  }
   return {
-    radius: VERTEX_HANDLE_RADIUS,
+    radius: VERTEX_HANDLE_RADIUS + (selected ? 1 : 0) + (dragging ? 1 : 0),
     // Interactive false: pointer events pass through to map capture hit-test.
     interactive: false,
     bubblingMouseEvents: false,
-    weight: dragging ? 2 : 1.5,
+    weight: dragging ? 2.5 : selected ? 2 : 1.5,
     opacity: 1,
-    fillOpacity: 1,
-    color: dragging ? '#1a3a60' : selected ? '#2a5a90' : '#4a7ab0',
-    fillColor: dragging ? '#d0e4f8' : selected ? '#e8f0fa' : '#ffffff',
+    fillOpacity,
+    color: stroke,
+    fillColor,
     className:
       'apted-vertex-handle' +
+      ` apted-vertex-${kindShort(kind)}` +
       (selected ? ' is-selected' : '') +
       (dragging ? ' is-dragging' : ''),
-    // title is not a path option; kept only for call-site docs
-    // (vertexIndex used so the API stays stable for tests)
     _vertexIndex: vertexIndex,
+    _kind: kind,
   };
 }
 
@@ -1114,9 +1131,12 @@ export class OverlayController {
       mapDraggingWasEnabled,
     };
 
-    // Visual feedback on the centered circleMarker.
+    // Visual feedback on the centered circleMarker (keep kind color).
     if (handle && typeof handle.setStyle === 'function') {
-      handle.setStyle(buildVertexHandleStyle(vertexIndex, { selected: true, dragging: true }));
+      const kind = this._airport?.surfaces?.[surfaceIndex]?.kind;
+      handle.setStyle(
+        buildVertexHandleStyle(vertexIndex, { kind, selected: true, dragging: true }),
+      );
     }
 
     // Do not snap vertex to cursor on mousedown — only move once the pointer moves.
@@ -1152,7 +1172,14 @@ export class OverlayController {
       if (h && typeof h.setStyle === 'function') {
         const stillSelected =
           this._selection?.type === 'surface' && this._selection.index === si;
-        h.setStyle(buildVertexHandleStyle(vi, { selected: stillSelected, dragging: false }));
+        const kind = this._airport?.surfaces?.[si]?.kind;
+        h.setStyle(
+          buildVertexHandleStyle(vi, {
+            kind,
+            selected: stillSelected,
+            dragging: false,
+          }),
+        );
       }
 
       const ll = this._latLngFromPointerEvent(ev) || (h && h.getLatLng && h.getLatLng());
@@ -1194,6 +1221,7 @@ export class OverlayController {
     const pts = surface.points || [];
     const selected =
       this._selection?.type === 'surface' && this._selection.index === surfaceIndex;
+    const kind = surface.kind;
 
     for (let vi = 0; vi < pts.length; vi++) {
       const p = pts[vi];
@@ -1201,7 +1229,7 @@ export class OverlayController {
       // circleMarker: geographic center === visual center (no iconAnchor).
       const handle = L.circleMarker(
         [p.lat, p.lon],
-        buildVertexHandleStyle(vi, { selected, dragging: false }),
+        buildVertexHandleStyle(vi, { kind, selected, dragging: false }),
       );
       handle.addTo(this.vertexGroup);
       this._handleByKey.set(`${surfaceIndex}:${vi}`, handle);
