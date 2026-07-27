@@ -789,6 +789,15 @@ export class OverlayController {
   }
 
   /**
+   * True while a vertex pointer-drag is active (including the select that starts it).
+   * Callers use this to avoid layout-shifting status flashes mid-grab.
+   * @returns {boolean}
+   */
+  isVertexDragging() {
+    return !!(this._vertexDrag || this._dragging);
+  }
+
+  /**
    * Draw preview polyline for in-progress draw session.
    * @param {{ lat: number, lon: number }[]} points
    * @param {string} [kind]

@@ -41,7 +41,8 @@
     <div class="apted-flash apted-flash-err" role="alert">{{ .FlashError }}</div>
     {{ end }}
 
-    <p class="apted-flash" data-js="status" hidden role="status"></p>
+    {{/* Always in flow (is-empty) so status text never reflows the map. */}}
+    <p class="apted-flash is-empty" data-js="status" role="status" aria-hidden="true"></p>
 
     <div class="apted-toolbar" role="toolbar" aria-label="Editor tools">
         <label class="btn btn-sm btn-outline-dark apted-file-btn">
@@ -212,7 +213,7 @@
   Static assets are go:embed into the openfsd binary — restart the process after
   JS/CSS changes. Query string busts browser cache when the binary is rebuilt.
 */}}
-<script src="/static/js/leaflet.js?v=vertex-edit-5"></script>
-<script src="/static/js/openfsd/leaflet.rotatedmarker.js?v=vertex-edit-5"></script>
-<script type="module" src="/static/js/openfsd/airport-editor/main.js?v=vertex-edit-5"></script>
+<script src="/static/js/leaflet.js?v=vertex-edit-6"></script>
+<script src="/static/js/openfsd/leaflet.rotatedmarker.js?v=vertex-edit-6"></script>
+<script type="module" src="/static/js/openfsd/airport-editor/main.js?v=vertex-edit-6"></script>
 {{ end }}

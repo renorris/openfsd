@@ -111,7 +111,11 @@ function main() {
       if (doc.mode !== MODE_SELECT) return;
       doc.selection = normalizeSelection(sel);
       refresh();
-      syncSurfaceSelectTip();
+      // Vertex grab auto-selects the surface — do not flash a status banner
+      // (unhiding the flash strip reflows the page and scrolls the map).
+      if (!overlays.isVertexDragging()) {
+        syncSurfaceSelectTip();
+      }
     },
     onVertexDrag(si, vi, lat, lon) {
       setVertex(doc, si, vi, { lat, lon });
@@ -756,29 +760,31 @@ function main() {
   function showStatus(msg, isError) {
     const el = root.querySelector('[data-js="status"]');
     if (!el) return;
-    el.hidden = !msg;
+    // Keep the strip in layout always (never [hidden]) so messages do not
+    // expand the page and shove the map / scroll the viewport.
+    el.hidden = false;
     el.textContent = msg || '';
-    el.classList.toggle('apted-flash-err', !!isError);
+    el.classList.toggle('is-empty', !msg);
+    el.classList.toggle('apted-flash-err', !!isError && !!msg);
     el.classList.toggle('apted-flash-ok', !isError && !!msg);
-    el.setAttribute('role', isError ? 'alert' : 'status');
+    el.setAttribute('role', isError && msg ? 'alert' : 'status');
+    el.setAttribute('aria-hidden', msg ? 'false' : 'true');
   }
 
-  /** Status banner for surface select in Select mode (not mid-drag). */
+  /**
+   * Select tip lives in a reserved status strip (no layout jump). We no longer
+   * push a banner on every surface select — mode tip covers "drag vertices".
+   * Clear only our old tip text if present so deselect stays quiet.
+   */
   const SURFACE_SELECT_TIP =
     'Drag any white vertex to reshape. Click empty map to deselect.';
 
-  /**
-   * Show tip when selection is a surface; clear it when selection leaves a
-   * surface (empty-map deselect, aircraft select). Only on selection change.
-   */
   function syncSurfaceSelectTip() {
-    if (doc.mode === MODE_SELECT && doc.selection?.type === 'surface') {
-      showStatus(SURFACE_SELECT_TIP, false);
-      return;
-    }
-    // Drop only our tip — do not wipe errors or other status flashes.
     const el = root.querySelector('[data-js="status"]');
-    if (el && el.textContent === SURFACE_SELECT_TIP) {
+    if (!el) return;
+    // Quiet: do not inject tip on select (was causing scroll-on-grab).
+    // Clear stale tip if it is still showing from an older build/session.
+    if (el.textContent === SURFACE_SELECT_TIP) {
       showStatus('', false);
     }
   }

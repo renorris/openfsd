@@ -179,6 +179,25 @@
   border-radius: 2px;
 }
 
+/*
+ * Live editor status strip: always occupies one line of vertical space so
+ * show/hide never reflows the toolbar/map (vertex grab was scrolling the page).
+ * Empty state is invisible but still in normal flow.
+ */
+.apted-flash[data-js="status"] {
+  min-height: calc(1.25em + 0.7rem + 2px);
+  box-sizing: border-box;
+  margin: 0.25rem 0 0;
+  /* Avoid browser scrolling the flash into view on updates */
+  overflow-anchor: none;
+}
+.apted-flash[data-js="status"].is-empty {
+  visibility: hidden;
+  border-color: transparent;
+  background: transparent;
+  color: transparent;
+}
+
 .apted-flash-ok {
   background: #d1e7dd;
   color: var(--apted-ok);
