@@ -612,6 +612,7 @@ onVertexDragEnd(si, vi, lat, lon) {
 Status tip (PR2):
 
 - After successful surface select (map or rail) in Select mode, `showStatus('Drag white handles to move vertices. Click empty map to deselect.', false)`.
+- When selection leaves a surface (empty-map deselect or non-surface select), clear that tip only (do not wipe unrelated status banners).
 - Toolbar tip for Select mode remains: “Select mode — click features; drag vertices.”
 - Do **not** thrash status on every drag tick; tip only when selection becomes a surface.
 

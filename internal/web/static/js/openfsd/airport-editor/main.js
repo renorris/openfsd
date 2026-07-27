@@ -111,7 +111,7 @@ function main() {
       if (doc.mode !== MODE_SELECT) return;
       doc.selection = normalizeSelection(sel);
       refresh();
-      showSurfaceSelectTip();
+      syncSurfaceSelectTip();
     },
     onVertexDrag(si, vi, lat, lon) {
       setVertex(doc, si, vi, { lat, lon });
@@ -139,6 +139,7 @@ function main() {
         if (doc.selection) {
           doc.selection = null;
           refresh();
+          syncSurfaceSelectTip();
         }
         return;
       }
@@ -188,7 +189,7 @@ function main() {
         overlays.clearDrawPreview();
       }
       refresh();
-      showSurfaceSelectTip();
+      syncSurfaceSelectTip();
     },
     onAirportPatch(patch) {
       updateAirportHeaders(doc, patch);
@@ -760,17 +761,24 @@ function main() {
     el.setAttribute('role', isError ? 'alert' : 'status');
   }
 
+  /** Status banner for surface select in Select mode (not mid-drag). */
+  const SURFACE_SELECT_TIP =
+    'Drag white handles to move vertices. Click empty map to deselect.';
+
   /**
-   * One-line tip when a surface is selected in Select mode (map or rail).
-   * Only on selection change — never mid-drag.
+   * Show tip when selection is a surface; clear it when selection leaves a
+   * surface (empty-map deselect, aircraft select). Only on selection change.
    */
-  function showSurfaceSelectTip() {
-    if (doc.mode !== MODE_SELECT) return;
-    if (doc.selection?.type !== 'surface') return;
-    showStatus(
-      'Drag white handles to move vertices. Click empty map to deselect.',
-      false,
-    );
+  function syncSurfaceSelectTip() {
+    if (doc.mode === MODE_SELECT && doc.selection?.type === 'surface') {
+      showStatus(SURFACE_SELECT_TIP, false);
+      return;
+    }
+    // Drop only our tip — do not wipe errors or other status flashes.
+    const el = root.querySelector('[data-js="status"]');
+    if (el && el.textContent === SURFACE_SELECT_TIP) {
+      showStatus('', false);
+    }
   }
 
   // Silence unused kind imports for tree-shaking edge cases
