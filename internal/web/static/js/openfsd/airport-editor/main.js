@@ -763,7 +763,7 @@ function main() {
 
   /** Status banner for surface select in Select mode (not mid-drag). */
   const SURFACE_SELECT_TIP =
-    'Drag white handles to move vertices. Click empty map to deselect.';
+    'Selected — drag the white dots to move vertices. Click empty map to deselect.';
 
   /**
    * Show tip when selection is a surface; clear it when selection leaves a

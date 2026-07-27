@@ -209,10 +209,17 @@ export const VERTEX_HANDLE_PX = 18;
  * Pixel radius for vertex grab hit-test (capture-phase, independent of icon DOM hits).
  * Slightly larger than the visible handle so corners are easy to grab.
  */
-export const VERTEX_HIT_PX = 16;
+export const VERTEX_HIT_PX = 20;
 
 /** Duration after dragend during which map clicks are ignored. */
 export const MAP_CLICK_SUPPRESS_MS = 250;
+
+/**
+ * After a feature (surface/aircraft) click, ignore map clicks for this long.
+ * Leaflet re-fires the same DOM click onto the map unless originalEvent._stopped
+ * is set; we do both _stopped and this time gate.
+ */
+export const FEATURE_CLICK_SUPPRESS_MS = 100;
 
 /**
  * Leaflet pane name for vertex handle visuals.
@@ -356,7 +363,39 @@ export function shouldSuppressMapClick(state, now = Date.now()) {
   ) {
     return true;
   }
+  if (
+    state.featureClickAt > 0 &&
+    now - state.featureClickAt < (state.featureSuppressMs ?? FEATURE_CLICK_SUPPRESS_MS)
+  ) {
+    return true;
+  }
   return false;
+}
+
+/**
+ * Stop a Leaflet layer mouse event from also firing on the map.
+ *
+ * Leaflet walks targets and continues while !originalEvent._stopped. Calling
+ * native stopPropagation() alone does NOT set _stopped on modern browsers, so
+ * map click still runs (and was clearing selection immediately after select).
+ *
+ * @param {*} ev Leaflet event with optional originalEvent
+ * @param {typeof globalThis.L} [L]
+ */
+export function stopLeafletClickBubble(ev, L) {
+  if (!ev) return;
+  const dom = ev.originalEvent;
+  if (dom) {
+    // Leaflet propagation flag (required — see _fireDOMEvent in leaflet.js).
+    dom._stopped = true;
+    if (L && L.DomEvent) {
+      L.DomEvent.stopPropagation(dom);
+      L.DomEvent.preventDefault(dom);
+    } else {
+      if (typeof dom.stopPropagation === 'function') dom.stopPropagation();
+      if (typeof dom.preventDefault === 'function') dom.preventDefault();
+    }
+  }
 }
 
 /**
@@ -447,11 +486,17 @@ export function createMap(L, mapEl, opts = {}) {
   const zoom = opts.zoom ?? 2;
   const map = L.map(mapEl, {
     // Keep default attributionControl: true
+    // Box-zoom (shift-drag blue rectangle) confuses editors; pan/zoom still work.
+    boxZoom: false,
   }).setView(center, zoom);
 
   // Cosmetic only — must not remove attribution control or empty tile credits.
   if (map.attributionControl && typeof map.attributionControl.setPrefix === 'function') {
     map.attributionControl.setPrefix('');
+  }
+  // Belt-and-suspenders if boxZoom was already constructed.
+  if (map.boxZoom && typeof map.boxZoom.disable === 'function') {
+    map.boxZoom.disable();
   }
 
   const baseLayers = createBaseLayers(L, { blank: !!opts.blankTiles });
@@ -569,6 +614,8 @@ export class OverlayController {
     this._dragging = false;
     /** @type {number} ms timestamp of last dragend (0 = never / reset on dragstart) */
     this._dragEndedAt = 0;
+    /** @type {number} ms timestamp of last feature click (blocks map deselect) */
+    this._featureClickAt = 0;
     /**
      * Active manual vertex drag.
      * @type {{ surfaceIndex: number, vertexIndex: number, handle: *|null, mapDraggingWasEnabled: boolean }|null}
@@ -611,6 +658,8 @@ export class OverlayController {
               dragging: this._dragging,
               dragEndedAt: this._dragEndedAt,
               suppressMs: MAP_CLICK_SUPPRESS_MS,
+              featureClickAt: this._featureClickAt,
+              featureSuppressMs: FEATURE_CLICK_SUPPRESS_MS,
             },
             Date.now(),
           )
@@ -750,6 +799,11 @@ export class OverlayController {
     const key = `surface:${index}`;
     let layer;
 
+    // bubblingMouseEvents:false — do not re-fire click on the map (would clear selection).
+    const pathOpts = {
+      bubblingMouseEvents: false,
+    };
+
     if (surface.kind === SurfaceParking || (surface.kind === SurfaceHold && pts.length === 1)) {
       const p = pts[0];
       layer = L.circleMarker([p.lat, p.lon], {
@@ -759,6 +813,7 @@ export class OverlayController {
         opacity: style.opacity,
         fillColor: style.fillColor || style.color,
         fillOpacity: style.fillOpacity ?? 0.85,
+        ...pathOpts,
       });
     } else {
       // Multi-point surfaces (runway/taxi/hold polyline). Hold dash is in style.
@@ -768,12 +823,14 @@ export class OverlayController {
         weight: style.weight,
         opacity: style.opacity,
         dashArray: style.dashArray,
+        ...pathOpts,
       });
     }
 
     bindTextTooltip(layer, surfaceLabel(surface));
     layer.on('click', (ev) => {
-      if (ev.originalEvent) L.DomEvent.stopPropagation(ev.originalEvent);
+      stopLeafletClickBubble(ev, L);
+      this._featureClickAt = Date.now();
       this.onSelect({ type: 'surface', index });
     });
     layer.addTo(this.group);
@@ -1079,7 +1136,8 @@ export class OverlayController {
     const tip = `${ac.callsign || '?'} · ${ac.type || ''} · hdg ${hdg}`;
     bindTextTooltip(marker, tip);
     marker.on('click', (ev) => {
-      if (ev.originalEvent) L.DomEvent.stopPropagation(ev.originalEvent);
+      stopLeafletClickBubble(ev, L);
+      this._featureClickAt = Date.now();
       this.onSelect({ type: 'aircraft', index });
     });
     if (this.editable) {

@@ -26,13 +26,15 @@ import {
   VERTEX_HIT_PX,
   VERTEX_PANE,
   MAP_CLICK_SUPPRESS_MS,
+  FEATURE_CLICK_SUPPRESS_MS,
   buildVertexHandleOptions,
   buildVertexHandleIconOptions,
   findNearestVertexPx,
+  shouldSuppressMapClick,
+  stopLeafletClickBubble,
   pointsToLatLngs,
   applySurfaceLatLngs,
   patchVertexPoints,
-  shouldSuppressMapClick,
 } from '../../internal/web/static/js/openfsd/airport-editor/map-layers.js';
 import {
   createEmptyDocument,
@@ -306,6 +308,54 @@ test('shouldSuppressMapClick matrix (K5: suppress ≠ block render)', () => {
     shouldSuppressMapClick({ dragging: false, dragEndedAt: 0, suppressMs: ms }, 5000),
     false,
   );
+
+  // Feature click must suppress the trailing map click (selection stick fix)
+  assert.equal(FEATURE_CLICK_SUPPRESS_MS, 100);
+  assert.equal(
+    shouldSuppressMapClick(
+      {
+        dragging: false,
+        dragEndedAt: 0,
+        suppressMs: ms,
+        featureClickAt: 2000,
+        featureSuppressMs: FEATURE_CLICK_SUPPRESS_MS,
+      },
+      2000 + 50,
+    ),
+    true,
+  );
+  assert.equal(
+    shouldSuppressMapClick(
+      {
+        dragging: false,
+        dragEndedAt: 0,
+        suppressMs: ms,
+        featureClickAt: 2000,
+        featureSuppressMs: FEATURE_CLICK_SUPPRESS_MS,
+      },
+      2000 + FEATURE_CLICK_SUPPRESS_MS,
+    ),
+    false,
+  );
+});
+
+test('stopLeafletClickBubble sets originalEvent._stopped (Leaflet map bubble guard)', () => {
+  const dom = {
+    stopPropagation() {
+      this.stoppedNative = true;
+    },
+    preventDefault() {
+      this.prevented = true;
+    },
+  };
+  const ev = { originalEvent: dom };
+  stopLeafletClickBubble(ev, null);
+  assert.equal(dom._stopped, true);
+  assert.equal(dom.stoppedNative, true);
+  assert.equal(dom.prevented, true);
+  // no throw on empty
+  stopLeafletClickBubble(null, null);
+  stopLeafletClickBubble({}, null);
 });
 
 test('buildVertexHandleIconOptions: iconSize/iconAnchor symmetry', () => {
@@ -334,7 +384,7 @@ test('buildVertexHandleOptions: visual-only (capture-phase owns drag)', () => {
 });
 
 test('findNearestVertexPx: hit-test matrix (RCA capture-phase grab)', () => {
-  assert.ok(VERTEX_HIT_PX >= 12);
+  assert.ok(VERTEX_HIT_PX >= 16);
   const verts = [
     { x: 100, y: 100 },
     { x: 200, y: 100 },
