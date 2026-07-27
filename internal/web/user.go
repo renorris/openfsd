@@ -23,8 +23,10 @@ func (s *Server) getUserByCID(c *gin.Context) {
 		return
 	}
 
-	claims := getJwtContext(c)
-
+	claims, ok := requireJwtContext(c)
+	if !ok {
+		return
+	}
 	if reqBody.CID != claims.CID && !canAccessUserEditor(claims.NetworkRating) {
 		writeAPIV1Response(c, http.StatusForbidden, &genericAPIV1Forbidden)
 		return
@@ -66,7 +68,10 @@ func (s *Server) getUserByCID(c *gin.Context) {
 // Instructor1+: may set network_rating and pilot_rating up to actor ceilings (any target).
 // Supervisor+: may also set name/password when target network rating ≤ actor.
 func (s *Server) updateUser(c *gin.Context) {
-	claims := getJwtContext(c)
+	claims, ok := requireJwtContext(c)
+	if !ok {
+		return
+	}
 	if !canAdjustUserRatings(claims.NetworkRating) {
 		writeAPIV1Response(c, http.StatusForbidden, &genericAPIV1Forbidden)
 		return
@@ -185,7 +190,10 @@ func (s *Server) createUser(c *gin.Context) {
 		return
 	}
 
-	claims := getJwtContext(c)
+	claims, ok := requireJwtContext(c)
+	if !ok {
+		return
+	}
 	// Create is full mutation: Supervisor+ only.
 	if !canFullMutateUsers(claims.NetworkRating) ||
 		reqBody.NetworkRating > int(claims.NetworkRating) {

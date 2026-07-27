@@ -36,7 +36,10 @@ func (s *Server) handleFrontendSweatbox(c *gin.Context) {
 }
 
 func (s *Server) newSweatboxPage(c *gin.Context) sweatboxPage {
-	claims := getJwtContext(c)
+	claims, ok := requireJwtContext(c)
+	if !ok {
+		return sweatboxPage{}
+	}
 	return sweatboxPage{
 		basePage: basePage{
 			User:      pageUserFromClaims(claims),

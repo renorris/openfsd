@@ -358,10 +358,13 @@ func TestTrySend_ChannelPath(t *testing.T) {
 
 func TestTrySend_OutboundPath(t *testing.T) {
 	var wrote []byte
-	o := NewCoalesceOutbound(func(p []byte) error {
+	o, err := NewCoalesceOutbound(func(p []byte) error {
 		wrote = append(wrote, p...)
 		return nil
 	}, func() error { return nil }, CoalesceOutboundConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	s := New(context.Background(), nil, nil, LoginData{Callsign: "T2"})
 	s.SetOutbound(o)
 	if !s.TrySend("hi\r\n") {
@@ -378,10 +381,13 @@ func TestTrySend_OutboundPath(t *testing.T) {
 
 func TestDisconnect_CancelsAndClosesOutbound(t *testing.T) {
 	closed := false
-	o := NewCoalesceOutbound(func(p []byte) error { return nil }, func() error {
+	o, err := NewCoalesceOutbound(func(p []byte) error { return nil }, func() error {
 		closed = true
 		return nil
 	}, CoalesceOutboundConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	s := New(context.Background(), nil, nil, LoginData{Callsign: "T3"})
 	s.SetOutbound(o)
 	s.Disconnect()

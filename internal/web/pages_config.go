@@ -13,7 +13,10 @@ import (
 )
 
 func (s *Server) newConfigEditorPage(c *gin.Context) configEditorPage {
-	claims := getJwtContext(c)
+	claims, ok := requireJwtContext(c)
+	if !ok {
+		return configEditorPage{}
+	}
 	page := configEditorPage{
 		basePage: basePage{
 			User:      pageUserFromClaims(claims),
@@ -58,7 +61,10 @@ func (s *Server) handleFrontendConfigUpdate(c *gin.Context) {
 		return
 	}
 
-	claims := getJwtContext(c)
+	claims, ok := requireJwtContext(c)
+	if !ok {
+		return
+	}
 	if claims.NetworkRating < protocol.NetworkRatingAdministator {
 		c.Redirect(http.StatusSeeOther, "/dashboard")
 		return
@@ -100,7 +106,10 @@ func (s *Server) handleFrontendConfigResetSecret(c *gin.Context) {
 		return
 	}
 
-	claims := getJwtContext(c)
+	claims, ok := requireJwtContext(c)
+	if !ok {
+		return
+	}
 	if claims.NetworkRating < protocol.NetworkRatingAdministator {
 		c.Redirect(http.StatusSeeOther, "/dashboard")
 		return
@@ -142,7 +151,10 @@ func (s *Server) handleFrontendConfigCreateToken(c *gin.Context) {
 		return
 	}
 
-	claims := getJwtContext(c)
+	claims, ok := requireJwtContext(c)
+	if !ok {
+		return
+	}
 	if claims.NetworkRating < protocol.NetworkRatingAdministator {
 		c.Redirect(http.StatusSeeOther, "/dashboard")
 		return

@@ -48,13 +48,16 @@ func BenchmarkFanoutEnqueue_Serial(b *testing.B) {
 		for i := 0; i < recipients; i++ {
 			ctx, cancel := context.WithCancel(context.Background())
 			_ = cancel
-			o := NewCoalesceOutbound(func(p []byte) error {
+			o, err := NewCoalesceOutbound(func(p []byte) error {
 				writes.Add(1)
 				return nil
 			}, nil, CoalesceOutboundConfig{
 				CoalesceBytes: 8 * 1024,
 				CoalesceIdle:  time.Millisecond,
 			})
+			if err != nil {
+				b.Fatal(err)
+			}
 			s := New(ctx, nil, nil, LoginData{Callsign: "P"})
 			s.SetOutbound(o)
 			peers[i] = s
@@ -98,10 +101,13 @@ func BenchmarkSendPosition_ParallelOnePeer(b *testing.B) {
 	b.Run("coalesce", func(b *testing.B) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		o := NewCoalesceOutbound(func(p []byte) error { return nil }, nil, CoalesceOutboundConfig{
+		o, err := NewCoalesceOutbound(func(p []byte) error { return nil }, nil, CoalesceOutboundConfig{
 			CoalesceBytes: 8 * 1024,
 			CoalesceIdle:  time.Millisecond,
 		})
+		if err != nil {
+			b.Fatal(err)
+		}
 		s := New(ctx, nil, nil, LoginData{Callsign: "PEER"})
 		s.SetOutbound(o)
 		b.ReportAllocs()

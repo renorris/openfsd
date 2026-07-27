@@ -3,6 +3,7 @@ package web
 import (
 	"database/sql"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -302,7 +303,10 @@ func (s *Server) requireSessionHTML(c *gin.Context) {
 // requireMinRatingHTML redirects to /dashboard when the session rating is too low.
 func (s *Server) requireMinRatingHTML(min protocol.NetworkRating) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		claims := getJwtContext(c)
+		claims, ok := requireJwtContext(c)
+		if !ok {
+			return
+		}
 		if claims.NetworkRating < min {
 			c.Redirect(http.StatusSeeOther, "/dashboard")
 			c.Abort()
@@ -318,15 +322,33 @@ func setJwtContext(c *gin.Context, claims *auth.CustomClaims) {
 	c.Set(jwtContextKey, claims)
 }
 
-func getJwtContext(c *gin.Context) (claims *auth.CustomClaims) {
+// getJwtContext returns session/bearer claims set by requireSessionHTML /
+// jwtBearerMiddleware. Returns nil if missing or wrong type (never panics).
+func getJwtContext(c *gin.Context) *auth.CustomClaims {
 	val, exists := c.Get(jwtContextKey)
 	if !exists {
-		panic("attempted to load non-existent jwt context")
+		return nil
 	}
+	claims, ok := val.(*auth.CustomClaims)
+	if !ok || claims == nil {
+		return nil
+	}
+	return claims
+}
 
-	claims = val.(*auth.CustomClaims)
-
-	return
+// requireJwtContext is the non-optional handler path: aborts with 500 and
+// returns false when claims are missing. HTML and JSON handlers both use it.
+func requireJwtContext(c *gin.Context) (*auth.CustomClaims, bool) {
+	claims := getJwtContext(c)
+	if claims == nil {
+		slog.Error("jwt context missing on authenticated handler path",
+			"path", c.Request.URL.Path,
+			"method", c.Request.Method,
+		)
+		c.AbortWithStatus(http.StatusInternalServerError)
+		return nil, false
+	}
+	return claims, true
 }
 
 func (s *Server) makeAccessRefreshTokens(user *db.User, rememberMe bool) (access string, refresh string, err error) {

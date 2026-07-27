@@ -14,7 +14,10 @@ import (
 const maxAPITokenTTL = 90 * 24 * time.Hour
 
 func (s *Server) handleCreateNewAPIToken(c *gin.Context) {
-	claims := getJwtContext(c)
+	claims, ok := requireJwtContext(c)
+	if !ok {
+		return
+	}
 	if claims.NetworkRating < protocol.NetworkRatingAdministator {
 		writeAPIV1Response(c, http.StatusForbidden, &genericAPIV1Forbidden)
 		return

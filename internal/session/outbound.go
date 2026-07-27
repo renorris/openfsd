@@ -1,9 +1,13 @@
 package session
 
 import (
+	"errors"
 	"sync"
 	"time"
 )
+
+// ErrNilWriteAsync is returned by NewCoalesceOutbound when writeAsync is nil.
+var ErrNilWriteAsync = errors.New("session: NewCoalesceOutbound nil writeAsync")
 
 // Outbound is an optional post-login transport sink used by the gnet FSD plane.
 // When set, Send / SendPosition route here instead of the channel + SenderWorker path.
@@ -95,9 +99,9 @@ type CoalesceOutboundConfig struct {
 
 // NewCoalesceOutbound builds an outbound sink. writeAsync must be non-nil.
 // closeFn may be nil.
-func NewCoalesceOutbound(writeAsync AsyncWriteFunc, closeFn func() error, cfg CoalesceOutboundConfig) *CoalesceOutbound {
+func NewCoalesceOutbound(writeAsync AsyncWriteFunc, closeFn func() error, cfg CoalesceOutboundConfig) (*CoalesceOutbound, error) {
 	if writeAsync == nil {
-		panic("session: NewCoalesceOutbound nil writeAsync")
+		return nil, ErrNilWriteAsync
 	}
 	if cfg.ReliableCap <= 0 {
 		cfg.ReliableCap = sendChanCap
@@ -118,7 +122,7 @@ func NewCoalesceOutbound(writeAsync AsyncWriteFunc, closeFn func() error, cfg Co
 		onEnqueue:  cfg.OnEnqueue,
 	}
 	o.wait = sync.NewCond(&o.mu)
-	return o
+	return o, nil
 }
 
 // Send enqueues a reliable packet, blocking if the reliable ring is full.

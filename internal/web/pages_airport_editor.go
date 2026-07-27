@@ -30,7 +30,10 @@ func (s *Server) handleFrontendAirportEditor(c *gin.Context) {
 }
 
 func (s *Server) newAirportEditorPage(c *gin.Context) airportEditorPage {
-	claims := getJwtContext(c)
+	claims, ok := requireJwtContext(c)
+	if !ok {
+		return airportEditorPage{}
+	}
 	return airportEditorPage{
 		basePage: basePage{
 			User:      pageUserFromClaims(claims),

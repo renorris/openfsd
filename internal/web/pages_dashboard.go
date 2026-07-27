@@ -14,7 +14,10 @@ import (
 // summary. Leaflet map polling is progressive enhancement only — if JS fails,
 // the HTML table/counts remain usable.
 func (s *Server) handleFrontendDashboard(c *gin.Context) {
-	claims := getJwtContext(c)
+	claims, ok := requireJwtContext(c)
+	if !ok {
+		return
+	}
 	page := dashboardPage{
 		basePage: basePage{
 			User:      pageUserFromClaims(claims),

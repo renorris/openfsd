@@ -15,7 +15,10 @@ import (
 )
 
 func (s *Server) newUserEditorPage(c *gin.Context) userEditorPage {
-	claims := getJwtContext(c)
+	claims, ok := requireJwtContext(c)
+	if !ok {
+		return userEditorPage{}
+	}
 	maxRating := int(claims.NetworkRating)
 	defaultRating := int(protocol.NetworkRatingObserver)
 	if defaultRating > maxRating {
@@ -274,7 +277,10 @@ func (s *Server) handleFrontendUserCreate(c *gin.Context) {
 		return
 	}
 
-	claims := getJwtContext(c)
+	claims, ok := requireJwtContext(c)
+	if !ok {
+		return
+	}
 	page := s.newUserEditorPage(c)
 	page.ShowCreate = true
 	// Ensure form is parsed before reading PostForm map for dir_* fields.
@@ -386,7 +392,10 @@ func (s *Server) handleFrontendUserUpdate(c *gin.Context) {
 		return
 	}
 
-	claims := getJwtContext(c)
+	claims, ok := requireJwtContext(c)
+	if !ok {
+		return
+	}
 	page := s.newUserEditorPage(c)
 	_ = c.Request.ParseForm()
 	dir := directoryValuesFromPost(c.Request.PostForm)

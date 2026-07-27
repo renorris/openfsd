@@ -10,7 +10,10 @@ import (
 )
 
 func (s *Server) handleKickActiveConnection(c *gin.Context) {
-	claims := getJwtContext(c)
+	claims, ok := requireJwtContext(c)
+	if !ok {
+		return
+	}
 	if claims.NetworkRating < protocol.NetworkRatingSupervisor {
 		writeAPIV1Response(c, http.StatusForbidden, &genericAPIV1Forbidden)
 		return

@@ -2,16 +2,26 @@ package session
 
 import (
 	"bytes"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 )
 
+func mustNewCoalesceOutbound(t *testing.T, writeAsync AsyncWriteFunc, closeFn func() error, cfg CoalesceOutboundConfig) *CoalesceOutbound {
+	t.Helper()
+	o, err := NewCoalesceOutbound(writeAsync, closeFn, cfg)
+	if err != nil {
+		t.Fatalf("NewCoalesceOutbound: %v", err)
+	}
+	return o
+}
+
 func TestCoalesceOutbound_SendFlushesReliable(t *testing.T) {
 	var mu sync.Mutex
 	var got [][]byte
-	o := NewCoalesceOutbound(func(p []byte) error {
+	o := mustNewCoalesceOutbound(t, func(p []byte) error {
 		mu.Lock()
 		got = append(got, append([]byte(nil), p...))
 		mu.Unlock()
@@ -31,7 +41,7 @@ func TestCoalesceOutbound_SendFlushesReliable(t *testing.T) {
 func TestCoalesceOutbound_SendPositionLatestWins(t *testing.T) {
 	var n atomic.Int32
 	var last atomic.Value
-	o := NewCoalesceOutbound(func(p []byte) error {
+	o := mustNewCoalesceOutbound(t, func(p []byte) error {
 		n.Add(1)
 		last.Store(append([]byte(nil), p...))
 		return nil
@@ -68,7 +78,7 @@ func TestCoalesceOutbound_SendPositionLatestWins(t *testing.T) {
 
 func TestCoalesceOutbound_CloseWakesSend(t *testing.T) {
 	blockWrite := make(chan struct{})
-	o := NewCoalesceOutbound(func(p []byte) error {
+	o := mustNewCoalesceOutbound(t, func(p []byte) error {
 		<-blockWrite
 		return nil
 	}, nil, CoalesceOutboundConfig{ReliableCap: 1})
@@ -102,7 +112,7 @@ func TestCoalesceOutbound_CloseWakesSend(t *testing.T) {
 func TestCoalesceOutbound_TrySend(t *testing.T) {
 	var mu sync.Mutex
 	var got []byte
-	o := NewCoalesceOutbound(func(p []byte) error {
+	o := mustNewCoalesceOutbound(t, func(p []byte) error {
 		mu.Lock()
 		got = append(got, p...)
 		mu.Unlock()
@@ -127,10 +137,20 @@ func TestCoalesceOutbound_TrySend(t *testing.T) {
 }
 
 func TestCoalesceOutbound_TrySendClosed(t *testing.T) {
-	o := NewCoalesceOutbound(func(p []byte) error { return nil }, nil, CoalesceOutboundConfig{})
+	o := mustNewCoalesceOutbound(t, func(p []byte) error { return nil }, nil, CoalesceOutboundConfig{})
 	_ = o.Close()
 	err := o.TrySend("x")
 	if err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestNewCoalesceOutbound_NilWriteAsync(t *testing.T) {
+	o, err := NewCoalesceOutbound(nil, nil, CoalesceOutboundConfig{})
+	if err == nil || o != nil {
+		t.Fatalf("want ErrNilWriteAsync, got o=%v err=%v", o, err)
+	}
+	if !errors.Is(err, ErrNilWriteAsync) {
+		t.Fatalf("err = %v, want ErrNilWriteAsync", err)
 	}
 }

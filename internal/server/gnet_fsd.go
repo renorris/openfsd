@@ -289,7 +289,7 @@ func (e *fsdEngine) finishLogin(c gnet.Conn, cc *fsdConnCtx, idPacket, addPacket
 
 	// Wire coalescing AsyncWrite outbound (no SenderWorker).
 	gc := c
-	out := session.NewCoalesceOutbound(
+	out, outErr := session.NewCoalesceOutbound(
 		func(p []byte) error {
 			return gc.AsyncWrite(p, nil)
 		},
@@ -298,6 +298,10 @@ func (e *fsdEngine) finishLogin(c gnet.Conn, cc *fsdConnCtx, idPacket, addPacket
 		},
 		session.CoalesceOutboundConfig{},
 	)
+	if outErr != nil {
+		// Defensive: writeAsync is non-nil above; should never fire in production.
+		return gnet.Close
+	}
 	client.SetOutbound(out)
 	cc.client = client
 

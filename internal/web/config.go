@@ -15,7 +15,10 @@ type KeyValuePair struct {
 }
 
 func (s *Server) handleGetConfig(c *gin.Context) {
-	claims := getJwtContext(c)
+	claims, ok := requireJwtContext(c)
+	if !ok {
+		return
+	}
 	if claims.NetworkRating < protocol.NetworkRatingAdministator {
 		writeAPIV1Response(c, http.StatusForbidden, &genericAPIV1Forbidden)
 		return
@@ -62,7 +65,10 @@ func (s *Server) handleGetConfig(c *gin.Context) {
 }
 
 func (s *Server) handleUpdateConfig(c *gin.Context) {
-	claims := getJwtContext(c)
+	claims, ok := requireJwtContext(c)
+	if !ok {
+		return
+	}
 	if claims.NetworkRating < protocol.NetworkRatingAdministator {
 		writeAPIV1Response(c, http.StatusForbidden, &genericAPIV1Forbidden)
 		return
@@ -97,7 +103,10 @@ func (s *Server) handleUpdateConfig(c *gin.Context) {
 }
 
 func (s *Server) handleResetSecretKey(c *gin.Context) {
-	claims := getJwtContext(c)
+	claims, ok := requireJwtContext(c)
+	if !ok {
+		return
+	}
 	if claims.NetworkRating < protocol.NetworkRatingAdministator {
 		writeAPIV1Response(c, http.StatusForbidden, &genericAPIV1Forbidden)
 		return
