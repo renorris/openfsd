@@ -24,6 +24,7 @@ Shipped. Summary of the tree as of closeout:
 | Web JS | Pure modules under `internal/web/static/js/openfsd/`; Node tests in `webjs/` + `scripts/check-webjs.sh` in CI |
 | Persistence | **None** durable (no disk/DB); Blob download + transient request bodies only |
 | Playwright | **Cancelled** — no browser automation suite |
+| Vertex drag | **Fixed** (live geometry + handles); see `docs/design/airport-editor-vertex-drag.md`. Vertex delete remains rail-only (Del/Backspace deletes the whole surface). |
 
 Design history below is retained. Stale “Format missing / JS tests none” rows are updated in Background.
 

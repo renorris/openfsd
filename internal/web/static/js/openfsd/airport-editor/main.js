@@ -111,6 +111,7 @@ function main() {
       if (doc.mode !== MODE_SELECT) return;
       doc.selection = normalizeSelection(sel);
       refresh();
+      showSurfaceSelectTip();
     },
     onVertexDrag(si, vi, lat, lon) {
       setVertex(doc, si, vi, { lat, lon });
@@ -187,6 +188,7 @@ function main() {
         overlays.clearDrawPreview();
       }
       refresh();
+      showSurfaceSelectTip();
     },
     onAirportPatch(patch) {
       updateAirportHeaders(doc, patch);
@@ -756,6 +758,19 @@ function main() {
     el.classList.toggle('apted-flash-err', !!isError);
     el.classList.toggle('apted-flash-ok', !isError && !!msg);
     el.setAttribute('role', isError ? 'alert' : 'status');
+  }
+
+  /**
+   * One-line tip when a surface is selected in Select mode (map or rail).
+   * Only on selection change — never mid-drag.
+   */
+  function showSurfaceSelectTip() {
+    if (doc.mode !== MODE_SELECT) return;
+    if (doc.selection?.type !== 'surface') return;
+    showStatus(
+      'Drag white handles to move vertices. Click empty map to deselect.',
+      false,
+    );
   }
 
   // Silence unused kind imports for tree-shaking edge cases
