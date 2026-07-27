@@ -1,7 +1,8 @@
 /**
- * Airport editor bootstrap — full edit loop (PR7).
+ * Airport editor bootstrap — full edit loop.
  *
  * Modes, draw, vertex/aircraft drag, Blob download, dirty hash,
+ * undo/redo history (keyboard: Mod+Z / Mod+Shift+Z / Mod+Y when !inField),
  * beforeunload, replace confirms, Raw Apply, shortcuts 1–6 / Del / Esc.
  *
  * Requires Leaflet (global L) + this module. Map authoring is JS-primary
@@ -61,6 +62,20 @@ import {
   isPolylineMode,
   modeToKind,
 } from './draw-tools.js';
+import {
+  createHistory,
+  DEFAULT_HISTORY_MAX_DEPTH,
+  captureSnapshot,
+  pushUndo,
+  recordBeforeMutation,
+  beginGesture,
+  commitGesture,
+  undo,
+  redo,
+  clearHistory,
+  seedCleanContentHashes,
+  syncDirtyAfterHistoryApply,
+} from './history.js';
 
 /**
  * @returns {void}
@@ -83,6 +98,9 @@ function main() {
 
   /** @type {import('./model.js').EditorDocument} */
   const doc = createEmptyDocument();
+  // K13: seed clean-content hashes at bootstrap so load→draw→undo stays clean.
+  seedCleanContentHashes(doc, 'both');
+  const history = createHistory({ maxDepth: DEFAULT_HISTORY_MAX_DEPTH });
   const draw = createDrawSession();
 
   const blankTiles = root.getAttribute('data-test-tiles') === 'blank';
@@ -118,19 +136,23 @@ function main() {
       }
     },
     onVertexDrag(si, vi, lat, lon) {
+      beginGesture(history, doc); // first mid-drag captures baseline
       setVertex(doc, si, vi, { lat, lon });
       // Intentionally no refresh — OverlayController live-updates the surface layer.
       // Hard invariant: never refresh/render while OverlayController._dragging.
     },
     onVertexDragEnd(si, vi, lat, lon) {
       setVertex(doc, si, vi, { lat, lon });
+      commitGesture(history, doc); // one undo step if content changed
       afterAptMutation({ fit: false }); // full refresh — _dragging already false
     },
     onAircraftDrag(index, lat, lon) {
+      beginGesture(history, doc);
       updateAircraft(doc, index, { lat, lon });
     },
     onAircraftDragEnd(index, lat, lon) {
       updateAircraft(doc, index, { lat, lon });
+      commitGesture(history, doc);
       afterAirMutation();
     },
     onMapClick(lat, lon, originalEvent) {
@@ -147,28 +169,34 @@ function main() {
         }
         return;
       }
+      // Draw path: snapshot before handleMapClick; push only on successful place.
+      const before = captureSnapshot(doc);
       const result = handleMapClick(doc, draw, { lat, lon });
       if (result.action === 'error') {
         showStatus(result.error || 'Draw error', true);
         return;
       }
       if (result.action === 'placed-park') {
+        pushUndo(history, before);
         afterAptMutation({ fit: false });
         rail.setTab('surfaces');
         showStatus(result.message || 'Parking added.', false);
         return;
       }
       if (result.action === 'placed-aircraft') {
+        pushUndo(history, before);
         afterAirMutation({ fit: false });
         rail.setTab('aircraft');
         showStatus(result.message || 'Aircraft placed.', false);
         return;
       }
       if (result.action === 'vertex' || result.action === 'need-more') {
+        // In-progress polyline: no history push.
         overlays.setDrawPreview(draw.points, modeToKind(doc.mode) || SurfaceTaxiway);
         showStatus(result.message || '', false);
         return;
       }
+      // cancel / none: no history push (ensureAirport shell side effect is pre-existing).
       void originalEvent;
     },
     onMapDblClick() {
@@ -196,10 +224,12 @@ function main() {
       syncSurfaceSelectTip();
     },
     onAirportPatch(patch) {
+      recordBeforeMutation(history, doc);
       updateAirportHeaders(doc, patch);
       afterAptMutation();
     },
     onSurfacePatch(index, patch) {
+      recordBeforeMutation(history, doc);
       // Rebuild runway name when ends change.
       const s = doc.airport?.surfaces?.[index];
       if (s && s.kind === SurfaceRunway) {
@@ -221,6 +251,7 @@ function main() {
       if (s && (s.points?.length ?? 0) > 1) {
         if (!window.confirm(`Delete surface ${label}?`)) return;
       }
+      recordBeforeMutation(history, doc);
       deleteSurface(doc, index);
       afterAptMutation();
       showStatus(`Deleted ${label}.`, false);
@@ -231,18 +262,23 @@ function main() {
       const a = s.points[Math.max(0, afterIndex)] || s.points[0];
       const b = s.points[Math.min(s.points.length - 1, afterIndex + 1)] || a;
       const mid = { lat: (a.lat + b.lat) / 2, lon: (a.lon + b.lon) / 2 };
+      recordBeforeMutation(history, doc);
       insertVertex(doc, index, afterIndex, mid);
       afterAptMutation();
     },
     onDeleteVertex(index, vertexIndex) {
+      // Capture before; push only on success so a failed delete does not clear redo.
+      const before = captureSnapshot(doc);
       const res = deleteVertex(doc, index, vertexIndex);
       if (!res.ok) {
         showStatus(res.reason || 'Cannot delete vertex', true);
         return;
       }
+      pushUndo(history, before);
       afterAptMutation();
     },
     onAircraftPatch(index, patch) {
+      recordBeforeMutation(history, doc);
       updateAircraft(doc, index, patch);
       afterAirMutation();
     },
@@ -250,21 +286,26 @@ function main() {
       const ac = doc.aircraft?.[index];
       const cs = ac?.callsign || 'aircraft';
       if (!window.confirm(`Delete aircraft ${cs}?`)) return;
+      recordBeforeMutation(history, doc);
       deleteAircraft(doc, index);
       afterAirMutation();
       showStatus(`Deleted ${cs}.`, false);
     },
     onSnap(acIndex, parkIdx) {
+      // Capture before; push only on success so a failed snap does not clear redo.
+      const before = captureSnapshot(doc);
       if (!snapAircraftToParking(doc, acIndex, parkIdx)) {
         showStatus('Snap failed — check parking selection.', true);
         return;
       }
+      pushUndo(history, before);
       afterAirMutation();
       showStatus('Snapped aircraft to parking.', false);
     },
     onApplyRaw(side, text) {
       if (side === 'apt') {
         const { airport, errors } = parseAPT(text);
+        recordBeforeMutation(history, doc);
         setAirport(doc, airport, { errors, markDirty: true });
         doc.selection = null;
         validateDocument(doc);
@@ -280,6 +321,7 @@ function main() {
         );
       } else {
         const { aircraft, errors } = parseAIR(text);
+        recordBeforeMutation(history, doc);
         setAircraft(doc, aircraft, { errors, markDirty: true });
         doc.selection = null;
         validateDocument(doc);
@@ -314,7 +356,10 @@ function main() {
           errors,
           markDirty: false,
         });
-        doc.lastAptDownloadHash = null;
+        // K13: seed apt clean hash + force aptDirty false (markDirty:false only skips).
+        // K6: clear history after successful open.
+        seedCleanContentHashes(doc, 'apt');
+        clearHistory(history);
         doc.serverValidation = null;
         validateDocument(doc);
         doc.selection = null;
@@ -327,6 +372,7 @@ function main() {
           errors.length > 0,
         );
       } catch (err) {
+        // Failed open: do not clearHistory or rewrite hashes.
         showStatus(`Failed to open .apt: ${errMessage(err)}`, true);
       }
     },
@@ -344,7 +390,9 @@ function main() {
           errors,
           markDirty: false,
         });
-        doc.lastAirDownloadHash = null;
+        // K13: seed air clean hash + force airDirty false. K6: clear history.
+        seedCleanContentHashes(doc, 'air');
+        clearHistory(history);
         doc.serverValidation = null;
         validateDocument(doc);
         doc.selection = null;
@@ -357,6 +405,7 @@ function main() {
           errors.length > 0,
         );
       } catch (err) {
+        // Failed open: do not clearHistory or rewrite hashes.
         showStatus(`Failed to open .air: ${errMessage(err)}`, true);
       }
     },
@@ -409,6 +458,9 @@ function main() {
         if (!window.confirm('Discard unsaved APT/AIR changes and start new?')) return;
       }
       resetDocument(doc);
+      // K13 + K6: seed empty clean hashes and clear history after New.
+      seedCleanContentHashes(doc, 'both');
+      clearHistory(history);
       doc.serverValidation = null;
       cancelDraw(draw);
       overlays.clearDrawPreview();
@@ -478,7 +530,8 @@ function main() {
         t.tagName === 'SELECT' ||
         t.isContentEditable);
 
-    // Ctrl/Cmd combos work even in fields.
+    // Ctrl/Cmd combos: Save/Open work in fields; undo/redo only when !inField (K14).
+    // Never bind Mod+X (cut) to history (K3).
     if ((ev.ctrlKey || ev.metaKey) && !ev.altKey) {
       if (ev.key === 's' || ev.key === 'S') {
         ev.preventDefault();
@@ -496,6 +549,19 @@ function main() {
         }
         ev.preventDefault();
         return;
+      }
+      if (!inField) {
+        if (ev.key === 'z' || ev.key === 'Z') {
+          ev.preventDefault();
+          if (ev.shiftKey) performRedo();
+          else performUndo();
+          return;
+        }
+        if (ev.key === 'y' || ev.key === 'Y') {
+          ev.preventDefault();
+          performRedo();
+          return;
+        }
       }
     }
 
@@ -550,6 +616,7 @@ function main() {
         const s = doc.airport?.surfaces?.[sel.index];
         const label = s?.name || 'surface';
         if (!window.confirm(`Delete surface ${label}?`)) return;
+        recordBeforeMutation(history, doc);
         deleteSurface(doc, sel.index);
         afterAptMutation();
         showStatus(`Deleted ${label}.`, false);
@@ -557,6 +624,7 @@ function main() {
         const ac = doc.aircraft?.[sel.index];
         const cs = ac?.callsign || 'aircraft';
         if (!window.confirm(`Delete aircraft ${cs}?`)) return;
+        recordBeforeMutation(history, doc);
         deleteAircraft(doc, sel.index);
         afterAirMutation();
         showStatus(`Deleted ${cs}.`, false);
@@ -575,6 +643,8 @@ function main() {
   }
 
   function doFinishDraw() {
+    // Snapshot before finishDraw; push only on successful finished.
+    const before = captureSnapshot(doc);
     const result = finishDraw(doc, draw);
     overlays.clearDrawPreview();
     if (result.action === 'error') {
@@ -585,10 +655,57 @@ function main() {
       if (result.message) showStatus(result.message, false);
       return;
     }
+    if (result.action === 'finished') {
+      pushUndo(history, before);
+    }
     toolbar.setMode(MODE_SELECT);
     afterAptMutation();
     rail.setTab('surfaces');
     showStatus(result.message || 'Surface added.', false);
+  }
+
+  function performUndo() {
+    const res = undo(history, doc);
+    if (!res.ok) {
+      showStatus(
+        res.reason === 'empty'
+          ? 'Nothing to undo.'
+          : res.reason === 'gesture-active'
+            ? 'Cannot undo now.'
+            : 'Cannot undo now.',
+        false,
+      );
+      return;
+    }
+    afterHistoryApply();
+    showStatus('Undid.', false);
+  }
+
+  function performRedo() {
+    const res = redo(history, doc);
+    if (!res.ok) {
+      showStatus(
+        res.reason === 'empty' ? 'Nothing to redo.' : 'Cannot redo now.',
+        false,
+      );
+      return;
+    }
+    afterHistoryApply();
+    showStatus('Redid.', false);
+  }
+
+  function afterHistoryApply() {
+    cancelDraw(draw);
+    overlays.clearDrawPreview();
+    // K11: leave mode; re-arm draw session so next map click continues without
+    // an extra mode toggle after undo cancelled in-progress vertices.
+    if (isPolylineMode(doc.mode) || doc.mode === MODE_PARK || doc.mode === MODE_AIRCRAFT) {
+      beginDraw(draw, doc.mode);
+    }
+    syncDirtyAfterHistoryApply(doc);
+    validateDocument(doc);
+    markServerValidationStale(doc);
+    refresh({ fit: false });
   }
 
   function downloadDirtySides() {
