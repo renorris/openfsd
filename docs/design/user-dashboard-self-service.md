@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | Draft (revision 3 — dual-accept session revalidation + required claims overlay) |
+| **Status** | Implemented (rev 3 design; landed on `dev` as `7d4cdba` + review follow-up `fbb242b`) |
 | **Author** | (implementation owner) |
 | **Date** | 2026-07-27 |
 | **Audience** | Senior engineers working in `internal/web`, `internal/db`, `pkg/protocol` |
