@@ -15,7 +15,7 @@ JSON under `/api/v1` for external tools and map polling. First-party UI is a pro
 | Users (directory) | `GET /usereditor[?q&rating&sort&dir&page&cid&new&flash]`, `POST /usereditor/create`, `POST /usereditor/update` | **Supervisor+**; create + name/password + ratings (network ceiling ≤ actor; full pilot scale). CSRF; URL-owned filters; `dir_*` on POST for PRG |
 | Config editor | `GET/POST /configeditor`, `POST /configeditor/create-token`, `POST /configeditor/reset-secret` | Administrator; CSRF on mutations |
 | Sweatbox | `GET /sweatbox`, form POSTs under `/sweatbox/*` | **Instructor1+**; CSRF on mutations; proxies FSD service HTTP |
-| Airport editor | `GET /airport-editor`, `POST /airport-editor/download-apt`, `POST /airport-editor/download-air` | Administrator; CSRF on download; **echo-only** (no disk/DB persistence of `.apt`/`.air`) |
+| Airport editor | `GET /airport-editor`, `POST /airport-editor/download-apt`, `POST /airport-editor/download-air` | **Instructor1+**; CSRF on download; **echo-only** (no disk/DB persistence of `.apt`/`.air`). Validate API: `POST /api/v1/editor/validate-*` also I1+ |
 
 JSON under `/api/v1` remains for external consumers and map polling. Session dual-accept mutations work with **cookie + CSRF only** (no `Authorization` header required).
 
@@ -68,9 +68,9 @@ Authorization: Bearer <access_token>
 
 ## Network Ratings
 The API enforces role-based access control using `NetworkRating` values defined in `pkg/protocol`. Key thresholds:
-- **Instructor1–3 (8–10)**: Sweatbox instructor UI + JSON proxies. Cannot open the Users directory.
+- **Instructor1–3 (8–10)**: Sweatbox instructor UI + JSON proxies; airport editor + validate API. Cannot open the Users directory.
 - **Supervisor (11)**: User editor (create, name, password, ratings); kick active connections. Network rating assignments capped at own rating; pilot ratings use the full official scale.
-- **Administrator (12)**: Server configuration, JWT secret reset, API tokens, airport editor.
+- **Administrator (12)**: Server configuration, JWT secret reset, API tokens.
 - **Suspended (0) / Inactive (-1)**: Cannot log in to the web UI or obtain FSD JWTs; existing session cookies are rejected on revalidation.
 
 ---

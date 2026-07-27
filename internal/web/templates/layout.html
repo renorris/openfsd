@@ -53,9 +53,11 @@
             {{ if .User.CanAccessSweatbox }}
             <a class="btn btn-sm btn-outline-secondary" href="/sweatbox">Sweatbox</a>
             {{ end }}
+            {{ if .User.CanAccessAirportEditor }}
+            <a class="btn btn-sm btn-outline-secondary" href="/airport-editor">Airport Editor</a>
+            {{ end }}
             {{ if .User.CanEditConfig }}
             <a class="btn btn-sm btn-outline-secondary" href="/configeditor">Config</a>
-            <a class="btn btn-sm btn-outline-secondary" href="/airport-editor">Airport Editor</a>
             {{ end }}
             <form method="post" action="/logout" class="d-inline m-0">
                 <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">

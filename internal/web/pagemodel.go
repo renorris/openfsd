@@ -23,7 +23,9 @@ type pageUser struct {
 	CanFullMutateUsers bool
 	// CanAccessSweatbox: Instructor1+ — sweatbox HTML + PE JSON.
 	CanAccessSweatbox bool
-	// CanEditConfig: Administrator — config + airport editor.
+	// CanAccessAirportEditor: Instructor1+ — airport .apt/.air editor + validate API.
+	CanAccessAirportEditor bool
+	// CanEditConfig: Administrator — config editor.
 	CanEditConfig bool
 }
 
@@ -230,7 +232,7 @@ type sweatboxPage struct {
 	Aircraft []sweatboxAircraftRow
 }
 
-// airportEditorPage is the Administrator airport .apt/.air editor MPA model.
+// airportEditorPage is the Instructor1+ airport .apt/.air editor MPA model.
 // No durable server state — document lives in the browser; download is echo-only.
 type airportEditorPage struct {
 	basePage
@@ -248,16 +250,17 @@ func pageUserFromClaims(claims *auth.CustomClaims) *pageUser {
 	}
 	rating := int(claims.NetworkRating)
 	return &pageUser{
-		CID:                claims.CID,
-		DisplayName:        display,
-		FirstName:          claims.FirstName,
-		LastName:           claims.LastName,
-		NetworkRating:      rating,
-		NetworkRatingLabel: networkRatingLabel(rating),
-		CanEditUsers:       canAccessUserEditor(claims.NetworkRating),
-		CanFullMutateUsers: canFullMutateUsers(claims.NetworkRating),
-		CanAccessSweatbox:  canAccessSweatbox(claims.NetworkRating),
-		CanEditConfig:      claims.NetworkRating >= protocol.NetworkRatingAdministator,
+		CID:                    claims.CID,
+		DisplayName:            display,
+		FirstName:              claims.FirstName,
+		LastName:               claims.LastName,
+		NetworkRating:          rating,
+		NetworkRatingLabel:     networkRatingLabel(rating),
+		CanEditUsers:           canAccessUserEditor(claims.NetworkRating),
+		CanFullMutateUsers:     canFullMutateUsers(claims.NetworkRating),
+		CanAccessSweatbox:      canAccessSweatbox(claims.NetworkRating),
+		CanAccessAirportEditor: canAccessAirportEditor(claims.NetworkRating),
+		CanEditConfig:          claims.NetworkRating >= protocol.NetworkRatingAdministator,
 	}
 }
 

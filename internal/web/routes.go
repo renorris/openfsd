@@ -130,7 +130,7 @@ func (s *Server) setupFrontendRoutes(parent *gin.RouterGroup) {
 	userAdmin.POST("/usereditor/create", s.handleFrontendUserCreate)
 	userAdmin.POST("/usereditor/update", s.handleFrontendUserUpdate)
 
-	// Sweatbox instructor UI: Instructor1+ (HTML forms; proxies FSD /sweatbox/*).
+	// Instructor1+ tools: sweatbox + airport editor (HTML forms; CSRF on mutations).
 	instructor := authed.Group("")
 	instructor.Use(s.requireMinRatingHTML(protocol.NetworkRatingInstructor1))
 	instructor.GET("/sweatbox", s.handleFrontendSweatbox)
@@ -143,16 +143,16 @@ func (s *Server) setupFrontendRoutes(parent *gin.RouterGroup) {
 	instructor.POST("/sweatbox/delete", s.handleFrontendSweatboxDelete)
 	instructor.POST("/sweatbox/delete-all", s.handleFrontendSweatboxDeleteAll)
 
-	// Admin config + airport editor: form POST mutations with CSRF; no JS required.
+	// Airport editor: HTML shell + echo-download (no disk/DB persistence).
+	instructor.GET("/airport-editor", s.handleFrontendAirportEditor)
+	instructor.POST("/airport-editor/download-apt", s.handleFrontendAirportEditorDownloadAPT)
+	instructor.POST("/airport-editor/download-air", s.handleFrontendAirportEditorDownloadAIR)
+
+	// Admin config only: form POST mutations with CSRF; no JS required.
 	admin := authed.Group("")
 	admin.Use(s.requireMinRatingHTML(protocol.NetworkRatingAdministator))
 	admin.GET("/configeditor", s.handleFrontendConfigEditor)
 	admin.POST("/configeditor", s.handleFrontendConfigUpdate)
 	admin.POST("/configeditor/reset-secret", s.handleFrontendConfigResetSecret)
 	admin.POST("/configeditor/create-token", s.handleFrontendConfigCreateToken)
-
-	// Airport editor: HTML shell + no-JS echo-download (no disk/DB persistence).
-	admin.GET("/airport-editor", s.handleFrontendAirportEditor)
-	admin.POST("/airport-editor/download-apt", s.handleFrontendAirportEditorDownloadAPT)
-	admin.POST("/airport-editor/download-air", s.handleFrontendAirportEditorDownloadAIR)
 }

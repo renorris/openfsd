@@ -10,8 +10,9 @@ import (
 //
 // - Supervisor+: user editor directory, create, rating + full profile mutation.
 //   Full profile mutation still cannot target users with a higher network rating.
-// - Instructor1+: sweatbox control plane (HTML + PE JSON).
-// - Administrator: config + airport editor (unchanged).
+// - Instructor1+: sweatbox control plane (HTML + PE JSON) and airport editor
+//   (HTML + validate API).
+// - Administrator: config editor (unchanged).
 
 func canAccessUserEditor(r protocol.NetworkRating) bool {
 	return r >= protocol.NetworkRatingSupervisor
@@ -34,6 +35,10 @@ func canFullMutateTarget(actor, targetNetworkRating protocol.NetworkRating) bool
 }
 
 func canAccessSweatbox(r protocol.NetworkRating) bool {
+	return r >= protocol.NetworkRatingInstructor1
+}
+
+func canAccessAirportEditor(r protocol.NetworkRating) bool {
 	return r >= protocol.NetworkRatingInstructor1
 }
 

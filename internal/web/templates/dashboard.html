@@ -40,11 +40,13 @@
             {{ if .User.CanAccessSweatbox }}
             <li><a href="/sweatbox" class="btn btn-outline-secondary">Sweatbox</a></li>
             {{ end }}
-            {{ if .User.CanEditConfig }}
-            <li><a href="/configeditor" class="btn btn-outline-secondary">Config</a></li>
+            {{ if .User.CanAccessAirportEditor }}
             <li><a href="/airport-editor" class="btn btn-outline-secondary">Airport Editor</a></li>
             {{ end }}
-            {{ if and (not .User.CanEditUsers) (not .User.CanAccessSweatbox) (not .User.CanEditConfig) }}
+            {{ if .User.CanEditConfig }}
+            <li><a href="/configeditor" class="btn btn-outline-secondary">Config</a></li>
+            {{ end }}
+            {{ if and (not .User.CanEditUsers) (not .User.CanAccessSweatbox) (not .User.CanAccessAirportEditor) (not .User.CanEditConfig) }}
             <li class="text-muted small">No elevated tools for your rating. Use Account to manage your password.</li>
             {{ end }}
         </ul>

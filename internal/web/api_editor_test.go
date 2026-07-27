@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/renorris/openfsd/internal/db"
 	"github.com/renorris/openfsd/pkg/protocol"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -59,6 +60,26 @@ func TestAPIValidateAIRForbiddenForObserver(t *testing.T) {
 	res := decodeAPIV1(t, w)
 	require.NotNil(t, res.Err)
 	assert.Equal(t, "forbidden", *res.Err)
+}
+
+func TestAPIValidateAPTAllowedForInstructor(t *testing.T) {
+	env := setupTestAPI(t)
+	i1Pass := "i1pass123"
+	i1 := &db.User{
+		Password:      i1Pass,
+		FirstName:     strPtr("Inst"),
+		LastName:      strPtr("One"),
+		NetworkRating: int(protocol.NetworkRatingInstructor1),
+	}
+	require.NoError(t, env.server.dbRepo.UserRepo.CreateUser(i1))
+
+	access, _ := env.login(t, i1.CID, i1Pass)
+	w := env.doJSON(t, http.MethodPost, "/api/v1/editor/validate-apt", map[string]any{
+		"text": "icao=KBTV\n",
+	}, access)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	res := decodeAPIV1(t, w)
+	require.Nil(t, res.Err)
 }
 
 func TestAPIValidateAPTAdminOKFixture(t *testing.T) {

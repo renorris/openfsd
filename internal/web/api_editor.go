@@ -31,9 +31,9 @@ type editorValidateAIRData struct {
 	AircraftCount int      `json:"aircraft_count"`
 }
 
-// setupEditorAPIRoutes mounts Admin-only APT/AIR validate endpoints under /api/v1/editor.
+// setupEditorAPIRoutes mounts Instructor1+ APT/AIR validate endpoints under /api/v1/editor.
 // Dual-accept Bearer | session cookie; CSRF when cookie-authenticated.
-// Authz is inline Admin → 403 JSON (never HTML redirect).
+// Authz is inline I1+ → 403 JSON (never HTML redirect).
 func (s *Server) setupEditorAPIRoutes(parent *gin.RouterGroup) {
 	g := parent.Group("/editor")
 	g.Use(s.jwtBearerMiddleware, s.csrfIfCookieSession)
@@ -43,11 +43,11 @@ func (s *Server) setupEditorAPIRoutes(parent *gin.RouterGroup) {
 
 // handleAPIValidateAPT POST /api/v1/editor/validate-apt
 //
-// Stateless ParseAPT of JSON {"text":"…"}. Admin only; 403 JSON when rating too low.
+// Stateless ParseAPT of JSON {"text":"…"}. Instructor1+ only; 403 JSON when rating too low.
 // Soft validation errors are returned in data.errors (HTTP 200); never returns geometry.
 func (s *Server) handleAPIValidateAPT(c *gin.Context) {
 	claims := getJwtContext(c)
-	if claims == nil || claims.NetworkRating < protocol.NetworkRatingAdministator {
+	if claims == nil || claims.NetworkRating < protocol.NetworkRatingInstructor1 {
 		writeAPIV1Response(c, http.StatusForbidden, &genericAPIV1Forbidden)
 		return
 	}
@@ -80,11 +80,11 @@ func (s *Server) handleAPIValidateAPT(c *gin.Context) {
 
 // handleAPIValidateAIR POST /api/v1/editor/validate-air
 //
-// Stateless ParseAIR of JSON {"text":"…"}. Admin only; 403 JSON when rating too low.
+// Stateless ParseAIR of JSON {"text":"…"}. Instructor1+ only; 403 JSON when rating too low.
 // Soft validation errors are returned in data.errors (HTTP 200); never returns aircraft rows.
 func (s *Server) handleAPIValidateAIR(c *gin.Context) {
 	claims := getJwtContext(c)
-	if claims == nil || claims.NetworkRating < protocol.NetworkRatingAdministator {
+	if claims == nil || claims.NetworkRating < protocol.NetworkRatingInstructor1 {
 		writeAPIV1Response(c, http.StatusForbidden, &genericAPIV1Forbidden)
 		return
 	}

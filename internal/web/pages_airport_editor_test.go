@@ -38,17 +38,14 @@ func TestAirportEditorObserverRedirect(t *testing.T) {
 	}
 }
 
-func TestAirportEditorSupervisorRedirect(t *testing.T) {
+func TestAirportEditorInstructorShell(t *testing.T) {
 	ts := newTestServer(t)
-	sup := createTestUser(t, ts, "pw", int(protocol.NetworkRatingSupervisor))
-	cookies := formLogin(t, ts, sup.CID, "pw")
+	inst := createTestUser(t, ts, "inst-pass", int(protocol.NetworkRatingInstructor1))
+	cookies := formLogin(t, ts, inst.CID, "inst-pass")
 
 	w, _ := authedGET(t, ts, "/airport-editor", cookies)
-	if w.Code != http.StatusSeeOther {
-		t.Fatalf("status %d want 303", w.Code)
-	}
-	if loc := w.Header().Get("Location"); loc != "/dashboard" {
-		t.Fatalf("Location=%q want /dashboard", loc)
+	if w.Code != http.StatusOK {
+		t.Fatalf("I1 status %d want 200 body %s", w.Code, w.Body.String())
 	}
 }
 
@@ -118,7 +115,7 @@ func TestAirportEditorAdminShell(t *testing.T) {
 	}
 }
 
-func TestAirportEditorNavOnlyForAdmin(t *testing.T) {
+func TestAirportEditorNavForInstructorNotObserver(t *testing.T) {
 	ts := newTestServer(t)
 	obs := createTestUser(t, ts, "pw", int(protocol.NetworkRatingObserver))
 	cookies := formLogin(t, ts, obs.CID, "pw")
@@ -128,12 +125,12 @@ func TestAirportEditorNavOnlyForAdmin(t *testing.T) {
 		t.Fatal("observer must not see Airport Editor nav")
 	}
 
-	admin := createTestUser(t, ts, "admin-pass", int(protocol.NetworkRatingAdministator))
-	cookies = formLogin(t, ts, admin.CID, "admin-pass")
+	inst := createTestUser(t, ts, "inst-pass", int(protocol.NetworkRatingInstructor1))
+	cookies = formLogin(t, ts, inst.CID, "inst-pass")
 	w, _ = authedGET(t, ts, "/dashboard", cookies)
 	body = w.Body.String()
 	if !strings.Contains(body, `href="/airport-editor"`) {
-		t.Fatal("admin dashboard should link to airport editor")
+		t.Fatal("I1 dashboard should link to airport editor")
 	}
 }
 
