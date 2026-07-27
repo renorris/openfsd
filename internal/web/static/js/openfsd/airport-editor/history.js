@@ -246,8 +246,9 @@ export function contentEquals(a, b) {
 }
 
 /**
- * Seed last*DownloadHash from download-format text. Does not set dirty true.
- * Leave dirty flags false when seeding a clean baseline (caller responsibility).
+ * Seed last*DownloadHash from download-format text and force that side clean.
+ * K13: clean baseline must leave dirty false — markDirty:false on setAirport
+ * only skips setting dirty true and does not clear a prior true flag.
  * Never sets hashes to null.
  * @param {EditorDocument} doc
  * @param {'apt'|'air'|'both'} [side='both']
@@ -255,9 +256,11 @@ export function contentEquals(a, b) {
 export function seedCleanContentHashes(doc, side = 'both') {
   if (side === 'apt' || side === 'both') {
     doc.lastAptDownloadHash = hashText(formatAptForDownload(doc));
+    doc.aptDirty = false;
   }
   if (side === 'air' || side === 'both') {
     doc.lastAirDownloadHash = hashText(formatAirForDownload(doc));
+    doc.airDirty = false;
   }
 }
 

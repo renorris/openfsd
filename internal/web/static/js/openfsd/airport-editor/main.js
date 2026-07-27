@@ -356,7 +356,8 @@ function main() {
           errors,
           markDirty: false,
         });
-        // K13: seed apt clean hash (not null). K6: clear history after successful open.
+        // K13: seed apt clean hash + force aptDirty false (markDirty:false only skips).
+        // K6: clear history after successful open.
         seedCleanContentHashes(doc, 'apt');
         clearHistory(history);
         doc.serverValidation = null;
@@ -389,7 +390,7 @@ function main() {
           errors,
           markDirty: false,
         });
-        // K13: seed air clean hash. K6: clear history after successful open.
+        // K13: seed air clean hash + force airDirty false. K6: clear history.
         seedCleanContentHashes(doc, 'air');
         clearHistory(history);
         doc.serverValidation = null;
@@ -696,6 +697,11 @@ function main() {
   function afterHistoryApply() {
     cancelDraw(draw);
     overlays.clearDrawPreview();
+    // K11: leave mode; re-arm draw session so next map click continues without
+    // an extra mode toggle after undo cancelled in-progress vertices.
+    if (isPolylineMode(doc.mode) || doc.mode === MODE_PARK || doc.mode === MODE_AIRCRAFT) {
+      beginDraw(draw, doc.mode);
+    }
     syncDirtyAfterHistoryApply(doc);
     validateDocument(doc);
     markServerValidationStale(doc);

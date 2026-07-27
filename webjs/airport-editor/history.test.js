@@ -596,6 +596,23 @@ test('seedCleanContentHashes side=apt leaves air hash alone', () => {
   assert.equal(doc.lastAptDownloadHash, hashText(formatAptForDownload(doc)));
 });
 
+test('seedCleanContentHashes forces dirty false for seeded side (Open after dirty)', () => {
+  // setAirport({ markDirty: false }) only skips setting dirty true — does not clear.
+  const doc = createEmptyDocument();
+  doc.aptDirty = true;
+  doc.airDirty = true;
+  seedCleanContentHashes(doc, 'apt');
+  assert.equal(doc.aptDirty, false);
+  assert.equal(doc.airDirty, true); // air side not seeded
+  seedCleanContentHashes(doc, 'air');
+  assert.equal(doc.airDirty, false);
+  doc.aptDirty = true;
+  doc.airDirty = true;
+  seedCleanContentHashes(doc, 'both');
+  assert.equal(doc.aptDirty, false);
+  assert.equal(doc.airDirty, false);
+});
+
 test('air side: record / undo / seed clean for aircraft', () => {
   const doc = createEmptyDocument();
   const apt = createEmptyAirport();
