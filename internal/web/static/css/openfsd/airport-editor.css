@@ -6,21 +6,21 @@
  * height (required for correct OSM tile coverage).
  */
 
-/* --- tokens (mirrors sweatbox density; --apted-* namespace) --- */
+/* --- tokens (map to shared theme.css --ofs-console-*) --- */
 .apted {
   --apted-gap: 0.5rem;
   --apted-pad: 0.5rem 0.75rem;
-  --apted-border: #c5c9ce;
-  --apted-border-strong: #8b9198;
-  --apted-bg: #f4f5f6;
-  --apted-panel: #fff;
-  --apted-muted: #5c636a;
-  --apted-accent: #1a1a1a;
-  --apted-sel: #dce8f5;
-  --apted-sel-border: #4a7ab0;
-  --apted-danger: #842029;
-  --apted-ok: #0f5132;
-  --apted-warn-bg: #fff3cd;
+  --apted-border: var(--ofs-console-border);
+  --apted-border-strong: var(--ofs-console-border-strong);
+  --apted-bg: var(--ofs-console-bg);
+  --apted-panel: var(--ofs-console-panel);
+  --apted-muted: var(--ofs-console-muted);
+  --apted-accent: var(--ofs-console-accent);
+  --apted-sel: var(--ofs-console-sel);
+  --apted-sel-border: var(--ofs-console-sel-border);
+  --apted-danger: var(--ofs-console-danger);
+  --apted-ok: var(--ofs-console-ok);
+  --apted-warn-bg: var(--ofs-console-warn-bg);
   --apted-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
   --apted-font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --apted-fs: 0.8125rem;
@@ -114,27 +114,27 @@
 }
 
 .apted-chip.is-dirty {
-  border-color: #c9a227;
+  border-color: var(--ofs-console-warn-border);
   background: var(--apted-warn-bg);
-  color: #664d03;
+  color: var(--ofs-console-warn-fg);
 }
 
 .apted-chip-issues.is-ok {
-  border-color: #a3cfbb;
-  background: #d1e7dd;
+  border-color: var(--ofs-console-ok-border);
+  background: var(--ofs-console-ok-bg);
   color: var(--apted-ok);
 }
 
 .apted-chip-issues.is-err {
-  border-color: #f1aeb5;
-  background: #f8d7da;
+  border-color: var(--ofs-console-err-border);
+  background: var(--ofs-console-err-bg);
   color: var(--apted-danger);
 }
 
 .apted-chip-issues.is-warn {
-  border-color: #c9a227;
+  border-color: var(--ofs-console-warn-border);
   background: var(--apted-warn-bg);
-  color: #664d03;
+  color: var(--ofs-console-warn-fg);
 }
 
 .apted-chip-issues.is-empty {
@@ -152,23 +152,23 @@
   font-weight: 700;
   line-height: 1.35;
   vertical-align: middle;
-  background: #e9ecef;
+  background: var(--ofs-console-chrome);
   color: var(--apted-muted);
 }
 
 .apted-tab-badge.is-ok {
-  background: #d1e7dd;
+  background: var(--ofs-console-ok-bg);
   color: var(--apted-ok);
 }
 
 .apted-tab-badge.is-err {
-  background: #f8d7da;
+  background: var(--ofs-console-err-bg);
   color: var(--apted-danger);
 }
 
 .apted-tab-badge.is-warn {
   background: var(--apted-warn-bg);
-  color: #664d03;
+  color: var(--ofs-console-warn-fg);
 }
 
 .apted-flash {
@@ -199,15 +199,15 @@
 }
 
 .apted-flash-ok {
-  background: #d1e7dd;
+  background: var(--ofs-console-ok-bg);
   color: var(--apted-ok);
-  border-color: #a3cfbb;
+  border-color: var(--ofs-console-ok-border);
 }
 
 .apted-flash-err {
-  background: #f8d7da;
+  background: var(--ofs-console-err-bg);
   color: var(--apted-danger);
-  border-color: #f1aeb5;
+  border-color: var(--ofs-console-err-border);
 }
 
 /* --- toolbar --- */
@@ -319,7 +319,8 @@
   padding: 0.2rem 0.35rem;
   width: 100%;
   min-width: 0;
-  background: #fff;
+  background: var(--ofs-console-input);
+  color: var(--apted-accent);
 }
 
 .apted-field-inline > span {
@@ -343,6 +344,8 @@
   border-radius: 2px;
   padding: 0.2rem 0.35rem;
   max-width: 8rem;
+  background: var(--ofs-console-input);
+  color: var(--apted-accent);
 }
 
 .apted-icon-btn {
@@ -412,7 +415,7 @@
 /* Map full-bleed (Leaflet owns the box when enhanced) */
 .apted-map {
   min-height: 16rem;
-  background: #dfe6ea;
+  background: var(--ofs-console-map);
   border: 1px solid var(--apted-border-strong);
   border-radius: 2px;
   display: flex;
@@ -467,7 +470,7 @@
   flex-wrap: wrap;
   gap: 0;
   border-bottom: 1px solid var(--apted-border);
-  background: #e9ecef;
+  background: var(--ofs-console-chrome);
   flex-shrink: 0;
 }
 
@@ -489,7 +492,7 @@
 
 .apted-tab:hover {
   color: var(--apted-accent);
-  background: #dde1e5;
+  background: var(--ofs-console-tab-hover);
 }
 
 .apted-tab.is-active,
@@ -535,7 +538,7 @@
   gap: 0.25rem 0.5rem;
   padding: 0.3rem 0.5rem;
   border-bottom: 1px solid var(--apted-border);
-  background: #f0f2f4;
+  background: var(--ofs-console-chrome-soft);
 }
 
 .apted-panel-hd h2 {
@@ -622,7 +625,7 @@
 }
 
 .apted-list-item:hover {
-  background: #f0f4f8;
+  background: var(--ofs-console-hover);
 }
 
 .apted-list-item.is-selected,
@@ -640,15 +643,15 @@
 }
 
 .apted-err-list-warn {
-  color: #664d03;
+  color: var(--ofs-console-warn-fg);
   background: var(--apted-warn-bg);
-  border: 1px solid #e6d28a;
+  border: 1px solid var(--ofs-console-warn-border);
   border-radius: 2px;
   padding: 0.35rem 0.5rem 0.35rem 1.25rem;
 }
 
 .apted-soft-hd {
-  color: #664d03;
+  color: var(--ofs-console-warn-fg);
 }
 
 .apted-soft-note {
@@ -677,9 +680,9 @@
 }
 
 .apted-server-stale {
-  color: #664d03;
+  color: var(--ofs-console-warn-fg);
   background: var(--apted-warn-bg);
-  border: 1px solid #e6d28a;
+  border: 1px solid var(--ofs-console-warn-border);
   border-radius: 2px;
   padding: 0.25rem 0.4rem;
 }
@@ -710,7 +713,7 @@
 }
 
 .apted-mini-table th {
-  background: #e9ecef;
+  background: var(--ofs-console-chrome);
   font-weight: 600;
   text-align: center;
 }
@@ -724,7 +727,8 @@
   width: 100%;
   resize: vertical;
   min-height: 5rem;
-  background: #f8f9fa;
+  background: var(--ofs-console-help);
+  color: var(--apted-accent);
 }
 
 /* Field blocks (inspector / raw panels) */
@@ -751,6 +755,8 @@
   padding: 0.35rem 0.45rem;
   width: 100%;
   max-width: 100%;
+  background: var(--ofs-console-input);
+  color: var(--apted-accent);
 }
 
 .apted-field textarea {

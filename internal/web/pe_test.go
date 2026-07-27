@@ -322,6 +322,51 @@ func TestAuthedDashboardRendersUser(t *testing.T) {
 	}
 }
 
+// TestThemeChromeInLayout ensures every layout-based page ships the shared
+// dark-mode assets and toggle (no per-page theme wiring).
+func TestThemeChromeInLayout(t *testing.T) {
+	ts := newTestServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/login", nil)
+	w := httptest.NewRecorder()
+	ts.engine.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /login status %d", w.Code)
+	}
+	body := w.Body.String()
+	for _, want := range []string{
+		`/static/js/openfsd/theme.js`,
+		`/static/css/openfsd/theme.css`,
+		`data-js="theme-toggle"`,
+		`ofs-theme-toggle`,
+		// Theme-aware nav/control classes (not btn-outline-dark)
+		`btn-outline-secondary`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("login HTML missing %q; snippet: %s", want, clip(body, 500))
+		}
+	}
+	if strings.Contains(body, "btn-outline-dark") {
+		t.Fatal("login HTML still uses btn-outline-dark (poor dark-mode contrast)")
+	}
+
+	// Static assets must be served (embed).
+	for _, path := range []string{
+		"/static/js/openfsd/theme.js",
+		"/static/css/openfsd/theme.css",
+	} {
+		req = httptest.NewRequest(http.MethodGet, path, nil)
+		w = httptest.NewRecorder()
+		ts.engine.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("GET %s status %d", path, w.Code)
+		}
+		if w.Body.Len() < 32 {
+			t.Fatalf("GET %s body too small", path)
+		}
+	}
+}
+
 func TestAPICookieAuthRequiresCSRF(t *testing.T) {
 	ts := newTestServer(t)
 	user := createTestUser(t, ts, "pw", int(protocol.NetworkRatingSupervisor))

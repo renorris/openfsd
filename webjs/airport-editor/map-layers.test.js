@@ -20,8 +20,11 @@ import {
   escapeHtml,
   OSM_TILE_URL,
   OSM_ATTRIBUTION,
+  OSM_DARK_TILE_URL,
+  OSM_DARK_ATTRIBUTION,
   ESRI_TILE_URL,
   ESRI_ATTRIBUTION,
+  currentUiTheme,
   VERTEX_HANDLE_PX,
   VERTEX_HANDLE_RADIUS,
   VERTEX_HIT_PX,
@@ -181,9 +184,37 @@ test('basemap attribution strings are non-empty', () => {
   assert.ok(OSM_TILE_URL.includes('openstreetmap'));
   assert.ok(OSM_ATTRIBUTION.length > 10);
   assert.ok(OSM_ATTRIBUTION.toLowerCase().includes('openstreetmap'));
+  assert.ok(OSM_DARK_TILE_URL.includes('cartocdn') || OSM_DARK_TILE_URL.includes('dark'));
+  assert.ok(OSM_DARK_ATTRIBUTION.toLowerCase().includes('openstreetmap'));
+  assert.ok(OSM_DARK_ATTRIBUTION.toLowerCase().includes('carto'));
   assert.ok(ESRI_TILE_URL.includes('arcgisonline'));
   assert.ok(ESRI_ATTRIBUTION.length > 10);
   assert.ok(ESRI_ATTRIBUTION.toLowerCase().includes('esri'));
+});
+
+test('currentUiTheme falls back without OpenFSDTheme', () => {
+  // No document / no OpenFSDTheme in Node → light
+  assert.equal(currentUiTheme(null), 'light');
+  assert.equal(
+    currentUiTheme({
+      documentElement: {
+        getAttribute(name) {
+          return name === 'data-bs-theme' ? 'dark' : null;
+        },
+      },
+    }),
+    'dark',
+  );
+  assert.equal(
+    currentUiTheme({
+      documentElement: {
+        getAttribute() {
+          return 'light';
+        },
+      },
+    }),
+    'light',
+  );
 });
 
 test('escapeHtml neutralizes markup in freeform AIR-like strings', () => {

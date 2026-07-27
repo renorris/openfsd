@@ -183,7 +183,7 @@ function ensureModeButtons(group) {
   for (const [mode, label] of modes) {
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = 'btn btn-sm btn-outline-dark apted-mode-btn';
+    btn.className = 'btn btn-sm btn-outline-secondary apted-mode-btn';
     btn.setAttribute('data-mode', mode);
     btn.setAttribute('aria-pressed', mode === MODE_SELECT ? 'true' : 'false');
     btn.title = `${MODE_LABELS[mode]} mode (key ${modes.findIndex((m) => m[0] === mode) + 1})`;

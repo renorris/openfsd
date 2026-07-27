@@ -8,21 +8,21 @@
  * the control surface fits one viewport rather than page-scrolling.
  */
 
-/* --- tokens --- */
+/* --- tokens (map to shared theme.css --ofs-console-*) --- */
 .sbx {
   --sbx-gap: 0.5rem;
   --sbx-pad: 0.5rem 0.75rem;
-  --sbx-border: #c5c9ce;
-  --sbx-border-strong: #8b9198;
-  --sbx-bg: #f4f5f6;
-  --sbx-panel: #fff;
-  --sbx-muted: #5c636a;
-  --sbx-accent: #1a1a1a;
-  --sbx-sel: #dce8f5;
-  --sbx-sel-border: #4a7ab0;
-  --sbx-danger: #842029;
-  --sbx-ok: #0f5132;
-  --sbx-warn-bg: #fff3cd;
+  --sbx-border: var(--ofs-console-border);
+  --sbx-border-strong: var(--ofs-console-border-strong);
+  --sbx-bg: var(--ofs-console-bg);
+  --sbx-panel: var(--ofs-console-panel);
+  --sbx-muted: var(--ofs-console-muted);
+  --sbx-accent: var(--ofs-console-accent);
+  --sbx-sel: var(--ofs-console-sel);
+  --sbx-sel-border: var(--ofs-console-sel-border);
+  --sbx-danger: var(--ofs-console-danger);
+  --sbx-ok: var(--ofs-console-ok);
+  --sbx-warn-bg: var(--ofs-console-warn-bg);
   --sbx-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
   --sbx-font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --sbx-fs: 0.8125rem;
@@ -84,21 +84,21 @@
 }
 
 .sbx-flash-ok {
-  background: #d1e7dd;
+  background: var(--ofs-console-ok-bg);
   color: var(--sbx-ok);
-  border-color: #a3cfbb;
+  border-color: var(--ofs-console-ok-border);
 }
 
 .sbx-flash-err {
-  background: #f8d7da;
+  background: var(--ofs-console-err-bg);
   color: var(--sbx-danger);
-  border-color: #f1aeb5;
+  border-color: var(--ofs-console-err-border);
 }
 
 .sbx-flash-warn {
   background: var(--sbx-warn-bg);
-  color: #664d03;
-  border-color: #ffecb5;
+  color: var(--ofs-console-warn-fg);
+  border-color: var(--ofs-console-warn-border);
 }
 
 /* --- status strip --- */
@@ -202,7 +202,7 @@
   gap: 0.25rem 0.5rem;
   padding: 0.3rem 0.5rem;
   border-bottom: 1px solid var(--sbx-border);
-  background: #e9ecef;
+  background: var(--ofs-console-chrome);
 }
 
 .sbx-panel-hd h2 {
@@ -249,7 +249,7 @@
 .sbx-table th,
 .sbx-table td {
   padding: 0.2rem 0.35rem;
-  border-bottom: 1px solid #e2e4e7;
+  border-bottom: 1px solid var(--ofs-console-row-border);
   vertical-align: middle;
   white-space: nowrap;
 }
@@ -258,7 +258,7 @@
   position: sticky;
   top: 0;
   z-index: 1;
-  background: #e9ecef;
+  background: var(--ofs-console-chrome);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.03em;
@@ -272,7 +272,7 @@
 }
 
 .sbx-table tbody tr:hover {
-  background: #f0f4f8;
+  background: var(--ofs-console-hover);
 }
 
 .sbx-table tbody tr.sbx-row-selected {
@@ -356,7 +356,8 @@
   padding: 0.25rem 0.4rem;
   border: 1px solid var(--sbx-border-strong);
   border-radius: 2px;
-  background: #fff;
+  background: var(--ofs-console-input);
+  color: var(--sbx-accent);
   width: 100%;
 }
 
@@ -394,7 +395,7 @@
 .sbx-help {
   margin: 0;
   padding: 0.3rem 0.4rem;
-  background: #f8f9fa;
+  background: var(--ofs-console-help);
   border: 1px solid var(--sbx-border);
   border-radius: 2px;
   font-size: 0.68rem;

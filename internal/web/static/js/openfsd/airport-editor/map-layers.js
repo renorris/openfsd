@@ -12,10 +12,19 @@ import {
   SurfaceHold,
 } from './model.js';
 
-/** OSM Standard tiles (default). Attribution required — do not strip. */
+/**
+ * OSM basemap URLs — keep in sync with OpenFSDTheme.osmBasemap (theme.js).
+ * Light: OSM Standard. Dark: CARTO Dark Matter (OSM data + CARTO style).
+ * Attribution required — do not strip.
+ */
 export const OSM_TILE_URL = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
 export const OSM_ATTRIBUTION =
   '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
+export const OSM_DARK_TILE_URL =
+  'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
+export const OSM_DARK_ATTRIBUTION =
+  '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> ' +
+  '&copy; <a href="https://carto.com/attributions">CARTO</a>';
 
 /** Esri World Imagery (optional basemap). Attribution required. */
 export const ESRI_TILE_URL =
@@ -26,6 +35,49 @@ export const ESRI_ATTRIBUTION =
 /** Transparent 1×1 PNG as data URI for blank e2e tiles. */
 export const BLANK_TILE_DATA_URI =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+
+/**
+ * Effective UI theme for basemap selection.
+ * Prefers OpenFSDTheme (layout); falls back to data-bs-theme / light.
+ * @param {Document|null|undefined} [doc]
+ * @returns {"light"|"dark"}
+ */
+export function currentUiTheme(doc) {
+  const d = doc || (typeof globalThis !== 'undefined' ? globalThis.document : null);
+  const T = typeof globalThis !== 'undefined' ? globalThis.OpenFSDTheme : null;
+  if (T && typeof T.currentTheme === 'function') {
+    return T.currentTheme(d) === 'dark' ? 'dark' : 'light';
+  }
+  const el = d && d.documentElement;
+  const v = el && typeof el.getAttribute === 'function' ? el.getAttribute('data-bs-theme') : null;
+  return v === 'dark' ? 'dark' : 'light';
+}
+
+/**
+ * Create OSM (light) or CARTO dark OSM tile layer matching the UI theme.
+ * @param {typeof globalThis.L} L
+ * @param {"light"|"dark"|string} [theme]
+ * @returns {*} Leaflet tile layer
+ */
+export function createOsmTileLayer(L, theme) {
+  const t = theme === 'dark' ? 'dark' : 'light';
+  const T = typeof globalThis !== 'undefined' ? globalThis.OpenFSDTheme : null;
+  if (T && typeof T.createLeafletOsmLayer === 'function') {
+    return T.createLeafletOsmLayer(L, t);
+  }
+  // Fallback when theme.js is not loaded (Node tests / isolated pages).
+  if (t === 'dark') {
+    return L.tileLayer(OSM_DARK_TILE_URL, {
+      maxZoom: 20,
+      subdomains: 'abcd',
+      attribution: OSM_DARK_ATTRIBUTION,
+    });
+  }
+  return L.tileLayer(OSM_TILE_URL, {
+    maxZoom: 19,
+    attribution: OSM_ATTRIBUTION,
+  });
+}
 
 /**
  * Style for a surface kind. Selected uses highlight border color.
@@ -506,9 +558,11 @@ export function bindTextTooltip(layer, text, opts = {}) {
  * Create blank tile layer for e2e (no network). Uses L.tileLayer with data-URI
  * or L.gridLayer empty tiles when available.
  * @param {typeof globalThis.L} L
+ * @param {{ theme?: "light"|"dark"|string }} [opts]
  * @returns {*} Leaflet layer
  */
-export function createBlankTileLayer(L) {
+export function createBlankTileLayer(L, opts = {}) {
+  const bg = opts.theme === 'dark' ? '#1a2228' : '#dfe6ea';
   if (typeof L.gridLayer === 'function') {
     return L.gridLayer({
       attribution: 'blank tiles (e2e)',
@@ -517,7 +571,7 @@ export function createBlankTileLayer(L) {
         const tile = document.createElement('div');
         tile.style.width = '256px';
         tile.style.height = '256px';
-        tile.style.background = '#dfe6ea';
+        tile.style.background = bg;
         return tile;
       },
     });
@@ -531,19 +585,18 @@ export function createBlankTileLayer(L) {
 
 /**
  * Create OSM + Esri basemap layers (or blank when testTiles).
+ * OSM tiles follow the UI theme (light OSM Standard / dark CARTO).
  * @param {typeof globalThis.L} L
- * @param {{ blank?: boolean }} [opts]
+ * @param {{ blank?: boolean, theme?: "light"|"dark"|string }} [opts]
  * @returns {{ osm: *, esri: *, blank: *|null, defaultKey: 'osm'|'blank' }}
  */
 export function createBaseLayers(L, opts = {}) {
+  const theme = opts.theme === 'dark' ? 'dark' : 'light';
   if (opts.blank) {
-    const blank = createBlankTileLayer(L);
+    const blank = createBlankTileLayer(L, { theme });
     return { osm: blank, esri: blank, blank, defaultKey: 'blank' };
   }
-  const osm = L.tileLayer(OSM_TILE_URL, {
-    maxZoom: 19,
-    attribution: OSM_ATTRIBUTION,
-  });
+  const osm = createOsmTileLayer(L, theme);
   const esri = L.tileLayer(ESRI_TILE_URL, {
     maxZoom: 19,
     attribution: ESRI_ATTRIBUTION,
@@ -554,10 +607,11 @@ export function createBaseLayers(L, opts = {}) {
 /**
  * Initialize Leaflet map on #apted-map (or given element).
  * Attribution control remains visible; optional setPrefix("") only.
+ * Listens for openfsd:themechange to swap OSM light/dark tiles.
  * @param {typeof globalThis.L} L
  * @param {HTMLElement} mapEl
  * @param {{ blankTiles?: boolean, center?: [number, number], zoom?: number }} [opts]
- * @returns {{ map: *, baseLayers: ReturnType<typeof createBaseLayers>, activeBase: string, setBase: (key: string) => void }}
+ * @returns {{ map: *, baseLayers: ReturnType<typeof createBaseLayers>, activeBase: string, setBase: (key: string) => void, destroy: () => void }}
  */
 export function createMap(L, mapEl, opts = {}) {
   const center = opts.center || [30, 0];
@@ -577,7 +631,12 @@ export function createMap(L, mapEl, opts = {}) {
     map.boxZoom.disable();
   }
 
-  const baseLayers = createBaseLayers(L, { blank: !!opts.blankTiles });
+  const doc = (mapEl && mapEl.ownerDocument) || (typeof globalThis !== 'undefined' ? globalThis.document : null);
+  const initialTheme = currentUiTheme(doc);
+  const baseLayers = createBaseLayers(L, {
+    blank: !!opts.blankTiles,
+    theme: initialTheme,
+  });
   let activeBase = baseLayers.defaultKey;
   const layerByKey = {
     osm: baseLayers.osm,
@@ -606,6 +665,58 @@ export function createMap(L, mapEl, opts = {}) {
     }
   }
 
+  /**
+   * Rebuild OSM (or blank) basemap when UI theme changes.
+   * Esri imagery is unchanged. Only re-adds the layer if OSM/blank is active.
+   * @param {"light"|"dark"|string} theme
+   */
+  function applyOsmTheme(theme) {
+    const t = theme === 'dark' ? 'dark' : 'light';
+    const wasActive = activeBase === 'osm' || (opts.blankTiles && activeBase === 'blank');
+    const prev = layerByKey.osm;
+    if (prev && map.hasLayer(prev)) {
+      map.removeLayer(prev);
+    }
+    let next;
+    if (opts.blankTiles) {
+      next = createBlankTileLayer(L, { theme: t });
+      baseLayers.blank = next;
+      layerByKey.blank = next;
+    } else {
+      next = createOsmTileLayer(L, t);
+    }
+    baseLayers.osm = next;
+    layerByKey.osm = next;
+    if (wasActive) {
+      next.addTo(map);
+      if (typeof map.invalidateSize === 'function') {
+        map.invalidateSize({ animate: false });
+      }
+    }
+  }
+
+  const themeEvent =
+    (typeof globalThis !== 'undefined' &&
+      globalThis.OpenFSDTheme &&
+      globalThis.OpenFSDTheme.THEME_CHANGE_EVENT) ||
+    'openfsd:themechange';
+
+  function onThemeChange(ev) {
+    const theme =
+      (ev && ev.detail && ev.detail.theme) || currentUiTheme(doc);
+    applyOsmTheme(theme);
+  }
+
+  if (doc && typeof doc.addEventListener === 'function') {
+    doc.addEventListener(themeEvent, onThemeChange);
+  }
+
+  function destroy() {
+    if (doc && typeof doc.removeEventListener === 'function') {
+      doc.removeEventListener(themeEvent, onThemeChange);
+    }
+  }
+
   // Force a remeasure after the first paint of this host (flex/grid settle).
   if (typeof map.whenReady === 'function') {
     map.whenReady(() => {
@@ -615,7 +726,16 @@ export function createMap(L, mapEl, opts = {}) {
     });
   }
 
-  return { map, baseLayers, get activeBase() { return activeBase; }, setBase };
+  return {
+    map,
+    baseLayers,
+    get activeBase() {
+      return activeBase;
+    },
+    setBase,
+    applyOsmTheme,
+    destroy,
+  };
 }
 
 /**

@@ -1,17 +1,18 @@
 /*
  * Sweatbox instructor manual — readable document layout.
  * Separate from the dense operator console (sweatbox.css).
+ * Colors from shared theme.css tokens.
  */
 
 .sbxm {
   --sbxm-max: 52rem;
   --sbxm-toc-w: 14rem;
   --sbxm-gap: 1.5rem;
-  --sbxm-border: #d0d4d9;
-  --sbxm-muted: #5c636a;
-  --sbxm-bg: #f8f9fa;
-  --sbxm-panel: #fff;
-  --sbxm-link: #0b57d0;
+  --sbxm-border: var(--ofs-console-border);
+  --sbxm-muted: var(--ofs-console-muted);
+  --sbxm-bg: var(--ofs-console-bg);
+  --sbxm-panel: var(--ofs-console-panel);
+  --sbxm-link: var(--ofs-console-link);
   --sbxm-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
   --sbxm-font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 
@@ -19,7 +20,7 @@
   font-family: var(--sbxm-font);
   font-size: 0.9375rem;
   line-height: 1.55;
-  color: #1a1a1a;
+  color: var(--ofs-console-accent);
   background: var(--sbxm-bg);
   max-width: none;
   margin: 0;
@@ -175,7 +176,7 @@
 .sbxm-doc code {
   font-family: var(--sbxm-mono);
   font-size: 0.88em;
-  background: #f0f2f4;
+  background: var(--ofs-console-code-bg);
   padding: 0.08em 0.28em;
   border-radius: 0.2rem;
 }
@@ -205,7 +206,7 @@
 }
 
 .sbxm-table th {
-  background: #eef1f4;
+  background: var(--ofs-console-chrome);
   font-weight: 650;
 }
 
@@ -227,7 +228,7 @@
 
 .sbxm-dl dd {
   margin: 0.15rem 0 0.35rem 0;
-  color: #2a2a2a;
+  color: var(--ofs-console-accent);
 }
 
 .sbxm-note {
@@ -257,6 +258,7 @@
 @media print {
   .sbxm {
     background: #fff;
+    color: #000;
     padding: 0;
   }
 
@@ -267,6 +269,7 @@
   .sbxm-doc {
     border: none;
     padding: 0;
+    background: #fff;
   }
 
   .sbxm-kicker {

@@ -21,13 +21,14 @@ fi
 echo "check-webjs: node $(node --version)"
 
 # Portable: expand test files without bash mapfile/globstar.
+# Covers airport-editor/* and top-level modules (e.g. theme.test.js).
 TESTS=()
 while IFS= read -r f; do
   TESTS+=("$f")
-done < <(find ./airport-editor -name '*.test.js' | LC_ALL=C sort)
+done < <(find . -name '*.test.js' | LC_ALL=C sort)
 
 if [[ ${#TESTS[@]} -eq 0 ]]; then
-  echo "check-webjs: no tests found under webjs/airport-editor" >&2
+  echo "check-webjs: no tests found under webjs/" >&2
   exit 1
 fi
 

@@ -30,10 +30,50 @@ document.addEventListener("DOMContentLoaded", async function () {
     }
 
     const map = L.map("map").setView([30, 0], 1);
-    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        maxZoom: 19
-    }).addTo(map);
     map.attributionControl.setPrefix("");
+
+    // Theme-aware OSM basemap (light Standard / dark CARTO). Shared with
+    // airport editor via OpenFSDTheme (theme.js).
+    let baseLayer = null;
+    function applyDashboardBasemap(theme) {
+        const next =
+            typeof OpenFSDTheme !== "undefined" &&
+            typeof OpenFSDTheme.createLeafletOsmLayer === "function"
+                ? OpenFSDTheme.createLeafletOsmLayer(L, theme)
+                : L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+                    maxZoom: 19,
+                    attribution:
+                        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+                });
+        if (baseLayer) {
+            map.removeLayer(baseLayer);
+        }
+        baseLayer = next;
+        baseLayer.addTo(map);
+    }
+
+    const initialTheme =
+        typeof OpenFSDTheme !== "undefined" &&
+        typeof OpenFSDTheme.currentTheme === "function"
+            ? OpenFSDTheme.currentTheme(document)
+            : (document.documentElement.getAttribute("data-bs-theme") === "dark"
+                ? "dark"
+                : "light");
+    applyDashboardBasemap(initialTheme);
+
+    const themeEvent =
+        typeof OpenFSDTheme !== "undefined" && OpenFSDTheme.THEME_CHANGE_EVENT
+            ? OpenFSDTheme.THEME_CHANGE_EVENT
+            : "openfsd:themechange";
+    document.addEventListener(themeEvent, function (ev) {
+        const theme =
+            (ev && ev.detail && ev.detail.theme) ||
+            (typeof OpenFSDTheme !== "undefined" &&
+            typeof OpenFSDTheme.currentTheme === "function"
+                ? OpenFSDTheme.currentTheme(document)
+                : "light");
+        applyDashboardBasemap(theme);
+    });
 
     const planeIcon = L.icon({
         iconUrl: "/static/images/plane.png",

@@ -2,7 +2,7 @@
 
 {{ define "body" }}
 <main class="container-fluid d-flex justify-content-center position-absolute top-50 start-50 translate-middle">
-    <div class="p-4 rounded border border-dark-subtle border-1" style="min-width: 20rem; max-width: 24rem; width: 100%;">
+    <div class="p-4 rounded border border-1 ofs-login-card" style="min-width: 20rem; max-width: 24rem; width: 100%;">
         <h1 class="h4 mb-3">Log in</h1>
         {{ if .Error }}
         <div class="alert alert-danger" role="alert">{{ .Error }}</div>
@@ -31,7 +31,7 @@
                        name="remember_me" value="on"{{ if .RememberMe }} checked{{ end }}>
                 <label class="form-check-label" for="login-form-remember-me">Remember me</label>
             </div>
-            <button type="submit" class="btn btn-outline-dark">Log in</button>
+            <button type="submit" class="btn btn-outline-secondary">Log in</button>
         </form>
     </div>
 </main>

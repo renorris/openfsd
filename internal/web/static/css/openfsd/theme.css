@@ -1,0 +1,124 @@
+/*
+ * openfsd shared theme tokens.
+ *
+ * Bootstrap 5.3 handles data-bs-theme for its own components.
+ * This file owns site chrome + console design tokens so Users / Sweatbox /
+ * Airport Editor / Manual dark modes stay in one place (no per-page copy).
+ */
+
+/* --- Bootstrap root: native form controls follow theme --- */
+:root,
+[data-bs-theme="light"] {
+  color-scheme: light;
+}
+
+[data-bs-theme="dark"] {
+  color-scheme: dark;
+}
+
+/* --- Shared console tokens (light defaults) --- */
+:root,
+[data-bs-theme="light"] {
+  --ofs-console-bg: #f4f5f6;
+  --ofs-console-panel: #fff;
+  --ofs-console-chrome: #e9ecef;
+  --ofs-console-chrome-soft: #f0f2f4;
+  --ofs-console-hover: #f0f4f8;
+  --ofs-console-input: #fff;
+  --ofs-console-help: #f8f9fa;
+  --ofs-console-map: #dfe6ea;
+  --ofs-console-border: #c5c9ce;
+  --ofs-console-border-strong: #8b9198;
+  --ofs-console-row-border: #e2e4e7;
+  --ofs-console-muted: #5c636a;
+  --ofs-console-accent: #1a1a1a;
+  --ofs-console-sel: #dce8f5;
+  --ofs-console-sel-border: #4a7ab0;
+  --ofs-console-danger: #842029;
+  --ofs-console-ok: #0f5132;
+  --ofs-console-warn-fg: #664d03;
+  --ofs-console-warn-bg: #fff3cd;
+  --ofs-console-warn-border: #ffecb5;
+  --ofs-console-ok-bg: #d1e7dd;
+  --ofs-console-ok-border: #a3cfbb;
+  --ofs-console-err-bg: #f8d7da;
+  --ofs-console-err-border: #f1aeb5;
+  --ofs-console-link: #0b57d0;
+  --ofs-console-code-bg: #f0f2f4;
+  --ofs-console-tab-hover: #dde1e5;
+}
+
+/* --- Shared console tokens (dark) --- */
+[data-bs-theme="dark"] {
+  --ofs-console-bg: #121417;
+  --ofs-console-panel: #1c1f24;
+  --ofs-console-chrome: #252a31;
+  --ofs-console-chrome-soft: #22262c;
+  --ofs-console-hover: #2a3140;
+  --ofs-console-input: #161a1f;
+  --ofs-console-help: #161a1f;
+  --ofs-console-map: #1a2228;
+  --ofs-console-border: #3a424c;
+  --ofs-console-border-strong: #5c6670;
+  --ofs-console-row-border: #2e343c;
+  --ofs-console-muted: #a8b0b8;
+  --ofs-console-accent: #e8eaed;
+  --ofs-console-sel: #1e3a5f;
+  --ofs-console-sel-border: #6ea8e0;
+  --ofs-console-danger: #f1aeb5;
+  --ofs-console-ok: #75b798;
+  --ofs-console-warn-fg: #ffda6a;
+  --ofs-console-warn-bg: #332701;
+  --ofs-console-warn-border: #664d03;
+  --ofs-console-ok-bg: #051b11;
+  --ofs-console-ok-border: #0f5132;
+  --ofs-console-err-bg: #2c0b0e;
+  --ofs-console-err-border: #842029;
+  --ofs-console-link: #6ea8fe;
+  --ofs-console-code-bg: #252a31;
+  --ofs-console-tab-hover: #2a3038;
+}
+
+/* --- Site header chrome --- */
+.ofs-site-header {
+  background-color: var(--bs-body-bg);
+  border-bottom-color: var(--bs-border-color) !important;
+}
+
+.ofs-brand-link {
+  color: var(--bs-body-color);
+  font-weight: 600;
+}
+
+.ofs-brand-link:hover,
+.ofs-brand-link:focus-visible {
+  color: var(--bs-body-color);
+}
+
+/* Logo mark: invert the black outer plate in dark mode; keep white inset + black plane */
+[data-bs-theme="dark"] .ofs-brand-mark {
+  filter: invert(1);
+}
+
+/* Theme toggle */
+.ofs-theme-toggle {
+  min-width: 2.25rem;
+}
+
+.ofs-theme-toggle .ofs-theme-icon-dark {
+  display: none;
+}
+
+[data-bs-theme="dark"] .ofs-theme-toggle .ofs-theme-icon-light {
+  display: none;
+}
+
+[data-bs-theme="dark"] .ofs-theme-toggle .ofs-theme-icon-dark {
+  display: inline;
+}
+
+/* Login card uses theme border/surface (no hardcoded dark-subtle) */
+.ofs-login-card {
+  background-color: var(--bs-body-bg);
+  border-color: var(--bs-border-color) !important;
+}

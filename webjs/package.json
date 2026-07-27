@@ -6,7 +6,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "test": "node --test ./airport-editor/*.test.js",
-    "test:coverage": "node --experimental-test-coverage --test-coverage-include='../internal/web/static/js/openfsd/airport-editor/**' --test ./airport-editor/*.test.js"
+    "test": "node --test ./airport-editor/*.test.js ./theme.test.js",
+    "test:coverage": "node --experimental-test-coverage --test-coverage-include='../internal/web/static/js/openfsd/airport-editor/**' --test-coverage-include='../internal/web/static/js/openfsd/theme.js' --test ./airport-editor/*.test.js ./theme.test.js"
   }
 }
