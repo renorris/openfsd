@@ -10,13 +10,14 @@ JSON under `/api/v1` for external tools and map polling. First-party UI is a pro
 | Page | Routes | Authz |
 |------|--------|-------|
 | Login | `GET/POST /login`, `POST /logout` | public / session |
-| Dashboard | `GET /dashboard` | session; **server-rendered connection summary** (table/counts from FSD service). Leaflet map is PE only (`credentials: 'same-origin'`) |
-| Users (directory) | `GET /usereditor[?q&rating&sort&dir&page&cid&new&flash]`, `POST /usereditor/create`, `POST /usereditor/update` | Instructor1+: directory + rating adjust; Supervisor+: create + name/password. CSRF; URL-owned filters; `dir_*` on POST for PRG |
+| Dashboard | `GET /dashboard` | any session (OBS+); **server-rendered connection summary** (table/counts from FSD service). Leaflet map is PE only (`credentials: 'same-origin'`) |
+| Account | `GET /account`, `POST /account/password`, `POST /account/delete` | any session; change password (current required) + soft-delete account (optional hard-delete via `ALLOW_PERMANENT_ACCOUNT_DELETE`, default false). CSRF; password step-up on delete |
+| Users (directory) | `GET /usereditor[?q&rating&sort&dir&page&cid&new&flash]`, `POST /usereditor/create`, `POST /usereditor/update` | **Supervisor+**; create + name/password + ratings (network ceiling ≤ actor; full pilot scale). CSRF; URL-owned filters; `dir_*` on POST for PRG |
 | Config editor | `GET/POST /configeditor`, `POST /configeditor/create-token`, `POST /configeditor/reset-secret` | Administrator; CSRF on mutations |
-| Sweatbox | `GET /sweatbox`, form POSTs under `/sweatbox/*` | Administrator; CSRF on mutations; proxies FSD service HTTP |
+| Sweatbox | `GET /sweatbox`, form POSTs under `/sweatbox/*` | **Instructor1+**; CSRF on mutations; proxies FSD service HTTP |
 | Airport editor | `GET /airport-editor`, `POST /airport-editor/download-apt`, `POST /airport-editor/download-air` | Administrator; CSRF on download; **echo-only** (no disk/DB persistence of `.apt`/`.air`) |
 
-JSON under `/api/v1` remains for external consumers and map polling. Admin mutations work with **cookie + CSRF only** (no `Authorization` header required).
+JSON under `/api/v1` remains for external consumers and map polling. Session dual-accept mutations work with **cookie + CSRF only** (no `Authorization` header required).
 
 ### Airport editor validation
 
@@ -41,7 +42,7 @@ The **airport editor** (`/airport-editor`) is a second complexity-gate exception
 - `POST /logout` clears the session cookie
 - Cookie-authenticated API mutations require a CSRF synchronizer token (`csrf_token` form field or `X-CSRF-Token` header matching the `openfsd_csrf` cookie)
 - Suspended/inactive ratings cannot open a web session (same as FSD policy)
-- **Rating in the cookie is fixed until expiry.** Demotion/suspension does not revoke existing sessions until `exp` unless the JWT secret is rotated (Configure Server → Reset JWT secret). Prefer shorter TTL if faster revoke is required.
+- **Session cookies are revalidated against the DB on every use** (HTML + dual-accept API): missing or inactive/suspended certificates clear cookies and are rejected; claims (network rating + names) are overlaid from the DB so demotions take effect immediately. Residual window after soft-delete is **Bearer access tokens only** (15m TTL).
 
 ### Cookie `Secure` flag (`COOKIE_SECURE`)
 | Condition | Secure |
@@ -67,10 +68,10 @@ Authorization: Bearer <access_token>
 
 ## Network Ratings
 The API enforces role-based access control using `NetworkRating` values defined in `pkg/protocol`. Key thresholds:
-- **Instructor1–3 (8–10)**: Can open the Users directory and adjust network/pilot ratings up to their own ceilings (any target). Cannot create users or change name/password.
-- **Supervisor (11)**: Full user mutation (create, name, password) when target network rating ≤ own; rating adjust as above; kick active connections.
-- **Administrator (12)**: Can manage server configuration, reset JWT secret keys, and create API tokens.
-- **Suspended (0) / Inactive (-1)**: Cannot log in to the web UI or obtain FSD JWTs.
+- **Instructor1–3 (8–10)**: Sweatbox instructor UI + JSON proxies. Cannot open the Users directory.
+- **Supervisor (11)**: User editor (create, name, password, ratings); kick active connections. Network rating assignments capped at own rating; pilot ratings use the full official scale.
+- **Administrator (12)**: Server configuration, JWT secret reset, API tokens, airport editor.
+- **Suspended (0) / Inactive (-1)**: Cannot log in to the web UI or obtain FSD JWTs; existing session cookies are rejected on revalidation.
 
 ---
 

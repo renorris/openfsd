@@ -88,22 +88,33 @@ func TestChangePasswordSuccess(t *testing.T) {
 			t.Fatal("expected session Set-Cookie on password change")
 		}
 	}
-	// CSRF rotated (clear + new issue → different value from old)
-	newCSRF := csrfFromCookies(cookies)
-	if newCSRF == "" {
-		// May need GET after rotate
-		w2, cookies2 := authedGET(t, ts, "/account", cookies)
-		_ = w2
-		newCSRF = csrfFromCookies(cookies2)
-		cookies = cookies2
+	// CSRF cleared on password change response; next GET re-issues a fresh token.
+	clearedCSRF := false
+	for _, sc := range w.Result().Header.Values("Set-Cookie") {
+		if strings.HasPrefix(sc, csrfCookieName+"=") &&
+			(strings.Contains(sc, "Max-Age=0") || strings.Contains(sc, "Max-Age=-1") || strings.Contains(sc, csrfCookieName+"=;")) {
+			clearedCSRF = true
+			break
+		}
 	}
+	if !clearedCSRF {
+		// mergeCookies drops empty/cleared values; post-merge CSRF must not equal old.
+		if csrfFromCookies(cookies) == oldCSRF && oldCSRF != "" {
+			t.Fatal("expected CSRF clear/rotation after password change")
+		}
+	}
+	w2, cookies2 := authedGET(t, ts, "/account", cookies)
+	if w2.Code != http.StatusOK {
+		t.Fatalf("GET /account after password change: %d", w2.Code)
+	}
+	newCSRF := csrfFromCookies(cookies2)
 	if newCSRF == "" {
-		t.Fatal("expected CSRF after password change")
+		t.Fatal("expected CSRF after password change follow-up GET")
 	}
 	if oldCSRF != "" && newCSRF == oldCSRF {
-		// Rotation: clearCSRF then issueCSRFToken on same response may set empty then new.
-		// Accept if session still works with new CSRF.
+		t.Fatal("CSRF token must change after password change (KD-7)")
 	}
+	cookies = cookies2
 
 	// Old password fails login
 	csrf, loginCookies := getLoginCSRF(t, ts)
@@ -222,6 +233,33 @@ func TestChangePasswordCSRF(t *testing.T) {
 	ts.engine.ServeHTTP(w, req)
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("status %d want 403", w.Code)
+	}
+}
+
+func TestDeleteAccountCSRF(t *testing.T) {
+	ts := newTestServer(t)
+	user := createTestUser(t, ts, "pw", int(protocol.NetworkRatingObserver))
+	cookies := formLogin(t, ts, user.CID, "pw")
+
+	form := url.Values{}
+	form.Set("current_password", "pw")
+	form.Set("confirm_cid", itoa(user.CID))
+	form.Set("csrf_token", "not-the-real-token")
+	req := httptest.NewRequest(http.MethodPost, "/account/delete", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Cookie", cookieHeader(cookies))
+	w := httptest.NewRecorder()
+	ts.engine.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status %d want 403", w.Code)
+	}
+	// Account must not be deleted
+	u, err := ts.dbRepo.UserRepo.GetUserByCID(user.CID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.NetworkRating != int(protocol.NetworkRatingObserver) {
+		t.Fatalf("rating=%d want OBS after CSRF reject", u.NetworkRating)
 	}
 }
 
@@ -390,18 +428,33 @@ func TestSessionRejectedAfterSoftDelete(t *testing.T) {
 	if loc := w.Header().Get("Location"); loc != "/login" {
 		t.Fatalf("Location=%q want /login", loc)
 	}
-	// Session cookie cleared
+	// Session cookie cleared on the soft-delete reject response.
 	cleared := false
 	for _, sc := range w.Result().Header.Values("Set-Cookie") {
 		if strings.HasPrefix(sc, sessionCookieName+"=") &&
 			(strings.Contains(sc, "Max-Age=0") || strings.Contains(sc, "Max-Age=-1")) {
 			cleared = true
+			break
 		}
 	}
 	if !cleared {
-		// mergeCookies should drop empty/cleared
-		if csrfFromCookies(cookies2) != "" || extractCookie(w.Result(), sessionCookieName) != "" {
-			// extractCookie may still return empty value for cleared cookie
+		t.Fatal("expected session cookie Max-Age=0/-1 clear after soft-delete revalidation")
+	}
+	if extractCookie(w.Result(), sessionCookieName) != "" {
+		// extractCookie returns the value part; empty value is OK for clear.
+		val := extractCookie(w.Result(), sessionCookieName)
+		if val != "" {
+			// Some clients may still parse Max-Age=-1 with empty value only.
+			for _, sc := range w.Result().Header.Values("Set-Cookie") {
+				if strings.HasPrefix(sc, sessionCookieName+"=") &&
+					(strings.Contains(sc, "Max-Age=0") || strings.Contains(sc, "Max-Age=-1")) {
+					val = ""
+					break
+				}
+			}
+			if val != "" {
+				t.Fatalf("session cookie still has value after clear: %q", val)
+			}
 		}
 	}
 	// Follow-up without re-login fails

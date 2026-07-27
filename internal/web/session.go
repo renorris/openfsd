@@ -163,11 +163,20 @@ func (s *Server) parseSessionCookie(c *gin.Context) (*auth.CustomClaims, error) 
 }
 
 // optionalSession loads session claims into the gin context when present (no redirect).
+// Revalidates against the DB (KD-9): inactive/missing users get cookies cleared and
+// are treated as signed-out so landing does not show stale elevated nav.
 func (s *Server) optionalSession(c *gin.Context) *auth.CustomClaims {
 	claims, err := s.parseSessionCookie(c)
 	if err != nil {
 		return nil
 	}
+	claims, user, err := s.revalidateSessionFromDB(claims)
+	if err != nil {
+		s.clearSessionCookie(c)
+		s.clearCSRFCookie(c)
+		return nil
+	}
 	setJwtContext(c, claims)
+	c.Set(dbUserContextKey, user)
 	return claims
 }

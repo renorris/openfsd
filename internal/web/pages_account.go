@@ -111,7 +111,8 @@ func (s *Server) handleFrontendAccountPassword(c *gin.Context) {
 		return
 	}
 
-	// KD-7: re-issue session with rememberMe=false (24h); rotate CSRF.
+	// KD-7: re-issue session with rememberMe=false (24h); clear CSRF so the
+	// following GET re-issues a fresh token (issueCSRFToken reuses request cookies).
 	if err := s.setSessionCookie(c, user, false); err != nil {
 		slog.Error("account password session reissue failed", "cid", claims.CID, "err", err)
 		page.FormError = "Password updated but session could not be refreshed; please log in again"
@@ -119,7 +120,6 @@ func (s *Server) handleFrontendAccountPassword(c *gin.Context) {
 		return
 	}
 	s.clearCSRFCookie(c)
-	s.issueCSRFToken(c)
 
 	slog.Info("account password changed",
 		"cid", claims.CID,
@@ -200,7 +200,6 @@ func (s *Server) handleFrontendAccountDelete(c *gin.Context) {
 			"event", "account_deleted",
 			"mode", "soft",
 		)
-		_ = permanentDisabled
 	}
 
 	s.clearSessionCookie(c)
