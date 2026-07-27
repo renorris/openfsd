@@ -8,12 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"github.com/gin-gonic/gin"
-	"github.com/renorris/openfsd/internal/auth"
-	"github.com/renorris/openfsd/internal/db"
-	"github.com/renorris/openfsd/internal/serviceapi"
-	"github.com/renorris/openfsd/pkg/protocol"
-	"go.uber.org/atomic"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -21,6 +16,13 @@ import (
 	"strings"
 	"text/template"
 	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/renorris/openfsd/internal/auth"
+	"github.com/renorris/openfsd/internal/db"
+	"github.com/renorris/openfsd/internal/serviceapi"
+	"github.com/renorris/openfsd/pkg/protocol"
+	"go.uber.org/atomic"
 )
 
 //go:embed data_templates/status.txt
@@ -284,14 +286,19 @@ type DatafeedGeneral struct {
 	UniqueUsers      int       `json:"unique_users"`
 }
 
+// DatafeedPilot embeds OnlineUserPilot so pilot_rating / assigned_beacon_code /
+// position fields come from service-HTTP. FlightPlan intentionally shadows the
+// embed: service-HTTP carries a string info section; the public datafeed wants
+// a VATSIM-shaped object (or omit when nil). Do NOT redeclare PilotRating —
+// encoding/json prefers outer fields and would zero honest embed values.
 type DatafeedPilot struct {
-	serviceapi.OnlineUserPilot
-	Server         string              `json:"server"`
-	PilotRating    int                 `json:"pilot_rating"`          // INOP placeholder
-	MilitaryRating int                 `json:"military_rating"`       // INOP placeholder
-	QnhIHg         float64             `json:"qnh_i_hg"`              // INOP placeholder
-	QnhMb          int                 `json:"qnh_mb"`                // INOP placeholder
-	FlightPlan     *DatafeedFlightplan `json:"flight_plan,omitempty"` // INOP placeholder
+	serviceapi.OnlineUserPilot         // promotes general/position/synthetic/pilot_rating/assigned_beacon_code
+	Server                     string  `json:"server"`
+	MilitaryRating             int     `json:"military_rating"` // always 0: not stored
+	QnhIHg                     float64 `json:"qnh_i_hg"`        // always 0: no weather model
+	QnhMb                      int     `json:"qnh_mb"`          // always 0: no weather model
+	// Intentional shadow of embed flight_plan string → object.
+	FlightPlan *DatafeedFlightplan `json:"flight_plan,omitempty"`
 }
 
 type DatafeedFlightplan struct {
@@ -311,10 +318,11 @@ type DatafeedFlightplan struct {
 	AssignedTransponder string `json:"assigned_transponder"`
 }
 
+// DatafeedATC embeds OnlineUserATC (incl. text_atis when present).
+// Do NOT redeclare TextATIS — embed owns json:"text_atis".
 type DatafeedATC struct {
 	serviceapi.OnlineUserATC
-	Server   string   `json:"server"`
-	TextATIS []string `json:"text_atis"` // INOP placeholder
+	Server string `json:"server"`
 }
 
 type DatafeedCache struct {
@@ -362,22 +370,27 @@ func (s *Server) generateDatafeed() (feed *DatafeedCache, err error) {
 		ATC:    []DatafeedATC{},
 	}
 
+	serverIdent, _, _, serverErr := s.getFsdServerInfo()
+	if serverErr != nil || serverIdent == "" {
+		serverIdent = "OPENFSD"
+	}
+
 	for _, pilot := range onlineUsers.Pilots {
 		dataFeed.Pilots = append(dataFeed.Pilots, DatafeedPilot{
-			OnlineUserPilot: pilot,
-			Server:          "OPENFSD",
-			PilotRating:     1,
-			MilitaryRating:  1,
-			QnhIHg:          29.92,
-			QnhMb:           1013,
+			OnlineUserPilot: pilot, // pilot_rating / assigned_beacon from embed
+			Server:          serverIdent,
+			MilitaryRating:  0,
+			QnhIHg:          0,
+			QnhMb:           0,
+			// Intentional shadow: string info section → VATSIM-shaped object.
+			FlightPlan: mapInfoSectionToDatafeedFP(pilot.FlightPlan, pilot.AssignedBeaconCode),
 		})
 	}
 
 	for _, atc := range onlineUsers.ATC {
 		dataFeed.ATC = append(dataFeed.ATC, DatafeedATC{
-			OnlineUserATC: atc,
-			Server:        "OPENFSD",
-			TextATIS:      []string{},
+			OnlineUserATC: atc, // text_atis from embed when present
+			Server:        serverIdent,
 		})
 	}
 
@@ -452,4 +465,60 @@ func (s *Server) updateDataFeedCache() {
 		return
 	}
 	datafeedCache.Store(feed)
+}
+
+// parseNonNegIntField returns 0 for empty, non-numeric, or negative input.
+func parseNonNegIntField(s string) int {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
+}
+
+// formatHHMM formats hour/minute info-section fields as "HHMM" with zero padding.
+// sweatbox/encodeFlightPlanInfo may emit single-digit "0" rather than "00".
+func formatHHMM(hoursField, minutesField string) string {
+	h := parseNonNegIntField(hoursField)
+	m := parseNonNegIntField(minutesField)
+	return fmt.Sprintf("%02d%02d", h, m)
+}
+
+// mapInfoSectionToDatafeedFP maps a session/serviceapi flight-plan info section
+// (colon fields after $FP SOURCE:DEST) to a VATSIM-shaped DatafeedFlightplan.
+// Empty info returns nil so the intentional outer FlightPlan shadow omits the key.
+func mapInfoSectionToDatafeedFP(info, assignedBeacon string) *DatafeedFlightplan {
+	info = strings.TrimSpace(info)
+	if info == "" {
+		return nil
+	}
+	parts := strings.Split(info, ":")
+	field := func(i int) string {
+		if i < 0 || i >= len(parts) {
+			return ""
+		}
+		return parts[i]
+	}
+	ac := field(1)
+	fp := &DatafeedFlightplan{
+		FlightRules:         field(0),
+		Aircraft:            ac,
+		AircraftFAA:         ac,
+		AircraftShort:       ac,
+		Departure:           field(3),
+		DepTime:             field(4),
+		Arrival:             field(7),
+		EnrouteTime:         formatHHMM(field(8), field(9)),
+		FuelTime:            formatHHMM(field(10), field(11)),
+		Alternate:           field(12),
+		Remarks:             field(13),
+		Route:               field(14),
+		RevisionID:          0,
+		AssignedTransponder: assignedBeacon,
+	}
+	return fp
 }

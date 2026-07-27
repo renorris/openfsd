@@ -153,10 +153,14 @@ func TestGenerateDatafeedWithStubOnline(t *testing.T) {
 		Pilots: []serviceapi.OnlineUserPilot{{
 			OnlineUserGeneralData: serviceapi.OnlineUserGeneralData{Callsign: "N1", CID: 1},
 			Altitude:              1000,
+			PilotRating:           7,
+			FlightPlan:            "I:B738:450:KLAX:1200:0000:FL350:KJFK:2:5:3:0::rmk:DCT",
+			AssignedBeaconCode:    "1200",
 		}, {
 			OnlineUserGeneralData: serviceapi.OnlineUserGeneralData{Callsign: "SBX1", CID: 900001},
 			Altitude:              2000,
 			Synthetic:             true,
+			PilotRating:           0,
 		}},
 		ATC: []serviceapi.OnlineUserATC{{
 			OnlineUserGeneralData: serviceapi.OnlineUserGeneralData{Callsign: "TWR", CID: 2},
@@ -170,6 +174,32 @@ func TestGenerateDatafeedWithStubOnline(t *testing.T) {
 	assert.Contains(t, s, "N1")
 	assert.Contains(t, s, `"synthetic":true`)
 	assert.NotContains(t, s, `"synthetic":false`)
+
+	// Honest datafeed mapping: no fabricated QNH 29.92 / ratings of 1; real pilot_rating + object FP.
+	ident, _, _, err := env.server.getFsdServerInfo()
+	require.NoError(t, err)
+	if ident == "" {
+		ident = "OPENFSD"
+	}
+	var pilots []DatafeedPilot
+	for _, pilot := range ou.Pilots {
+		pilots = append(pilots, DatafeedPilot{
+			OnlineUserPilot: pilot,
+			Server:          ident,
+			MilitaryRating:  0,
+			QnhIHg:          0,
+			QnhMb:           0,
+			FlightPlan:      mapInfoSectionToDatafeedFP(pilot.FlightPlan, pilot.AssignedBeaconCode),
+		})
+	}
+	jb, err := json.Marshal(pilots)
+	require.NoError(t, err)
+	js := string(jb)
+	assert.NotContains(t, js, "29.92")
+	assert.NotContains(t, js, "1013")
+	assert.Contains(t, js, `"pilot_rating":7`)
+	assert.Contains(t, js, `"flight_plan":{`)
+	assert.Contains(t, js, `"server":"`+ident+`"`)
 }
 
 func TestMakeFsdHttpServiceRequest(t *testing.T) {

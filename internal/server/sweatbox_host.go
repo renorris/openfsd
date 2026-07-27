@@ -474,6 +474,7 @@ func (h *SweatboxHost) buildSession(ac sweatbox.AircraftSnapshot) *session.Sessi
 		RealName:         "SWEATBOX",
 		NetworkRating:    protocol.NetworkRatingObserver,
 		MaxNetworkRating: protocol.NetworkRatingObserver,
+		PilotRating:      0, // synthetic: no DB certificate (P0)
 		ProtoRevision:    100,
 		LoginTime:        now,
 		IsAtc:            false,

@@ -191,10 +191,14 @@ func TestOnlineUsersSyntheticBadge(t *testing.T) {
 	require.NoError(t, err)
 
 	human := newSess("HUMAN1", false, NetworkRatingObserver)
+	human.PilotRating = int(protocol.PilotRatingPPL)
+	human.FlightPlan.Store("I:B738:450:KLAX:1200:0000:FL350:KJFK:2:0:3:0::rmk:DCT")
+	human.AssignedBeaconCode.Store("4321")
 	require.NoError(t, reg.Register(human))
 
 	synth := newSess("SBX1", false, NetworkRatingObserver)
 	synth.Synthetic = true
+	synth.PilotRating = 0
 	require.NoError(t, reg.Register(synth))
 
 	e := srv.setupRoutes()
@@ -214,9 +218,13 @@ func TestOnlineUsersSyntheticBadge(t *testing.T) {
 		case "HUMAN1":
 			sawHuman = true
 			require.False(t, p.Synthetic, "human pilot must not be synthetic")
+			require.Equal(t, int(protocol.PilotRatingPPL), p.PilotRating)
+			require.Contains(t, p.FlightPlan, "KLAX")
+			require.Equal(t, "4321", p.AssignedBeaconCode)
 		case "SBX1":
 			sawSynth = true
 			require.True(t, p.Synthetic, "sweatbox pilot must be synthetic")
+			require.Equal(t, 0, p.PilotRating)
 		}
 	}
 	require.True(t, sawHuman && sawSynth, "expected both pilots in snapshot")
@@ -224,6 +232,8 @@ func TestOnlineUsersSyntheticBadge(t *testing.T) {
 	require.Contains(t, body, `"synthetic":true`)
 	// Human pilots must omit synthetic when false (omitempty).
 	require.NotContains(t, body, `"synthetic":false`)
+	// pilot_rating always present as a number.
+	require.Contains(t, body, `"pilot_rating"`)
 }
 
 func TestRunServiceHTTPAndListen(t *testing.T) {

@@ -119,6 +119,7 @@ func (s *Server) attemptAuthentication(client *session.Session, token string) (e
 		if err = s.enforcePilotPPLRequirement(client, user); err != nil {
 			return
 		}
+		setSessionPilotRating(client, user)
 
 		return
 	}
@@ -157,8 +158,22 @@ func (s *Server) attemptAuthentication(client *session.Session, token string) (e
 	if err = s.enforcePilotPPLRequirement(client, user); err != nil {
 		return
 	}
+	setSessionPilotRating(client, user)
 
 	return
+}
+
+// setSessionPilotRating stores the certificate pilot rating on the session.
+// Invalid / unknown ratings become 0 (P0).
+func setSessionPilotRating(client *session.Session, user *db.User) {
+	if client == nil || user == nil {
+		return
+	}
+	if protocol.IsValidPilotRating(user.PilotRating) {
+		client.PilotRating = user.PilotRating
+		return
+	}
+	client.PilotRating = 0
 }
 
 // enforcePilotPPLRequirement rejects pilot (#AP) logins when REQUIRE_PILOT_PPL is

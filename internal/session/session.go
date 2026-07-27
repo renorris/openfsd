@@ -37,10 +37,13 @@ type LoginData struct {
 	RealName         string                 // Real name
 	NetworkRating    protocol.NetworkRating // Network rating of the client
 	MaxNetworkRating protocol.NetworkRating // Maximum allowed network rating (from DB/JWT)
-	ProtoRevision    int                    // Protocol revision
-	LoginTime        time.Time              // Time of login
-	ClientID         uint16                 // Client ID (from ident packet)
-	IsAtc            bool                   // True if the client is ATC, false if a pilot
+	// PilotRating is the certificate pilot rating wire ID set at auth
+	// (0,1,3,7,15,31,63). Immutable after login; 0 for synthetic/unknown.
+	PilotRating   int
+	ProtoRevision int       // Protocol revision
+	LoginTime     time.Time // Time of login
+	ClientID      uint16    // Client ID (from ident packet)
+	IsAtc         bool      // True if the client is ATC, false if a pilot
 }
 
 // LatLon is a geographic coordinate pair (API convenience; storage is non-boxing atomics).
@@ -71,7 +74,7 @@ type LatLon struct {
 //
 // Immutable after login (set during login; safe to read concurrently afterward):
 //   - LoginData fields (Callsign, CID, RealName, NetworkRating, ProtoRevision, …)
-//   - MaxNetworkRating is fixed once authentication completes
+//   - MaxNetworkRating / PilotRating fixed once authentication completes
 //   - Synthetic — set before Register for in-process (sweatbox) participants;
 //     never set on the TCP login path; concurrent readers OK
 //

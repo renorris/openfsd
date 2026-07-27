@@ -448,7 +448,11 @@ func TestAttemptAuth_SuccessPassword(t *testing.T) {
 		t.Fatal(err)
 	}
 	f := &fakeUserStore{byCID: map[int]*db.User{
-		5: {CID: 5, Password: string(hash), NetworkRating: int(protocol.NetworkRatingController1)},
+		5: {
+			CID: 5, Password: string(hash),
+			NetworkRating: int(protocol.NetworkRatingController1),
+			PilotRating:   int(protocol.PilotRatingATPL),
+		},
 	}}
 	srv := newAuthTestServer(t, f, nil)
 	client := session.New(context.Background(), &discardConn{}, nil, session.LoginData{
@@ -462,6 +466,9 @@ func TestAttemptAuth_SuccessPassword(t *testing.T) {
 	}
 	if client.MaxNetworkRating != protocol.NetworkRatingController1 {
 		t.Fatalf("MaxNetworkRating=%v", client.MaxNetworkRating)
+	}
+	if client.PilotRating != int(protocol.PilotRatingATPL) {
+		t.Fatalf("PilotRating=%d want ATPL(%d)", client.PilotRating, protocol.PilotRatingATPL)
 	}
 }
 

@@ -145,6 +145,7 @@ func (s *Server) handleGetOnlineUsers(c *gin.Context) {
 				Frequency:             client.Frequency.Load(),
 				Facility:              int(client.FacilityType.Load()),
 				VisRange:              int(client.VisRange.Load() * 0.000539957), // Convert meters to nautical miles
+				// TextATIS empty: openfsd does not persist NEWINFO by default.
 			}
 			resData.ATC = append(resData.ATC, atc)
 		} else {
@@ -155,6 +156,9 @@ func (s *Server) handleGetOnlineUsers(c *gin.Context) {
 				Heading:               int(client.Heading.Load()),
 				Transponder:           client.Transponder.Load(),
 				Synthetic:             client.Synthetic,
+				PilotRating:           client.PilotRating,
+				FlightPlan:            client.FlightPlan.Load(),
+				AssignedBeaconCode:    client.AssignedBeaconCode.Load(),
 			}
 			resData.Pilots = append(resData.Pilots, pilot)
 		}
