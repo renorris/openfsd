@@ -94,7 +94,7 @@ FSD TCP login (`internal/server/conn.go`) rejects requested rating `< OBS` with 
 - Email verification, OAuth, or multi-factor auth.
 - Full server-side session store / password-epoch column (stateless residual: **Bearer access** 15m after password change / soft-delete; session cookies revalidate from DB on every use — see KD-9).
 - Letting users edit their own network/pilot ratings from the account page.
-- Moving airport editor or config editor off Administrator.
+- Moving config editor off Administrator (airport editor is I1+ per product update).
 - Restoring I1 “rating-only” user directory after the SUP+ gate (explicit product change).
 - Cross-user admin hard-delete UI (SUP can already set Inactive via user editor; hard-delete is self-service only when enabled).
 - Web-layer rate limiting infrastructure (document as follow-up; FSD already rate-limits TCP auth).
@@ -110,7 +110,7 @@ FSD TCP login (`internal/server/conn.go`) rejects requested rating `< OBS` with 
 | **KD-2** | Hard-delete is **opt-in** via web env `ALLOW_PERMANENT_ACCOUNT_DELETE` (default `false`); only **self-service** | Matches product; avoids accidental irreversible deletes; operators can soft-disable others via user editor. Env lives on web `ServerConfig` (same bool/envconfig style as `COOKIE_SECURE`; FSD’s `SWEATBOX_ENABLED` is the parallel pattern on the FSD process, not web). |
 | **KD-3** | Account self-service lives at **`/account`** (GET + POST actions), linked from dashboard + primary nav | Keeps `/dashboard` focused on network situational awareness; forms get a clean page without overloading the map template; PE-friendly. |
 | **KD-4** | User editor route + API non-self access raised to **SUP+**; remove I1 rating-only editor access | Product requirement; simplifies authz matrix; I1 gains sweatbox instead. |
-| **KD-5** | Sweatbox HTML + `/api/v1/sweatbox/*` min rating **I1+**; airport editor & config remain **ADM** | Product only moves sweatbox; airport editor is a separate heavy tool and stays admin. |
+| **KD-5** | Sweatbox + airport editor HTML/API min rating **I1+**; config remains **ADM** | Product: instructors author `.apt`/`.air` and run sweatbox. Config stays admin-only. (Originally airport stayed ADM; product later moved airport editor to I1+.) |
 | **KD-6** | SUP+ user create/update may assign **any official pilot rating** (`PilotRatingScale` through FE); drop actor pilot-rating ceiling for editors | Root cause of P0-only bug; pilot rating is a certificate attribute admins grant, not something bounded by the operator’s own flying quals. Network rating ceiling (≤ actor) **retained**. |
 | **KD-7** | After successful password change: re-hash, **always re-issue session with `rememberMe=false`** (`sessionDefaultTTL` = 24h), and **rotate CSRF** via `clearCSRFCookie` + `issueCSRFToken` (same pattern as successful login in `frontend.go`) | Password change is a security event; remember-me is **not** preserved. Other devices with unexpired session JWTs remain until TTL or until DB revalidation fails for inactive users (not applicable to password-only change). |
 | **KD-8** | After account delete (soft or hard): verify **current password** + CID confirm; **clear session + CSRF**, 303 to `/login?account=deleted` with a **required** login info banner | Destructive action needs step-up beyond CSRF/CID; user must not retain an authenticated cookie; PRG flash must be visible. |
@@ -955,7 +955,7 @@ bash scripts/check-hygiene.sh
 4. **Should Suspended users appear differently from self-deleted Inactive in directory?**  
    - Already different labels; no code change.
 
-5. **Airport editor for I1?** Product silent → stay ADM.
+5. ~~**Airport editor for I1?**~~ **Resolved:** I1+ (same as sweatbox).
 
 6. **JSON self-service password API?** Out of scope unless a client needs it.
 
