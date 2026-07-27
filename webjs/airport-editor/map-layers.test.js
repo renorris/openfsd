@@ -307,21 +307,25 @@ test('shouldSuppressMapClick matrix (K5: suppress ≠ block render)', () => {
 
 test('buildVertexHandleIconOptions: iconSize/iconAnchor symmetry', () => {
   const icon = buildVertexHandleIconOptions();
-  assert.equal(VERTEX_HANDLE_PX, 16);
+  assert.equal(VERTEX_HANDLE_PX, 18);
   assert.equal(icon.iconSize[0], VERTEX_HANDLE_PX);
   assert.equal(icon.iconSize[1], VERTEX_HANDLE_PX);
   assert.equal(icon.iconAnchor[0], VERTEX_HANDLE_PX / 2);
   assert.equal(icon.iconAnchor[1], VERTEX_HANDLE_PX / 2);
   assert.match(icon.className, /apted-vertex-handle/);
   assert.match(icon.className, /leaflet-interactive/);
+  assert.match(icon.className, /leaflet-div-icon/);
 });
 
-test('buildVertexHandleOptions: draggable, autoPan, bubblingMouseEvents', () => {
+test('buildVertexHandleOptions: manual drag (not Marker.draggable), pane, bubbling off', () => {
   const opts = buildVertexHandleOptions(2);
-  assert.equal(opts.draggable, true);
+  // Drag is document pointer capture — Marker.draggable must stay false.
+  assert.equal(opts.draggable, false);
+  assert.equal(opts.interactive, true);
   assert.equal(opts.autoPan, false);
   assert.equal(opts.keyboard, false);
   assert.equal(opts.bubblingMouseEvents, false);
-  assert.equal(opts.zIndexOffset, 2000);
-  assert.equal(opts.title, 'Vertex 3');
+  assert.ok(opts.zIndexOffset >= 2000);
+  assert.equal(opts.pane, 'aptedVertexPane');
+  assert.match(opts.title, /Vertex 3/);
 });

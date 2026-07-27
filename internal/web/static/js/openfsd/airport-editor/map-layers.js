@@ -203,25 +203,33 @@ export function escapeHtml(s) {
 }
 
 /** Keep in sync with .apted-vertex-handle width/height in airport-editor.css */
-export const VERTEX_HANDLE_PX = 16;
+export const VERTEX_HANDLE_PX = 18;
 
 /** Duration after dragend during which map clicks are ignored. */
 export const MAP_CLICK_SUPPRESS_MS = 250;
 
+/** Leaflet pane name for vertex handles (above polylines / markers). */
+export const VERTEX_PANE = 'aptedVertexPane';
+
 /**
  * Pure: options for the vertex L.marker (no Leaflet instance required).
+ * Drag is implemented with map/document pointer capture — not Marker.draggable
+ * (divIcon + Marker.Drag is unreliable under rotatedmarker / pane stacking).
  * Icon is constructed at the call site with L.divIcon({...buildVertexHandleIconOptions()}).
  * @param {number} vertexIndex
  * @returns {object}
  */
 export function buildVertexHandleOptions(vertexIndex) {
   return {
-    draggable: true,
+    // Manual pointer drag in OverlayController — do not use L.Marker.dragging.
+    draggable: false,
     autoPan: false,
     keyboard: false,
-    zIndexOffset: 2000,
+    interactive: true,
+    zIndexOffset: 4000,
     bubblingMouseEvents: false,
-    title: `Vertex ${vertexIndex + 1}`,
+    pane: VERTEX_PANE,
+    title: `Vertex ${vertexIndex + 1} — drag to move`,
   };
 }
 
@@ -232,7 +240,8 @@ export function buildVertexHandleOptions(vertexIndex) {
 export function buildVertexHandleIconOptions() {
   const px = VERTEX_HANDLE_PX;
   return {
-    className: 'apted-vertex-handle leaflet-interactive',
+    // Keep leaflet-div-icon so Leaflet base icon rules apply; add our handle class.
+    className: 'leaflet-div-icon apted-vertex-handle leaflet-interactive',
     iconSize: [px, px],
     iconAnchor: [px / 2, px / 2],
   };
@@ -444,6 +453,30 @@ export function createMap(L, mapEl, opts = {}) {
 }
 
 /**
+ * Ensure a high z-index pane exists for vertex handles (above polylines).
+ * @param {*} map Leaflet map
+ */
+export function ensureVertexPane(map) {
+  if (!map || typeof map.getPane !== 'function') return;
+  if (map.getPane(VERTEX_PANE)) return;
+  if (typeof map.createPane === 'function') {
+    const pane = map.createPane(VERTEX_PANE);
+    if (pane && pane.style) {
+      // Above marker pane (600) and tooltip (650); below popup (700).
+      pane.style.zIndex = '660';
+      // Pane itself must not block events outside icons.
+      pane.style.pointerEvents = 'none';
+    }
+  }
+  // Children (marker icons) re-enable pointer events via CSS / leaflet-interactive.
+  const paneEl = map.getPane(VERTEX_PANE);
+  if (paneEl) {
+    // Icons inside must receive events; Leaflet sets pointer-events on icons.
+    paneEl.style.pointerEvents = 'none';
+  }
+}
+
+/**
  * Overlay controller: surfaces + aircraft + vertex handles + draw preview.
  * PR7: vertex drag, aircraft drag, draw-preview polyline.
  */
@@ -490,11 +523,23 @@ export class OverlayController {
     this._dragging = false;
     /** @type {number} ms timestamp of last dragend (0 = never / reset on dragstart) */
     this._dragEndedAt = 0;
+    /**
+     * Active manual vertex drag (not Marker.dragging).
+     * @type {{ surfaceIndex: number, vertexIndex: number, handle: *, mapDraggingWasEnabled: boolean }|null}
+     */
+    this._vertexDrag = null;
+    /** @type {(ev: MouseEvent|TouchEvent) => void}|null */
+    this._onVertexPointerMove = null;
+    /** @type {(ev: MouseEvent|TouchEvent) => void}|null */
+    this._onVertexPointerUp = null;
     this._planeIcon = L.icon({
       iconUrl: this.planeIconUrl,
       iconSize: [16, 16],
       iconAnchor: [8, 8],
     });
+
+    // Pane above overlay (400) and marker (600) so handles stay grabbable.
+    ensureVertexPane(map);
 
     if (this.onMapClick) {
       map.on('click', (ev) => {
@@ -677,15 +722,164 @@ export class OverlayController {
   }
 
   /**
-   * Draggable vertex handles for selected surface.
-   * Single divIcon marker per vertex (no companion circleMarker).
-   * Normative drag state machine: paint first, clear _dragging before onVertexDragEnd.
+   * Apply a vertex lat/lon during drag: move handle, reshape polyline/point live, notify model.
+   * Does not call onVertexDragEnd (caller commits end after clearing _dragging).
+   * @param {number} surfaceIndex
+   * @param {number} vertexIndex
+   * @param {number} lat
+   * @param {number} lon
+   * @param {*} [handle] Leaflet marker to reposition
+   */
+  _applyVertexDrag(surfaceIndex, vertexIndex, lat, lon, handle) {
+    if (handle && typeof handle.setLatLng === 'function') {
+      handle.setLatLng([lat, lon]);
+    }
+    const base = this._airport?.surfaces?.[surfaceIndex]?.points || [];
+    const next = patchVertexPoints(base, vertexIndex, lat, lon);
+    // Live-update the connecting polyline / parking point immediately.
+    this._liveSetSurfacePoints(surfaceIndex, next);
+    this.onVertexDrag(surfaceIndex, vertexIndex, lat, lon);
+  }
+
+  /**
+   * Convert a browser pointer event to map latlng (works for mouse + touch).
+   * @param {MouseEvent|TouchEvent} domEv
+   * @returns {{ lat: number, lng: number }|null}
+   */
+  _latLngFromPointerEvent(domEv) {
+    const map = this.map;
+    if (!map || !domEv) return null;
+    /** @type {MouseEvent|Touch|null} */
+    let pt = null;
+    if ('touches' in domEv && domEv.touches && domEv.touches.length) {
+      pt = domEv.touches[0];
+    } else if ('changedTouches' in domEv && domEv.changedTouches && domEv.changedTouches.length) {
+      pt = domEv.changedTouches[0];
+    } else if ('clientX' in domEv) {
+      pt = /** @type {MouseEvent} */ (domEv);
+    }
+    if (!pt || !Number.isFinite(pt.clientX) || !Number.isFinite(pt.clientY)) return null;
+    try {
+      // mouseEventToLatLng accepts anything with clientX/clientY.
+      return map.mouseEventToLatLng(/** @type {MouseEvent} */ (pt));
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Start map-level vertex drag (document pointer capture). Prefer this over Marker.draggable.
+   * @param {number} surfaceIndex
+   * @param {number} vertexIndex
+   * @param {*} handle
+   * @param {Event} [domEv]
+   */
+  _beginVertexDrag(surfaceIndex, vertexIndex, handle, domEv) {
+    if (!this.editable || this._vertexDrag) return;
+    const L = this.L;
+    const map = this.map;
+
+    if (domEv) {
+      L.DomEvent.preventDefault(domEv);
+      L.DomEvent.stopPropagation(domEv);
+    }
+
+    const mapDraggingWasEnabled =
+      !!(map.dragging && typeof map.dragging.enabled === 'function' && map.dragging.enabled());
+    if (map.dragging && typeof map.dragging.disable === 'function') {
+      map.dragging.disable();
+    }
+
+    this._dragging = true;
+    this._dragEndedAt = 0;
+    this._vertexDrag = {
+      surfaceIndex,
+      vertexIndex,
+      handle,
+      mapDraggingWasEnabled,
+    };
+
+    try {
+      const el = handle?.getElement?.();
+      if (el && el.classList) el.classList.add('is-dragging');
+    } catch {
+      /* ignore */
+    }
+
+    const onMove = (ev) => {
+      if (!this._vertexDrag) return;
+      if (ev && typeof ev.preventDefault === 'function') ev.preventDefault();
+      const ll = this._latLngFromPointerEvent(ev);
+      if (!ll) return;
+      const { surfaceIndex: si, vertexIndex: vi, handle: h } = this._vertexDrag;
+      this._applyVertexDrag(si, vi, ll.lat, ll.lng, h);
+    };
+
+    const onUp = (ev) => {
+      if (!this._vertexDrag) return;
+      const { surfaceIndex: si, vertexIndex: vi, handle: h, mapDraggingWasEnabled: was } =
+        this._vertexDrag;
+
+      // Detach listeners first so a re-entrant event cannot double-end.
+      if (this._onVertexPointerMove) {
+        L.DomEvent.off(document, 'mousemove', this._onVertexPointerMove);
+        document.removeEventListener('touchmove', this._onVertexPointerMove);
+      }
+      if (this._onVertexPointerUp) {
+        L.DomEvent.off(document, 'mouseup', this._onVertexPointerUp);
+        document.removeEventListener('touchend', this._onVertexPointerUp);
+        document.removeEventListener('touchcancel', this._onVertexPointerUp);
+      }
+      this._onVertexPointerMove = null;
+      this._onVertexPointerUp = null;
+      this._vertexDrag = null;
+
+      try {
+        const el = h?.getElement?.();
+        if (el && el.classList) el.classList.remove('is-dragging');
+      } catch {
+        /* ignore */
+      }
+
+      const ll = this._latLngFromPointerEvent(ev) || (h && h.getLatLng && h.getLatLng());
+      const lat = ll?.lat;
+      const lon = ll?.lng ?? ll?.lon;
+
+      // State machine: clear pointer-down BEFORE app refresh (onVertexDragEnd).
+      this._dragEndedAt = Date.now();
+      this._dragging = false;
+      if (was && map.dragging && typeof map.dragging.enable === 'function') {
+        map.dragging.enable();
+      }
+
+      if (Number.isFinite(lat) && Number.isFinite(lon)) {
+        // Final live paint + model, then end callback (full refresh OK — _dragging false).
+        this._applyVertexDrag(si, vi, lat, lon, h);
+        this.onVertexDragEnd(si, vi, lat, lon);
+      }
+    };
+
+    this._onVertexPointerMove = onMove;
+    this._onVertexPointerUp = onUp;
+    L.DomEvent.on(document, 'mousemove', onMove);
+    L.DomEvent.on(document, 'mouseup', onUp);
+    // Native listeners: touchmove must be non-passive so we can prevent scroll/pan.
+    document.addEventListener('touchmove', onMove, { passive: false });
+    document.addEventListener('touchend', onUp);
+    document.addEventListener('touchcancel', onUp);
+  }
+
+  /**
+   * Vertex handles for selected surface.
+   * Visual: divIcon marker. Drag: document pointer capture + live setLatLngs.
    * @param {import('./model.js').Surface} surface
    * @param {number} surfaceIndex
    */
   _addVertexHandles(surface, surfaceIndex) {
     const L = this.L;
     const pts = surface.points || [];
+    ensureVertexPane(this.map);
+
     for (let vi = 0; vi < pts.length; vi++) {
       const p = pts[vi];
       if (!Number.isFinite(p.lat) || !Number.isFinite(p.lon)) continue;
@@ -693,32 +887,32 @@ export class OverlayController {
         ...buildVertexHandleOptions(vi),
         icon: L.divIcon(buildVertexHandleIconOptions()),
       });
-      handle.on('dragstart', (ev) => {
-        this._dragging = true;
-        this._dragEndedAt = 0;
-        if (ev?.originalEvent) L.DomEvent.stopPropagation(ev.originalEvent);
+
+      // Prevent map click / select flicker when releasing on the handle.
+      handle.on('click', (ev) => {
+        if (ev?.originalEvent) L.DomEvent.stop(ev.originalEvent);
+        L.DomEvent.stopPropagation(ev);
       });
-      handle.on('drag', (ev) => {
-        const ll = ev.target.getLatLng();
-        // 1) Overlay-local paint FIRST (order-independent of model callback).
-        const base = this._airport?.surfaces?.[surfaceIndex]?.points || [];
-        const next = patchVertexPoints(base, vi, ll.lat, ll.lng);
-        this._liveSetSurfacePoints(surfaceIndex, next);
-        // 2) Model commit path (main must not refresh).
-        this.onVertexDrag(surfaceIndex, vi, ll.lat, ll.lng);
-      });
-      handle.on('dragend', (ev) => {
-        const ll = ev.target.getLatLng();
-        // Final live paint (covers last frame).
-        const base = this._airport?.surfaces?.[surfaceIndex]?.points || [];
-        const next = patchVertexPoints(base, vi, ll.lat, ll.lng);
-        this._liveSetSurfacePoints(surfaceIndex, next);
-        // State machine: clear pointer-down flag BEFORE app refresh path.
-        this._dragEndedAt = Date.now();
-        this._dragging = false;
-        this.onVertexDragEnd(surfaceIndex, vi, ll.lat, ll.lng);
-      });
+
+      // Bind pointer start on the icon element once it exists in the DOM.
+      // Prefer direct listeners over Marker.draggable (unreliable for divIcon).
+      const bindPointer = () => {
+        const el = typeof handle.getElement === 'function' ? handle.getElement() : null;
+        if (!el || el._aptedVertexBound) return;
+        el._aptedVertexBound = true;
+        L.DomEvent.disableClickPropagation(el);
+        L.DomEvent.disableScrollPropagation(el);
+        const start = (domEv) => {
+          this._beginVertexDrag(surfaceIndex, vi, handle, domEv);
+        };
+        L.DomEvent.on(el, 'mousedown', start);
+        // Non-passive touch so we can preventDefault and stop map/page scroll.
+        el.addEventListener('touchstart', start, { passive: false });
+      };
+      handle.on('add', bindPointer);
       handle.addTo(this.vertexGroup);
+      // Icon usually exists immediately after addTo; bind now as well.
+      bindPointer();
     }
   }
 
