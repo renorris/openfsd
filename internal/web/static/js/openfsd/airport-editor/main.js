@@ -114,12 +114,12 @@ function main() {
     },
     onVertexDrag(si, vi, lat, lon) {
       setVertex(doc, si, vi, { lat, lon });
-      // Live-update surface polyline without full refresh of handles mid-drag.
-      // Full refresh on dragend.
+      // Intentionally no refresh — OverlayController live-updates the surface layer.
+      // Hard invariant: never refresh/render while OverlayController._dragging.
     },
     onVertexDragEnd(si, vi, lat, lon) {
       setVertex(doc, si, vi, { lat, lon });
-      afterAptMutation();
+      afterAptMutation({ fit: false }); // full refresh — _dragging already false
     },
     onAircraftDrag(index, lat, lon) {
       updateAircraft(doc, index, { lat, lon });

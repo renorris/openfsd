@@ -1,6 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
+/**
+ * Pure OverlayController helpers.
+ *
+ * RC1 live path = applySurfaceLatLngs (polyline setLatLngs / point setLatLng).
+ * RC2 no companion circle factory in exports — single divIcon via builders.
+ * RC3 no CSS margin in JS positioning — iconSize/iconAnchor only.
+ * K5 suppress ≠ block render: dragging:false + within suppressMs still allows full render by contract.
+ */
 import {
   surfaceStyle,
   collectLatLngs,
@@ -14,6 +22,14 @@ import {
   OSM_ATTRIBUTION,
   ESRI_TILE_URL,
   ESRI_ATTRIBUTION,
+  VERTEX_HANDLE_PX,
+  MAP_CLICK_SUPPRESS_MS,
+  buildVertexHandleOptions,
+  buildVertexHandleIconOptions,
+  pointsToLatLngs,
+  applySurfaceLatLngs,
+  patchVertexPoints,
+  shouldSuppressMapClick,
 } from '../../internal/web/static/js/openfsd/airport-editor/map-layers.js';
 import {
   createEmptyDocument,
@@ -172,4 +188,140 @@ test('escapeHtml neutralizes markup in freeform AIR-like strings', () => {
   assert.equal(escapeHtml(`a&b<'">`), 'a&amp;b&lt;&#39;&quot;&gt;');
   // Surface-style label still escapes if ever routed through HTML
   assert.equal(escapeHtml('G1 (park)'), 'G1 (park)');
+});
+
+test('pointsToLatLngs: empty, skips non-finite, preserves order', () => {
+  assert.deepEqual(pointsToLatLngs(null), []);
+  assert.deepEqual(pointsToLatLngs(undefined), []);
+  assert.deepEqual(pointsToLatLngs([]), []);
+  assert.deepEqual(
+    pointsToLatLngs([
+      { lat: 1, lon: 2 },
+      { lat: NaN, lon: 3 },
+      { lat: 4, lon: Infinity },
+      { lat: 5, lon: 6 },
+    ]),
+    [
+      [1, 2],
+      [5, 6],
+    ],
+  );
+});
+
+test('applySurfaceLatLngs: polyline, point, none branches', () => {
+  const polyCalls = [];
+  const poly = {
+    setLatLngs(ll) {
+      polyCalls.push(ll);
+    },
+  };
+  const latlngs = [
+    [10, 20],
+    [11, 21],
+  ];
+  assert.equal(applySurfaceLatLngs(poly, latlngs), 'polyline');
+  assert.deepEqual(polyCalls, [latlngs]);
+
+  const pointCalls = [];
+  const point = {
+    setLatLng(ll) {
+      pointCalls.push(ll);
+    },
+  };
+  assert.equal(applySurfaceLatLngs(point, latlngs), 'point');
+  assert.deepEqual(pointCalls, [[10, 20]]);
+
+  assert.equal(applySurfaceLatLngs({}, latlngs), 'none');
+  assert.equal(applySurfaceLatLngs(null, latlngs), 'none');
+  assert.equal(applySurfaceLatLngs(poly, []), 'none');
+  assert.equal(applySurfaceLatLngs(poly, null), 'none');
+});
+
+test('patchVertexPoints: replaces only index vi; does not mutate input', () => {
+  const src = [
+    { lat: 1, lon: 2 },
+    { lat: 3, lon: 4 },
+    { lat: 5, lon: 6 },
+  ];
+  const next = patchVertexPoints(src, 1, 30, 40);
+  assert.deepEqual(next, [
+    { lat: 1, lon: 2 },
+    { lat: 30, lon: 40 },
+    { lat: 5, lon: 6 },
+  ]);
+  // Input not mutated
+  assert.deepEqual(src[1], { lat: 3, lon: 4 });
+  assert.deepEqual(patchVertexPoints(null, 0, 1, 2), []);
+  assert.deepEqual(patchVertexPoints([], 0, 1, 2), []);
+});
+
+test('shouldSuppressMapClick matrix (K5: suppress ≠ block render)', () => {
+  const ms = MAP_CLICK_SUPPRESS_MS;
+  assert.equal(ms, 250);
+
+  // dragging true → suppress (render still forbidden by caller invariant while pointer down)
+  assert.equal(
+    shouldSuppressMapClick({ dragging: true, dragEndedAt: 0, suppressMs: ms }, 1000),
+    true,
+  );
+  assert.equal(
+    shouldSuppressMapClick(
+      { dragging: true, dragEndedAt: 900, suppressMs: ms },
+      1000,
+    ),
+    true,
+  );
+
+  // dragging false + within suppressMs after dragEndedAt → suppress click
+  // (full render is still allowed by contract — separate from this helper)
+  assert.equal(
+    shouldSuppressMapClick(
+      { dragging: false, dragEndedAt: 1000, suppressMs: ms },
+      1000 + ms - 1,
+    ),
+    true,
+  );
+
+  // dragging false + after suppress window → do not suppress
+  assert.equal(
+    shouldSuppressMapClick(
+      { dragging: false, dragEndedAt: 1000, suppressMs: ms },
+      1000 + ms,
+    ),
+    false,
+  );
+  assert.equal(
+    shouldSuppressMapClick(
+      { dragging: false, dragEndedAt: 1000, suppressMs: ms },
+      1000 + ms + 50,
+    ),
+    false,
+  );
+
+  // dragEndedAt 0 → never suppress when not dragging
+  assert.equal(
+    shouldSuppressMapClick({ dragging: false, dragEndedAt: 0, suppressMs: ms }, 5000),
+    false,
+  );
+});
+
+test('buildVertexHandleIconOptions: iconSize/iconAnchor symmetry', () => {
+  const icon = buildVertexHandleIconOptions();
+  assert.equal(VERTEX_HANDLE_PX, 16);
+  assert.equal(icon.iconSize[0], VERTEX_HANDLE_PX);
+  assert.equal(icon.iconSize[1], VERTEX_HANDLE_PX);
+  assert.equal(icon.iconAnchor[0], VERTEX_HANDLE_PX / 2);
+  assert.equal(icon.iconAnchor[1], VERTEX_HANDLE_PX / 2);
+  assert.match(icon.className, /apted-vertex-handle/);
+  assert.match(icon.className, /leaflet-interactive/);
+});
+
+test('buildVertexHandleOptions: draggable, autoPan, bubblingMouseEvents', () => {
+  const opts = buildVertexHandleOptions(2);
+  assert.equal(opts.draggable, true);
+  assert.equal(opts.autoPan, false);
+  assert.equal(opts.keyboard, false);
+  assert.equal(opts.bubblingMouseEvents, false);
+  assert.equal(opts.zIndexOffset, 2000);
+  assert.equal(opts.title, 'Vertex 3');
 });

@@ -202,6 +202,111 @@ export function escapeHtml(s) {
     .replace(/'/g, '&#39;');
 }
 
+/** Keep in sync with .apted-vertex-handle width/height in airport-editor.css */
+export const VERTEX_HANDLE_PX = 16;
+
+/** Duration after dragend during which map clicks are ignored. */
+export const MAP_CLICK_SUPPRESS_MS = 250;
+
+/**
+ * Pure: options for the vertex L.marker (no Leaflet instance required).
+ * Icon is constructed at the call site with L.divIcon({...buildVertexHandleIconOptions()}).
+ * @param {number} vertexIndex
+ * @returns {object}
+ */
+export function buildVertexHandleOptions(vertexIndex) {
+  return {
+    draggable: true,
+    autoPan: false,
+    keyboard: false,
+    zIndexOffset: 2000,
+    bubblingMouseEvents: false,
+    title: `Vertex ${vertexIndex + 1}`,
+  };
+}
+
+/**
+ * Pure icon size/anchor for divIcon — symmetry asserted in unit tests.
+ * @returns {{ className: string, iconSize: [number, number], iconAnchor: [number, number] }}
+ */
+export function buildVertexHandleIconOptions() {
+  const px = VERTEX_HANDLE_PX;
+  return {
+    className: 'apted-vertex-handle leaflet-interactive',
+    iconSize: [px, px],
+    iconAnchor: [px / 2, px / 2],
+  };
+}
+
+/**
+ * Pure: points → Leaflet latlng tuples (finite only).
+ * @param {{lat:number,lon:number}[]} points
+ * @returns {Array<[number, number]>}
+ */
+export function pointsToLatLngs(points) {
+  const out = [];
+  if (!Array.isArray(points)) return out;
+  for (const p of points) {
+    if (Number.isFinite(p?.lat) && Number.isFinite(p?.lon)) {
+      out.push([p.lat, p.lon]);
+    }
+  }
+  return out;
+}
+
+/**
+ * Pure: apply latlngs to a surface layer duck-typed like Leaflet polyline/circleMarker.
+ * Prefer setLatLngs (polyline) then setLatLng (circleMarker). No-op if neither.
+ * @param {{ setLatLngs?: Function, setLatLng?: Function }|null|undefined} layer
+ * @param {Array<[number, number]>} latlngs
+ * @returns {'polyline'|'point'|'none'}
+ */
+export function applySurfaceLatLngs(layer, latlngs) {
+  if (!layer || !latlngs || latlngs.length === 0) return 'none';
+  if (typeof layer.setLatLngs === 'function') {
+    layer.setLatLngs(latlngs);
+    return 'polyline';
+  }
+  if (typeof layer.setLatLng === 'function') {
+    layer.setLatLng(latlngs[0]);
+    return 'point';
+  }
+  return 'none';
+}
+
+/**
+ * Pure: patch one vertex in a points array (immutable-style new array).
+ * @param {{lat:number,lon:number}[]} points
+ * @param {number} vertexIndex
+ * @param {number} lat
+ * @param {number} lon
+ * @returns {{lat:number,lon:number}[]}
+ */
+export function patchVertexPoints(points, vertexIndex, lat, lon) {
+  const src = Array.isArray(points) ? points : [];
+  return src.map((p, i) =>
+    i === vertexIndex ? { lat, lon } : { lat: p.lat, lon: p.lon },
+  );
+}
+
+/**
+ * Pure: whether a map click should be ignored (active drag or post-drag suppress window).
+ * Post-drag suppress does NOT block full render — only map click handlers use this.
+ * @param {{ dragging: boolean, dragEndedAt: number, suppressMs: number }} state
+ * @param {number} [now]
+ * @returns {boolean}
+ */
+export function shouldSuppressMapClick(state, now = Date.now()) {
+  if (state.dragging) return true;
+  if (
+    state.dragEndedAt > 0 &&
+    now - state.dragEndedAt < state.suppressMs
+  ) {
+    return true;
+  }
+  return false;
+}
+
 /**
  * Build a Leaflet tooltip content node with textContent only (never innerHTML).
  * Leaflet 1.9 uses innerHTML for string content — always pass an Element.
@@ -381,8 +486,10 @@ export class OverlayController {
     this._airport = null;
     /** @type {import('./model.js').Aircraft[]} */
     this._aircraft = [];
-    /** @type {boolean} */
+    /** @type {boolean} true only while a vertex/aircraft pointer drag is active */
     this._dragging = false;
+    /** @type {number} ms timestamp of last dragend (0 = never / reset on dragstart) */
+    this._dragEndedAt = 0;
     this._planeIcon = L.icon({
       iconUrl: this.planeIconUrl,
       iconSize: [16, 16],
@@ -391,7 +498,18 @@ export class OverlayController {
 
     if (this.onMapClick) {
       map.on('click', (ev) => {
-        if (this._dragging) return;
+        if (
+          shouldSuppressMapClick(
+            {
+              dragging: this._dragging,
+              dragEndedAt: this._dragEndedAt,
+              suppressMs: MAP_CLICK_SUPPRESS_MS,
+            },
+            Date.now(),
+          )
+        ) {
+          return;
+        }
         const ll = ev.latlng;
         this.onMapClick(ll.lat, ll.lng, ev.originalEvent);
       });
@@ -548,7 +666,20 @@ export class OverlayController {
   }
 
   /**
+   * Live-update the surface layer for surfaceIndex from points (no full render).
+   * Layer under surface:N is polyline (setLatLngs) or circleMarker (setLatLng).
+   * @param {number} surfaceIndex
+   * @param {{lat:number,lon:number}[]} points
+   */
+  _liveSetSurfacePoints(surfaceIndex, points) {
+    const layer = this._layerByKey.get(`surface:${surfaceIndex}`);
+    applySurfaceLatLngs(layer, pointsToLatLngs(points));
+  }
+
+  /**
    * Draggable vertex handles for selected surface.
+   * Single divIcon marker per vertex (no companion circleMarker).
+   * Normative drag state machine: paint first, clear _dragging before onVertexDragEnd.
    * @param {import('./model.js').Surface} surface
    * @param {number} surfaceIndex
    */
@@ -558,44 +689,36 @@ export class OverlayController {
     for (let vi = 0; vi < pts.length; vi++) {
       const p = pts[vi];
       if (!Number.isFinite(p.lat) || !Number.isFinite(p.lon)) continue;
-      const marker = L.circleMarker([p.lat, p.lon], {
-        radius: 6,
-        color: '#4a7ab0',
-        weight: 2,
-        fillColor: '#fff',
-        fillOpacity: 1,
-        opacity: 1,
-      });
-      // Use drag via map events on mousedown — circleMarker is not draggable by default.
-      // Prefer Leaflet.Marker with divIcon for drag support when available.
       const handle = L.marker([p.lat, p.lon], {
-        draggable: true,
-        zIndexOffset: 2000,
-        icon: L.divIcon({
-          className: 'apted-vertex-handle',
-          iconSize: [12, 12],
-          iconAnchor: [6, 6],
-        }),
-        title: `Vertex ${vi + 1}`,
+        ...buildVertexHandleOptions(vi),
+        icon: L.divIcon(buildVertexHandleIconOptions()),
       });
-      handle.on('dragstart', () => {
+      handle.on('dragstart', (ev) => {
         this._dragging = true;
+        this._dragEndedAt = 0;
+        if (ev?.originalEvent) L.DomEvent.stopPropagation(ev.originalEvent);
       });
       handle.on('drag', (ev) => {
         const ll = ev.target.getLatLng();
+        // 1) Overlay-local paint FIRST (order-independent of model callback).
+        const base = this._airport?.surfaces?.[surfaceIndex]?.points || [];
+        const next = patchVertexPoints(base, vi, ll.lat, ll.lng);
+        this._liveSetSurfacePoints(surfaceIndex, next);
+        // 2) Model commit path (main must not refresh).
         this.onVertexDrag(surfaceIndex, vi, ll.lat, ll.lng);
       });
       handle.on('dragend', (ev) => {
         const ll = ev.target.getLatLng();
+        // Final live paint (covers last frame).
+        const base = this._airport?.surfaces?.[surfaceIndex]?.points || [];
+        const next = patchVertexPoints(base, vi, ll.lat, ll.lng);
+        this._liveSetSurfacePoints(surfaceIndex, next);
+        // State machine: clear pointer-down flag BEFORE app refresh path.
+        this._dragEndedAt = Date.now();
+        this._dragging = false;
         this.onVertexDragEnd(surfaceIndex, vi, ll.lat, ll.lng);
-        // Small delay so map click from drag end is ignored.
-        setTimeout(() => {
-          this._dragging = false;
-        }, 50);
       });
       handle.addTo(this.vertexGroup);
-      // Keep circle under for visibility if divIcon fails in tests.
-      marker.addTo(this.vertexGroup);
     }
   }
 
@@ -627,8 +750,10 @@ export class OverlayController {
       this.onSelect({ type: 'aircraft', index });
     });
     if (this.editable) {
-      marker.on('dragstart', () => {
+      marker.on('dragstart', (ev) => {
         this._dragging = true;
+        this._dragEndedAt = 0;
+        if (ev?.originalEvent) L.DomEvent.stopPropagation(ev.originalEvent);
       });
       marker.on('drag', (ev) => {
         const ll = ev.target.getLatLng();
@@ -636,10 +761,10 @@ export class OverlayController {
       });
       marker.on('dragend', (ev) => {
         const ll = ev.target.getLatLng();
+        // Same state machine as vertex: clear _dragging before callback so full refresh runs.
+        this._dragEndedAt = Date.now();
+        this._dragging = false;
         this.onAircraftDragEnd(index, ll.lat, ll.lng);
-        setTimeout(() => {
-          this._dragging = false;
-        }, 50);
       });
     }
     marker.addTo(this.group);

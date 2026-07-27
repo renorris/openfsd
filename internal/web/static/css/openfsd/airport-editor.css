@@ -253,17 +253,32 @@
   cursor: default;
 }
 
-/* Vertex drag handles (Leaflet divIcon) */
+/* Vertex drag handles (Leaflet divIcon).
+ * Width/height MUST match VERTEX_HANDLE_PX (map-layers.js) — keep in sync.
+ * Do not use negative margin; Leaflet positions via iconAnchor. */
 .apted-vertex-handle {
-  width: 12px !important;
-  height: 12px !important;
-  margin-left: -6px !important;
-  margin-top: -6px !important;
+  position: relative; /* containing block for ::after hit pad */
+  overflow: visible;  /* do not clip expanded hit area */
+  width: 16px !important;
+  height: 16px !important;
+  margin: 0 !important; /* positioning is iconAnchor only */
   border: 2px solid #4a7ab0;
   border-radius: 50%;
   background: #fff;
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25);
-  cursor: move;
+  cursor: grab;
+  box-sizing: border-box;
+}
+.apted-vertex-handle:active {
+  cursor: grabbing;
+  background: #e8f0fa;
+}
+/* Expanded hit area without growing the visible disc.
+ * Relies on position:relative + overflow:visible on the icon. */
+.apted-vertex-handle::after {
+  content: '';
+  position: absolute;
+  inset: -6px; /* ~28px effective target */
 }
 
 /* Inspector form density */
