@@ -23,9 +23,12 @@ import {
   ESRI_TILE_URL,
   ESRI_ATTRIBUTION,
   VERTEX_HANDLE_PX,
+  VERTEX_HIT_PX,
+  VERTEX_PANE,
   MAP_CLICK_SUPPRESS_MS,
   buildVertexHandleOptions,
   buildVertexHandleIconOptions,
+  findNearestVertexPx,
   pointsToLatLngs,
   applySurfaceLatLngs,
   patchVertexPoints,
@@ -313,19 +316,59 @@ test('buildVertexHandleIconOptions: iconSize/iconAnchor symmetry', () => {
   assert.equal(icon.iconAnchor[0], VERTEX_HANDLE_PX / 2);
   assert.equal(icon.iconAnchor[1], VERTEX_HANDLE_PX / 2);
   assert.match(icon.className, /apted-vertex-handle/);
-  assert.match(icon.className, /leaflet-interactive/);
   assert.match(icon.className, /leaflet-div-icon/);
 });
 
-test('buildVertexHandleOptions: manual drag (not Marker.draggable), pane, bubbling off', () => {
+test('buildVertexHandleOptions: visual-only (capture-phase owns drag)', () => {
   const opts = buildVertexHandleOptions(2);
-  // Drag is document pointer capture — Marker.draggable must stay false.
+  // Handles are non-interactive visuals; grab is map capture + pixel hit-test.
   assert.equal(opts.draggable, false);
-  assert.equal(opts.interactive, true);
+  assert.equal(opts.interactive, false);
   assert.equal(opts.autoPan, false);
   assert.equal(opts.keyboard, false);
   assert.equal(opts.bubblingMouseEvents, false);
   assert.ok(opts.zIndexOffset >= 2000);
-  assert.equal(opts.pane, 'aptedVertexPane');
+  assert.equal(opts.pane, VERTEX_PANE);
+  assert.equal(VERTEX_PANE, 'aptedVertex');
   assert.match(opts.title, /Vertex 3/);
+});
+
+test('findNearestVertexPx: hit-test matrix (RCA capture-phase grab)', () => {
+  assert.ok(VERTEX_HIT_PX >= 12);
+  const verts = [
+    { x: 100, y: 100 },
+    { x: 200, y: 100 },
+    { x: 200, y: 200 },
+  ];
+  // Exact hit
+  assert.deepEqual(findNearestVertexPx(verts, { x: 100, y: 100 }, 16), {
+    index: 0,
+    dist: 0,
+  });
+  // Within radius of v1
+  const near1 = findNearestVertexPx(verts, { x: 205, y: 103 }, 16);
+  assert.ok(near1);
+  assert.equal(near1.index, 1);
+  // Outside all radii
+  assert.equal(findNearestVertexPx(verts, { x: 0, y: 0 }, 16), null);
+  // Prefer closer of two (equidistant uses last ≤ best — v0 at dist 10 wins first)
+  const mid = findNearestVertexPx(
+    [
+      { x: 0, y: 0 },
+      { x: 20, y: 0 },
+    ],
+    { x: 5, y: 0 },
+    16,
+  );
+  assert.ok(mid);
+  assert.equal(mid.index, 0);
+  // Invalid inputs
+  assert.equal(findNearestVertexPx(null, { x: 0, y: 0 }, 16), null);
+  assert.equal(findNearestVertexPx(verts, null, 16), null);
+  assert.equal(findNearestVertexPx(verts, { x: 100, y: 100 }, -1), null);
+  // Skip non-finite vertices
+  assert.equal(
+    findNearestVertexPx([{ x: NaN, y: 0 }, { x: 10, y: 10 }], { x: 10, y: 10 }, 5)?.index,
+    1,
+  );
 });

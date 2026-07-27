@@ -253,22 +253,24 @@
   cursor: default;
 }
 
-/* Vertex handle pane: pane itself is non-interactive (full-map size);
- * icons re-enable hits so empty map clicks still reach the map. */
-.leaflet-aptedVertexPane-pane {
+/*
+ * Vertex handle pane (Leaflet createPane("aptedVertex") → .leaflet-aptedVertex-pane).
+ * Entire pane is pointer-events:none — grab is capture-phase pixel hit-test on
+ * the map container so Map.Drag never steals the mousedown.
+ */
+.leaflet-aptedVertex-pane {
   z-index: 660;
-  pointer-events: none;
+  pointer-events: none !important;
 }
-.leaflet-aptedVertexPane-pane .leaflet-marker-icon {
-  pointer-events: auto !important;
+.leaflet-aptedVertex-pane .leaflet-marker-icon,
+.leaflet-aptedVertex-pane .apted-vertex-handle {
+  pointer-events: none !important; /* visuals only */
 }
 
-/* Vertex drag handles (Leaflet divIcon / marker icon).
- * Width/height MUST match VERTEX_HANDLE_PX (map-layers.js) — keep in sync.
- * Do NOT set position: relative/static — Leaflet requires .leaflet-marker-icon
- * position:absolute for correct lat/lng placement and hit testing. */
+/* Vertex drag handles (Leaflet divIcon) — visual affordance only.
+ * Width/height MUST match VERTEX_HANDLE_PX (map-layers.js).
+ * Do NOT set position: relative — Leaflet needs absolute for lat/lng placement. */
 .apted-vertex-handle {
-  /* leave position to Leaflet (.leaflet-marker-icon { position: absolute }) */
   overflow: visible;
   width: 18px !important;
   height: 18px !important;
@@ -279,20 +281,11 @@
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35), 0 1px 4px rgba(0, 0, 0, 0.25);
   cursor: grab;
   box-sizing: border-box;
-  pointer-events: auto !important;
 }
-.apted-vertex-handle:active,
 .apted-vertex-handle.is-dragging {
   cursor: grabbing;
   background: #e8f0fa;
   border-color: #2a5a90;
-}
-/* Expanded hit pad; icon is already position:absolute from Leaflet. */
-.apted-vertex-handle::after {
-  content: '';
-  position: absolute;
-  inset: -8px; /* ~34px effective target */
-  pointer-events: auto;
 }
 
 /* Inspector form density */
