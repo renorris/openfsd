@@ -26,17 +26,10 @@
             <dt class="col-sm-4">Pilot rating</dt>
             <dd class="col-sm-8">{{ .PilotLabel }}</dd>
         </dl>
-        <p class="text-muted small mt-2 mb-0">
-            Network and pilot ratings can only be changed by a supervisor.
-        </p>
     </section>
 
     <section class="mb-4" aria-labelledby="account-password-heading">
         <h2 id="account-password-heading" class="h5">Change password</h2>
-        <p class="text-muted small">
-            Changing your password does not sign out other devices until their session expires.
-            Deleting or disabling the account ends other sessions on their next request.
-        </p>
         <form method="post" action="/account/password" novalidate>
             <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
             <div class="mb-3">
@@ -74,8 +67,6 @@
         <h2 id="account-delete-heading" class="h5 text-danger">Delete my account</h2>
         <p class="small">
             This deactivates your certificate. You will not be able to log in again.
-            A supervisor can restore a soft-deleted account. Hard delete is irreversible
-            and only available when enabled on this server.
         </p>
         {{ if .DeleteError }}
         <div class="alert alert-danger" role="alert">{{ .DeleteError }}</div>
