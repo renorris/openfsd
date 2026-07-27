@@ -23,12 +23,14 @@ import {
   ESRI_TILE_URL,
   ESRI_ATTRIBUTION,
   VERTEX_HANDLE_PX,
+  VERTEX_HANDLE_RADIUS,
   VERTEX_HIT_PX,
   VERTEX_PANE,
   MAP_CLICK_SUPPRESS_MS,
   FEATURE_CLICK_SUPPRESS_MS,
   buildVertexHandleOptions,
   buildVertexHandleIconOptions,
+  buildVertexHandleStyle,
   findNearestVertexPx,
   findNearestVertexAcrossSurfaces,
   shouldSuppressMapClick,
@@ -359,31 +361,25 @@ test('stopLeafletClickBubble sets originalEvent._stopped (Leaflet map bubble gua
   stopLeafletClickBubble({}, null);
 });
 
-test('buildVertexHandleIconOptions: iconSize/iconAnchor symmetry (centered disc)', () => {
+test('buildVertexHandleStyle: circleMarker centered on lat/lng (no iconAnchor)', () => {
+  assert.equal(VERTEX_HANDLE_RADIUS, 5);
+  assert.equal(VERTEX_HANDLE_PX, VERTEX_HANDLE_RADIUS * 2);
+  const style = buildVertexHandleStyle(2, { selected: false, dragging: false });
+  assert.equal(style.radius, VERTEX_HANDLE_RADIUS);
+  assert.equal(style.interactive, false);
+  assert.equal(style.bubblingMouseEvents, false);
+  assert.equal(style.fillOpacity, 1);
+  assert.match(style.className, /apted-vertex-handle/);
+  assert.ok(!style.className.includes('is-selected'));
+  const sel = buildVertexHandleStyle(0, { selected: true, dragging: false });
+  assert.match(sel.className, /is-selected/);
+  const drag = buildVertexHandleStyle(0, { selected: true, dragging: true });
+  assert.match(drag.className, /is-dragging/);
+  // Legacy divIcon helpers still export centered anchors if ever reused.
   const icon = buildVertexHandleIconOptions();
-  assert.equal(VERTEX_HANDLE_PX, 10);
-  assert.equal(icon.iconSize[0], VERTEX_HANDLE_PX);
-  assert.equal(icon.iconSize[1], VERTEX_HANDLE_PX);
-  // Anchor must be exact half so the disc centers on the lat/lng.
-  assert.equal(icon.iconAnchor[0], VERTEX_HANDLE_PX / 2);
-  assert.equal(icon.iconAnchor[1], VERTEX_HANDLE_PX / 2);
   assert.equal(icon.iconAnchor[0] * 2, icon.iconSize[0]);
-  assert.match(icon.className, /apted-vertex-handle/);
-  assert.match(icon.className, /leaflet-div-icon/);
-});
-
-test('buildVertexHandleOptions: visual-only (capture-phase owns drag)', () => {
-  const opts = buildVertexHandleOptions(2);
-  // Handles are non-interactive visuals; grab is map capture + pixel hit-test.
-  assert.equal(opts.draggable, false);
-  assert.equal(opts.interactive, false);
-  assert.equal(opts.autoPan, false);
-  assert.equal(opts.keyboard, false);
-  assert.equal(opts.bubblingMouseEvents, false);
-  assert.ok(opts.zIndexOffset >= 2000);
-  assert.equal(opts.pane, VERTEX_PANE);
+  assert.equal(buildVertexHandleOptions(2).interactive, false);
   assert.equal(VERTEX_PANE, 'aptedVertex');
-  assert.match(opts.title, /Vertex 3/);
 });
 
 test('findNearestVertexAcrossSurfaces: grab without pre-select', () => {

@@ -254,46 +254,16 @@
 }
 
 /*
- * Vertex handle pane (Leaflet createPane("aptedVertex") → .leaflet-aptedVertex-pane).
- * Entire pane is pointer-events:none — grab is capture-phase pixel hit-test on
- * the map container so Map.Drag never steals the mousedown.
+ * Vertex nodes are L.circleMarker (SVG) — always centered on the lat/lng.
+ * Do not use divIcon knobs: CSS margin:0 !important was zeroing Leaflet's
+ * iconAnchor offsets (marginLeft/Top) and shifted discs off the true point.
+ * Grab is capture-phase pixel hit-test on the map container.
  */
-.leaflet-aptedVertex-pane {
-  z-index: 660;
-  pointer-events: none !important;
-}
-.leaflet-aptedVertex-pane .leaflet-marker-icon,
-.leaflet-aptedVertex-pane .apted-vertex-handle {
-  pointer-events: none !important; /* visuals only */
-}
-
-/* Vertex nodes (Leaflet divIcon) — must stay centered on lat/lng.
- * Width/height MUST match VERTEX_HANDLE_PX (map-layers.js) = 10.
- * Override .leaflet-div-icon defaults (1px border / background) that offset the disc.
- * box-sizing:border-box so border is inside iconSize and iconAnchor stays true center.
- * Do NOT set position: relative — Leaflet needs absolute for placement. */
-.leaflet-div-icon.apted-vertex-handle {
-  overflow: visible;
-  width: 10px !important;
-  height: 10px !important;
-  margin: 0 !important;
-  padding: 0 !important;
-  border: 1.5px solid #4a7ab0 !important;
-  border-radius: 50% !important;
-  background: #fff !important;
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.3);
+.apted-vertex-handle {
   cursor: grab;
-  box-sizing: border-box !important;
 }
-.leaflet-div-icon.apted-vertex-handle.is-selected {
-  border-color: #2a5a90 !important;
-  background: #e8f0fa !important;
-  box-shadow: 0 0 0 1px rgba(42, 90, 144, 0.45);
-}
-.leaflet-div-icon.apted-vertex-handle.is-dragging {
+.apted-vertex-handle.is-dragging {
   cursor: grabbing;
-  border-color: #1a3a60 !important;
-  background: #d0e4f8 !important;
 }
 
 /* Inspector form density */

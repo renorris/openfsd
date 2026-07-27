@@ -202,8 +202,14 @@ export function escapeHtml(s) {
     .replace(/'/g, '&#39;');
 }
 
-/** Keep in sync with .apted-vertex-handle width/height in airport-editor.css */
-export const VERTEX_HANDLE_PX = 10;
+/**
+ * Visual radius (px) of vertex circleMarkers. circleMarker is always centered on
+ * the lat/lng — do not use divIcon/L.marker for nodes (iconAnchor/CSS margin fights).
+ */
+export const VERTEX_HANDLE_RADIUS = 5;
+
+/** @deprecated use VERTEX_HANDLE_RADIUS; kept as diameter for older tests/docs */
+export const VERTEX_HANDLE_PX = VERTEX_HANDLE_RADIUS * 2;
 
 /**
  * Pixel radius for vertex grab hit-test (capture-phase, independent of icon DOM hits).
@@ -229,29 +235,53 @@ export const FEATURE_CLICK_SUPPRESS_MS = 100;
 export const VERTEX_PANE = 'aptedVertex';
 
 /**
- * Pure: options for the vertex L.marker (visual only).
+ * Pure: Leaflet circleMarker options for a vertex node (always lat/lng-centered).
  * Drag is NOT Marker.draggable — OverlayController uses capture-phase map hit-test.
+ * @param {number} vertexIndex
+ * @param {{ selected?: boolean, dragging?: boolean }} [state]
+ * @returns {object}
+ */
+export function buildVertexHandleStyle(vertexIndex, state = {}) {
+  const selected = !!state.selected;
+  const dragging = !!state.dragging;
+  return {
+    radius: VERTEX_HANDLE_RADIUS,
+    // Interactive false: pointer events pass through to map capture hit-test.
+    interactive: false,
+    bubblingMouseEvents: false,
+    weight: dragging ? 2 : 1.5,
+    opacity: 1,
+    fillOpacity: 1,
+    color: dragging ? '#1a3a60' : selected ? '#2a5a90' : '#4a7ab0',
+    fillColor: dragging ? '#d0e4f8' : selected ? '#e8f0fa' : '#ffffff',
+    className:
+      'apted-vertex-handle' +
+      (selected ? ' is-selected' : '') +
+      (dragging ? ' is-dragging' : ''),
+    // title is not a path option; kept only for call-site docs
+    // (vertexIndex used so the API stays stable for tests)
+    _vertexIndex: vertexIndex,
+  };
+}
+
+/**
+ * @deprecated Prefer buildVertexHandleStyle (circleMarker). Kept for test compat.
  * @param {number} vertexIndex
  * @returns {object}
  */
 export function buildVertexHandleOptions(vertexIndex) {
   return {
-    // Visual only — pointer drag is owned by map capture listener.
     draggable: false,
-    // interactive false: clicks pass through icon to map container hit-test path.
-    // (We still paint the handle; grab uses latLng pixel proximity.)
     interactive: false,
     keyboard: false,
     autoPan: false,
-    zIndexOffset: 4000,
     bubblingMouseEvents: false,
-    pane: VERTEX_PANE,
     title: `Vertex ${vertexIndex + 1} — drag to move`,
   };
 }
 
 /**
- * Pure icon size/anchor for divIcon — symmetry asserted in unit tests.
+ * @deprecated Prefer buildVertexHandleStyle (circleMarker). Kept for test compat.
  * @returns {{ className: string, iconSize: [number, number], iconAnchor: [number, number] }}
  */
 export function buildVertexHandleIconOptions() {
@@ -259,6 +289,7 @@ export function buildVertexHandleIconOptions() {
   return {
     className: 'leaflet-div-icon apted-vertex-handle',
     iconSize: [px, px],
+    // Center of the box — only meaningful if CSS does NOT zero Leaflet's margins.
     iconAnchor: [px / 2, px / 2],
   };
 }
@@ -1074,15 +1105,12 @@ export class OverlayController {
       mapDraggingWasEnabled,
     };
 
-    try {
-      const el = handle?.getElement?.();
-      if (el && el.classList) el.classList.add('is-dragging');
-    } catch {
-      /* ignore */
+    // Visual feedback on the centered circleMarker.
+    if (handle && typeof handle.setStyle === 'function') {
+      handle.setStyle(buildVertexHandleStyle(vertexIndex, { selected: true, dragging: true }));
     }
 
-    // Do not snap vertex to cursor on mousedown — that made the knob feel off-center.
-    // Only update geometry once the pointer actually moves.
+    // Do not snap vertex to cursor on mousedown — only move once the pointer moves.
     void domEv;
 
     const onMove = (ev) => {
@@ -1112,11 +1140,10 @@ export class OverlayController {
       this._onVertexPointerUp = null;
       this._vertexDrag = null;
 
-      try {
-        const el = h?.getElement?.();
-        if (el && el.classList) el.classList.remove('is-dragging');
-      } catch {
-        /* ignore */
+      if (h && typeof h.setStyle === 'function') {
+        const stillSelected =
+          this._selection?.type === 'surface' && this._selection.index === si;
+        h.setStyle(buildVertexHandleStyle(vi, { selected: stillSelected, dragging: false }));
       }
 
       const ll = this._latLngFromPointerEvent(ev) || (h && h.getLatLng && h.getLatLng());
@@ -1146,7 +1173,9 @@ export class OverlayController {
   }
 
   /**
-   * Small vertex handle *visuals* for a surface (non-interactive markers).
+   * Small vertex handle *visuals* for a surface.
+   * Uses L.circleMarker so the disc is always centered on the lat/lng
+   * (divIcon + CSS margin overrides previously shifted the knob off-center).
    * Grab is owned by capture-phase hit-test on the map container (any surface).
    * @param {import('./model.js').Surface} surface
    * @param {number} surfaceIndex
@@ -1154,22 +1183,17 @@ export class OverlayController {
   _addVertexHandles(surface, surfaceIndex) {
     const L = this.L;
     const pts = surface.points || [];
-    ensureVertexPane(this.map);
-
     const selected =
       this._selection?.type === 'surface' && this._selection.index === surfaceIndex;
-    const iconBase = buildVertexHandleIconOptions();
 
     for (let vi = 0; vi < pts.length; vi++) {
       const p = pts[vi];
       if (!Number.isFinite(p.lat) || !Number.isFinite(p.lon)) continue;
-      const handle = L.marker([p.lat, p.lon], {
-        ...buildVertexHandleOptions(vi),
-        icon: L.divIcon({
-          ...iconBase,
-          className: iconBase.className + (selected ? ' is-selected' : ''),
-        }),
-      });
+      // circleMarker: geographic center === visual center (no iconAnchor).
+      const handle = L.circleMarker(
+        [p.lat, p.lon],
+        buildVertexHandleStyle(vi, { selected, dragging: false }),
+      );
       handle.addTo(this.vertexGroup);
       this._handleByKey.set(`${surfaceIndex}:${vi}`, handle);
     }
