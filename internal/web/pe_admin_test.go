@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -640,76 +641,85 @@ func TestSupervisorCannotUpdateHigherRatedUserViaForm(t *testing.T) {
 	}
 }
 
-func TestInstructorCanAdjustRatingsButNotCreate(t *testing.T) {
+func TestInstructorCannotAccessUserEditor(t *testing.T) {
 	ts := newTestServer(t)
-	// Give instructor a pilot ceiling (IR=3) so they can assign P0/PPL/IR.
 	inst := createTestUser(t, ts, "inst-pass", int(protocol.NetworkRatingInstructor1))
-	inst.PilotRating = int(protocol.PilotRatingIR)
-	inst.Password = ""
-	if err := ts.dbRepo.UserRepo.UpdateUser(inst); err != nil {
-		t.Fatal(err)
-	}
-	obs := createTestUser(t, ts, "obs-pass", int(protocol.NetworkRatingObserver))
 	cookies := formLogin(t, ts, inst.CID, "inst-pass")
 
-	// Directory accessible.
-	w, cookies := authedGET(t, ts, "/usereditor", cookies)
-	if w.Code != http.StatusOK {
-		t.Fatalf("GET /usereditor as I1 status %d", w.Code)
+	w, _ := authedGET(t, ts, "/usereditor", cookies)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("GET /usereditor as I1 status %d want 303", w.Code)
 	}
-	if strings.Contains(w.Body.String(), `action="/usereditor/create"`) {
-		t.Fatal("instructor must not see create form")
+	if loc := w.Header().Get("Location"); loc != "/dashboard" {
+		t.Fatalf("Location=%q want /dashboard", loc)
 	}
 
-	// Create forbidden.
+	// POST create also gated by middleware.
 	form := url.Values{}
 	form.Set("first_name", "Nope")
 	form.Set("password", "password99")
 	form.Set("network_rating", "1")
 	form.Set("pilot_rating", "0")
-	w, cookies = formPOST(t, ts, "/usereditor/create", form, cookies)
+	w, _ = formPOST(t, ts, "/usereditor/create", form, cookies)
 	if w.Code == http.StatusSeeOther && strings.Contains(w.Header().Get("Location"), "flash=created") {
 		t.Fatal("instructor must not create users")
 	}
-
-	// Rating adjust allowed (network S1; pilot PPL=1 ≤ IR ceiling).
-	form = url.Values{}
-	form.Set("cid", itoa(obs.CID))
-	form.Set("network_rating", "2") // S1 ≤ I1
-	form.Set("pilot_rating", itoa(int(protocol.PilotRatingPPL)))
-	form.Set("password", "")
-	w, _ = formPOST(t, ts, "/usereditor/update", form, cookies)
-	if w.Code != http.StatusSeeOther {
-		t.Fatalf("instructor rating update status %d body %s", w.Code, w.Body.String())
-	}
-	u, err := ts.dbRepo.UserRepo.GetUserByCID(obs.CID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if u.NetworkRating != 2 {
-		t.Fatalf("network = %d want 2", u.NetworkRating)
-	}
-	if u.PilotRating != int(protocol.PilotRatingPPL) {
-		t.Fatalf("pilot = %d want PPL(%d)", u.PilotRating, protocol.PilotRatingPPL)
+	if w.Code != http.StatusSeeOther || w.Header().Get("Location") != "/dashboard" {
+		// Middleware redirect to dashboard is the expected gate.
+		if w.Code == http.StatusOK && strings.Contains(w.Body.String(), "created") {
+			t.Fatal("instructor must not create users")
+		}
 	}
 }
 
-func TestInstructorCannotSetNetworkAboveOwn(t *testing.T) {
+func TestSupervisorUserEditorPilotRatingFullScale(t *testing.T) {
 	ts := newTestServer(t)
-	inst := createTestUser(t, ts, "inst-pass", int(protocol.NetworkRatingInstructor1))
-	obs := createTestUser(t, ts, "obs-pass", int(protocol.NetworkRatingObserver))
-	cookies := formLogin(t, ts, inst.CID, "inst-pass")
+	// SUP with pilot P0 only — must still see full pilot scale and assign CMEL=15.
+	sup := createTestUser(t, ts, "sup-pass", int(protocol.NetworkRatingSupervisor))
+	if sup.PilotRating != 0 {
+		sup.PilotRating = 0
+		sup.Password = ""
+		if err := ts.dbRepo.UserRepo.UpdateUser(sup); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cookies := formLogin(t, ts, sup.CID, "sup-pass")
+
+	w, cookies := authedGET(t, ts, "/usereditor?new=1", cookies)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /usereditor?new=1 status %d", w.Code)
+	}
+	body := w.Body.String()
+	for _, v := range []string{"0", "1", "3", "7", "15", "31", "63"} {
+		if !selectContainsValue(body, "create-pilot-rating", v) {
+			t.Fatalf("create pilot select missing value %s", v)
+		}
+	}
 
 	form := url.Values{}
-	form.Set("cid", itoa(obs.CID))
-	form.Set("network_rating", "11") // SUP — above I1
-	form.Set("pilot_rating", "0")
-	w, _ := formPOST(t, ts, "/usereditor/update", form, cookies)
-	if w.Code == http.StatusSeeOther {
-		t.Fatal("must not set network rating above actor")
+	form.Set("first_name", "Pilot")
+	form.Set("last_name", "Full")
+	form.Set("password", "password99")
+	form.Set("network_rating", "1")
+	form.Set("pilot_rating", "15") // CMEL — above actor P0
+	w, _ = formPOST(t, ts, "/usereditor/create", form, cookies)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("create with pilot_rating=15 status %d body %s", w.Code, w.Body.String())
 	}
-	if !strings.Contains(w.Body.String(), "above your own") {
-		t.Fatalf("expected ceiling error, body=%s", clip(w.Body.String(), 400))
+	loc := w.Header().Get("Location")
+	assertUserEditorRedirect(t, loc, "", "created")
+	// Load created user by CID from redirect.
+	u, err := url.Parse(loc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cid, _ := strconv.Atoi(u.Query().Get("cid"))
+	created, err := ts.dbRepo.UserRepo.GetUserByCID(cid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.PilotRating != 15 {
+		t.Fatalf("pilot_rating=%d want 15", created.PilotRating)
 	}
 }
 

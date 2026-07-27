@@ -931,3 +931,39 @@ func TestListUsersLimitDefaultWithManyRows(t *testing.T) {
 		t.Fatalf("total=%d want %d", n, total)
 	}
 }
+
+func TestDeleteUser(t *testing.T) {
+	db, repo := setupTestDB(t)
+	defer db.Close()
+
+	user := &User{
+		Password:      "password123",
+		FirstName:     ptr("Delete"),
+		LastName:      ptr("Me"),
+		NetworkRating: 1,
+	}
+	if err := repo.CreateUser(user); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	cid := user.CID
+
+	if err := repo.DeleteUser(cid); err != nil {
+		t.Fatalf("DeleteUser: %v", err)
+	}
+	_, err := repo.GetUserByCID(cid)
+	if err == nil {
+		t.Fatal("expected ErrNoRows after delete")
+	}
+	if err != sql.ErrNoRows {
+		t.Fatalf("expected sql.ErrNoRows, got %v", err)
+	}
+
+	// Missing CID
+	err = repo.DeleteUser(999999)
+	if err == nil {
+		t.Fatal("expected ErrNoRows for missing CID")
+	}
+	if err != sql.ErrNoRows {
+		t.Fatalf("expected sql.ErrNoRows, got %v", err)
+	}
+}

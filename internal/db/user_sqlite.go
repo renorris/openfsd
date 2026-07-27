@@ -125,6 +125,23 @@ func (r *SQLiteUserRepository) VerifyPasswordHash(plaintext string, hash string)
 	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(plaintext)) == nil
 }
 
+// DeleteUser permanently removes the user row by CID.
+// Returns sql.ErrNoRows if no row was deleted.
+func (r *SQLiteUserRepository) DeleteUser(cid int) error {
+	result, err := r.db.Exec(`DELETE FROM users WHERE cid = ?`, cid)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 // escapeLike escapes \, %, and _ for use in LIKE ... ESCAPE '\' patterns.
 func escapeLike(s string) string {
 	s = strings.ReplaceAll(s, `\`, `\\`)

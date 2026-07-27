@@ -11,13 +11,13 @@ import (
 //
 // Authenticated read proxy of FSD service HTTP GET /sweatbox/state.
 // Used by sweatbox.js progressive enhancement (1–2 s poll). Cookie session
-// or Bearer; CSRF not required for GET. Min rating Administrator.
+// or Bearer; CSRF not required for GET. Min rating Instructor1+.
 //
 // On success (and FSD 404 disabled), the FSD JSON body is passed through so
 // the PE client can use the same shape as the service control plane.
 func (s *Server) handleAPISweatboxState(c *gin.Context) {
 	claims := getJwtContext(c)
-	if claims == nil || claims.NetworkRating < protocol.NetworkRatingAdministator {
+	if claims == nil || claims.NetworkRating < protocol.NetworkRatingInstructor1 {
 		writeAPIV1Response(c, http.StatusForbidden, &genericAPIV1Forbidden)
 		return
 	}
@@ -46,9 +46,10 @@ func (s *Server) handleAPISweatboxState(c *gin.Context) {
 //
 // Read proxy of FSD GET /sweatbox/ops (elapsed / arr / dep / ops-per-min).
 // Optional for PE; state already includes most of these fields.
+// Min rating Instructor1+.
 func (s *Server) handleAPISweatboxOps(c *gin.Context) {
 	claims := getJwtContext(c)
-	if claims == nil || claims.NetworkRating < protocol.NetworkRatingAdministator {
+	if claims == nil || claims.NetworkRating < protocol.NetworkRatingInstructor1 {
 		writeAPIV1Response(c, http.StatusForbidden, &genericAPIV1Forbidden)
 		return
 	}

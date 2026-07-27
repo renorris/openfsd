@@ -17,13 +17,14 @@ type pageUser struct {
 	LastName           string
 	NetworkRating      int
 	NetworkRatingLabel string
-	// CanEditUsers: Instructor1+ — Users page nav / directory access.
+	// CanEditUsers: Supervisor+ — Users page nav / /usereditor access.
 	CanEditUsers bool
 	// CanFullMutateUsers: Supervisor+ — create + name/password mutation.
 	CanFullMutateUsers bool
-	// CanAdjustRatings: Instructor1+ — network + pilot rating changes.
-	CanAdjustRatings bool
-	CanEditConfig    bool
+	// CanAccessSweatbox: Instructor1+ — sweatbox HTML + PE JSON.
+	CanAccessSweatbox bool
+	// CanEditConfig: Administrator — config + airport editor.
+	CanEditConfig bool
 }
 
 // basePage is embedded by every HTML page model so layout has nav data.
@@ -39,6 +40,29 @@ type loginPage struct {
 	Error      string
 	CIDError   string
 	PassError  string
+	Info       string // success/info banner (e.g. account deleted)
+}
+
+// accountPage is the self-service account MPA model (any DB-valid session).
+type accountPage struct {
+	basePage
+	FlashSuccess string
+	FlashError   string
+	// Profile (read-only display)
+	CID          int
+	FirstName    string
+	LastName     string
+	NetworkLabel string
+	PilotLabel   string
+	// Password form field errors
+	CurrentPassError string
+	NewPassError     string
+	ConfirmPassError string
+	FormError        string
+	// Delete
+	DeleteError          string
+	DeletePassError      string // wrong current password on delete
+	AllowPermanentDelete bool   // from cfg
 }
 
 // connectionRow is one pilot or ATC line in the dashboard summary table.
@@ -61,6 +85,8 @@ type dashboardPage struct {
 	SummaryAvailable   bool
 	SummaryUnavailable bool
 	SummaryError       string
+	// Pilot rating from DB (claims lack pilot_rating).
+	PilotRatingLabel string
 }
 
 // ratingOption is a network-rating select entry.
@@ -132,11 +158,11 @@ type userEditorPage struct {
 	EditLoaded bool
 	// RatingOptions for create/edit network selects — ratingOptionsUpTo(actorMax, selected).
 	RatingOptions []ratingOption
-	// PilotRatingOptions capped at actor's own pilot_rating.
+	// PilotRatingOptions is the full official pilot scale (P0…FE).
 	PilotRatingOptions []ratingOption
-	// ProfileLocked: name/password not editable (instructor, or SUP viewing higher-rated).
+	// ProfileLocked: name/password not editable (SUP viewing higher-rated target).
 	ProfileLocked bool
-	// RatingsLocked: no rating fields (should be rare; I1+ always may adjust within ceiling).
+	// RatingsLocked: no rating fields (should be rare; SUP+ editor actors may adjust).
 	RatingsLocked bool
 	// EditReadOnly: nothing editable (legacy alias: profile + ratings locked).
 	EditReadOnly bool
@@ -183,7 +209,7 @@ type sweatboxAircraftRow struct {
 	Instruction string
 }
 
-// sweatboxPage is the Administrator instructor MPA model.
+// sweatboxPage is the Instructor1+ sweatbox control-panel MPA model.
 type sweatboxPage struct {
 	basePage
 	FlashSuccess string
@@ -230,7 +256,7 @@ func pageUserFromClaims(claims *auth.CustomClaims) *pageUser {
 		NetworkRatingLabel: networkRatingLabel(rating),
 		CanEditUsers:       canAccessUserEditor(claims.NetworkRating),
 		CanFullMutateUsers: canFullMutateUsers(claims.NetworkRating),
-		CanAdjustRatings:   canAdjustUserRatings(claims.NetworkRating),
+		CanAccessSweatbox:  canAccessSweatbox(claims.NetworkRating),
 		CanEditConfig:      claims.NetworkRating >= protocol.NetworkRatingAdministator,
 	}
 }

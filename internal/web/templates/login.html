@@ -4,6 +4,9 @@
 <main class="container-fluid d-flex justify-content-center position-absolute top-50 start-50 translate-middle">
     <div class="p-4 rounded border border-1 ofs-login-card" style="min-width: 20rem; max-width: 24rem; width: 100%;">
         <h1 class="h4 mb-3">Log in</h1>
+        {{ if .Info }}
+        <div class="alert alert-info" role="status">{{ .Info }}</div>
+        {{ end }}
         {{ if .Error }}
         <div class="alert alert-danger" role="alert">{{ .Error }}</div>
         {{ end }}

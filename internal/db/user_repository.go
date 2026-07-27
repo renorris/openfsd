@@ -59,4 +59,8 @@ type UserRepository interface {
 
 	// VerifyPasswordHash verifies a User password hash.
 	VerifyPasswordHash(plaintext string, hash string) (ok bool)
+
+	// DeleteUser permanently removes the user row by CID.
+	// Returns sql.ErrNoRows if no row was deleted.
+	DeleteUser(cid int) error
 }

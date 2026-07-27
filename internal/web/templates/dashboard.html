@@ -16,6 +16,40 @@
       data-js="dashboard">
     <h1 class="h4 visually-hidden">Dashboard</h1>
 
+    <section class="w-100 mb-3" style="max-width: 600px" aria-labelledby="account-summary-heading">
+        <h2 id="account-summary-heading" class="h5">Your account</h2>
+        <div id="dashboard-real-name">
+            {{ if .User.FirstName }}Welcome, {{ .User.FirstName }}!{{ else }}Welcome!{{ end }}
+        </div>
+        <div id="dashboard-cid">CID: {{ .User.CID }}</div>
+        <div>Network Rating: <span id="dashboard-network-rating">{{ .User.NetworkRatingLabel }}</span></div>
+        {{ if .PilotRatingLabel }}
+        <div>Pilot Rating: <span id="dashboard-pilot-rating">{{ .PilotRatingLabel }}</span></div>
+        {{ end }}
+        <div class="mt-2">
+            <a class="btn btn-primary" href="/account">Manage account</a>
+        </div>
+    </section>
+
+    <section class="w-100 mb-3" style="max-width: 600px" aria-labelledby="tools-heading">
+        <h2 id="tools-heading" class="h5">Tools</h2>
+        <ul class="list-unstyled d-flex flex-wrap gap-2 mb-0" id="dashboard-tools">
+            {{ if .User.CanEditUsers }}
+            <li><a href="/usereditor" class="btn btn-outline-secondary">Users</a></li>
+            {{ end }}
+            {{ if .User.CanAccessSweatbox }}
+            <li><a href="/sweatbox" class="btn btn-outline-secondary">Sweatbox</a></li>
+            {{ end }}
+            {{ if .User.CanEditConfig }}
+            <li><a href="/configeditor" class="btn btn-outline-secondary">Config</a></li>
+            <li><a href="/airport-editor" class="btn btn-outline-secondary">Airport Editor</a></li>
+            {{ end }}
+            {{ if and (not .User.CanEditUsers) (not .User.CanAccessSweatbox) (not .User.CanEditConfig) }}
+            <li class="text-muted small">No elevated tools for your rating. Use Account to manage your password.</li>
+            {{ end }}
+        </ul>
+    </section>
+
     <section class="w-100 mb-3" style="max-width: 600px" aria-labelledby="connection-summary-heading">
         <h2 id="connection-summary-heading" class="h5">Connections</h2>
         {{ if .SummaryUnavailable }}
@@ -68,25 +102,6 @@
     <div id="map" class="mb-3 rounded" style="width: 600px; max-width: 100%; height: 400px;"
          role="img" aria-label="Map of connected pilots (requires JavaScript)"
          data-js="map-root"></div>
-
-    <div class="d-flex justify-content-around w-100 mt-auto flex-wrap gap-3" style="max-width: 600px">
-        <div>
-            <div id="dashboard-real-name">
-                {{ if .User.FirstName }}Welcome, {{ .User.FirstName }}!{{ else }}Welcome!{{ end }}
-            </div>
-            <div id="dashboard-cid">CID: {{ .User.CID }}</div>
-            <div>Network Rating: <span id="dashboard-network-rating">{{ .User.NetworkRatingLabel }}</span></div>
-        </div>
-        <div id="dashboard-user-editor">
-            {{ if .User.CanEditUsers }}
-            <div class="mb-2"><a href="/usereditor" class="btn btn-primary">Edit Users</a></div>
-            {{ end }}
-            {{ if .User.CanEditConfig }}
-            <div class="mb-2"><a href="/configeditor" class="btn btn-primary">Configure Server</a></div>
-            <div class="mb-2"><a href="/sweatbox" class="btn btn-primary">Sweatbox</a></div>
-            {{ end }}
-        </div>
-    </div>
 </main>
 
 <script src="/static/js/leaflet.js"></script>

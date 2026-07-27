@@ -25,6 +25,13 @@ func (s *Server) handleFrontendDashboard(c *gin.Context) {
 		},
 	}
 
+	// Pilot rating from DB (session claims lack pilot_rating).
+	if user := getDBUser(c); user != nil {
+		page.PilotRatingLabel = pilotRatingLabel(user.PilotRating)
+	} else if u, err := s.dbRepo.UserRepo.GetUserByCID(claims.CID); err == nil {
+		page.PilotRatingLabel = pilotRatingLabel(u.PilotRating)
+	}
+
 	online, err := s.fetchOnlineUsers()
 	if err != nil {
 		page.SummaryUnavailable = true

@@ -22,6 +22,7 @@ var pageTemplateKeys = []string{
 	"landing",
 	"login",
 	"dashboard",
+	"account",
 	"usereditor",
 	"configeditor",
 	"sweatbox",

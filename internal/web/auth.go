@@ -104,6 +104,15 @@ func (s *Server) refreshAccessToken(c *gin.Context) {
 		writeAPIV1Response(c, http.StatusUnauthorized, &badTokenRes)
 		return
 	}
+	// Soft-deleted / suspended users must not mint new access tokens.
+	if user.NetworkRating <= int(protocol.NetworkRatingSuspended) {
+		slog.Debug("refresh rejected inactive/suspended user",
+			"cid", claims.CID,
+			"event", "refresh_rejected_inactive",
+		)
+		writeAPIV1Response(c, http.StatusUnauthorized, &badTokenRes)
+		return
+	}
 
 	access, err := s.makeAccessToken(user, []byte(jwtSecret))
 	if err != nil {
@@ -278,17 +287,63 @@ func cutBearerToken(header string) (token string, ok bool) {
 	return token, true
 }
 
-// trySessionAuth parses the signed session cookie into the gin context.
+// Session revalidation errors (KD-9).
+var (
+	errSessionUserMissing = errors.New("session user missing")
+	errSessionInactive    = errors.New("session user inactive or suspended")
+)
+
+const dbUserContextKey = "db_user"
+
+// revalidateSessionFromDB loads the user by claims.CID, rejects missing or
+// inactive/suspended certificates, and overlays NetworkRating + names from the DB.
+// Handlers and requireMinRatingHTML keep reading claims.NetworkRating safely only
+// because this overlay is mandatory after session cookie parse.
+func (s *Server) revalidateSessionFromDB(claims *auth.CustomClaims) (*auth.CustomClaims, *db.User, error) {
+	user, err := s.dbRepo.UserRepo.GetUserByCID(claims.CID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil, errSessionUserMissing
+		}
+		slog.Error("session revalidation DB error", "cid", claims.CID, "err", err)
+		// Fail closed: treat unexpected DB errors like a missing user.
+		return nil, nil, errSessionUserMissing
+	}
+	if user.NetworkRating <= int(protocol.NetworkRatingSuspended) {
+		slog.Debug("session rejected inactive/suspended user",
+			"cid", claims.CID,
+			"event", "session_rejected_inactive",
+		)
+		return nil, nil, errSessionInactive
+	}
+	// REQUIRED claims overlay — demotions must refresh ceilings and nav flags.
+	claims.NetworkRating = protocol.NetworkRating(user.NetworkRating)
+	claims.FirstName = safeStr(user.FirstName)
+	claims.LastName = safeStr(user.LastName)
+	return claims, user, nil
+}
+
+// trySessionAuth parses the signed session cookie, revalidates against the DB,
+// and sets overlaid claims into the gin context (dual-accept API path).
 func (s *Server) trySessionAuth(c *gin.Context) bool {
 	claims, err := s.parseSessionCookie(c)
 	if err != nil {
 		return false
 	}
+	claims, user, err := s.revalidateSessionFromDB(claims)
+	if err != nil {
+		// Clear cookies so soft-deleted PE clients stop authenticating.
+		s.clearSessionCookie(c)
+		s.clearCSRFCookie(c)
+		return false
+	}
 	setJwtContext(c, claims)
+	c.Set(dbUserContextKey, user)
 	return true
 }
 
-// requireSessionHTML gates privileged HTML pages: unauthenticated → 303 /login.
+// requireSessionHTML gates privileged HTML pages: unauthenticated or
+// inactive/missing user → clear cookies + 303 /login.
 func (s *Server) requireSessionHTML(c *gin.Context) {
 	claims, err := s.parseSessionCookie(c)
 	if err != nil {
@@ -296,8 +351,27 @@ func (s *Server) requireSessionHTML(c *gin.Context) {
 		c.Abort()
 		return
 	}
+	claims, user, err := s.revalidateSessionFromDB(claims)
+	if err != nil {
+		s.clearSessionCookie(c)
+		s.clearCSRFCookie(c)
+		c.Redirect(http.StatusSeeOther, "/login")
+		c.Abort()
+		return
+	}
 	setJwtContext(c, claims)
+	c.Set(dbUserContextKey, user)
 	c.Next()
+}
+
+// getDBUser returns the *db.User stashed by requireSessionHTML / trySessionAuth.
+func getDBUser(c *gin.Context) *db.User {
+	val, exists := c.Get(dbUserContextKey)
+	if !exists {
+		return nil
+	}
+	u, _ := val.(*db.User)
+	return u
 }
 
 // requireMinRatingHTML redirects to /dashboard when the session rating is too low.

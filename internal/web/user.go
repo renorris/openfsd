@@ -12,7 +12,7 @@ import (
 
 // getUserByCID returns the user info of the specified CID.
 //
-// Self always allowed. Other CIDs require Instructor1+ (directory / rating tooling).
+// Self always allowed. Other CIDs require Supervisor+ (user editor).
 func (s *Server) getUserByCID(c *gin.Context) {
 	type RequestBody struct {
 		CID int `json:"cid" binding:"min=1,required"`
@@ -65,8 +65,8 @@ func (s *Server) getUserByCID(c *gin.Context) {
 // updateUser updates the user with a specified CID.
 //
 // The CID itself is immutable and cannot be changed.
-// Instructor1+: may set network_rating and pilot_rating up to actor ceilings (any target).
-// Supervisor+: may also set name/password when target network rating ≤ actor.
+// Supervisor+: may set network_rating (≤ actor) and any official pilot_rating (any target);
+// may also set name/password when target network rating ≤ actor.
 func (s *Server) updateUser(c *gin.Context) {
 	claims, ok := requireJwtContext(c)
 	if !ok {
@@ -97,7 +97,6 @@ func (s *Server) updateUser(c *gin.Context) {
 		return
 	}
 
-	actorPilotMax := s.actorPilotRatingCeiling(claims.CID)
 	fullOK := canFullMutateTarget(claims.NetworkRating, protocol.NetworkRating(targetUser.NetworkRating))
 
 	// Profile fields require full mutation privilege.
@@ -120,8 +119,9 @@ func (s *Server) updateUser(c *gin.Context) {
 		}
 	}
 
-	// Rating ceilings: cannot *raise/change to* above actor's own values (any target).
+	// Network ceiling: cannot raise/change to above actor's own (any target).
 	// Unchanged higher existing values are allowed when the field is re-sent as-is.
+	// Pilot: full official scale (KD-6) — no actor pilot ceiling.
 	if reqBody.NetworkRating != nil {
 		if *reqBody.NetworkRating > int(claims.NetworkRating) &&
 			*reqBody.NetworkRating != targetUser.NetworkRating {
@@ -135,12 +135,6 @@ func (s *Server) updateUser(c *gin.Context) {
 		if !isValidPilotRating(*reqBody.PilotRating) {
 			res := newAPIV1Failure("invalid pilot rating")
 			writeAPIV1Response(c, http.StatusBadRequest, &res)
-			return
-		}
-		if *reqBody.PilotRating > actorPilotMax &&
-			*reqBody.PilotRating != targetUser.PilotRating {
-			res := newAPIV1Failure("cannot set pilot rating above your own")
-			writeAPIV1Response(c, http.StatusForbidden, &res)
 			return
 		}
 		targetUser.PilotRating = *reqBody.PilotRating
@@ -203,12 +197,6 @@ func (s *Server) createUser(c *gin.Context) {
 	if !isValidPilotRating(reqBody.PilotRating) {
 		res := newAPIV1Failure("invalid pilot rating")
 		writeAPIV1Response(c, http.StatusBadRequest, &res)
-		return
-	}
-	actorPilotMax := s.actorPilotRatingCeiling(claims.CID)
-	if reqBody.PilotRating > actorPilotMax {
-		res := newAPIV1Failure("cannot set pilot rating above your own")
-		writeAPIV1Response(c, http.StatusForbidden, &res)
 		return
 	}
 

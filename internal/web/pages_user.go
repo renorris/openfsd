@@ -24,11 +24,7 @@ func (s *Server) newUserEditorPage(c *gin.Context) userEditorPage {
 	if defaultRating > maxRating {
 		defaultRating = maxRating
 	}
-	actorPilotMax := s.actorPilotRatingCeiling(claims.CID)
 	defaultPilot := 0
-	if defaultPilot > actorPilotMax {
-		defaultPilot = actorPilotMax
-	}
 	return userEditorPage{
 		basePage: basePage{
 			User:      pageUserFromClaims(claims),
@@ -38,9 +34,10 @@ func (s *Server) newUserEditorPage(c *gin.Context) userEditorPage {
 			NetworkRating: defaultRating,
 			PilotRating:   defaultPilot,
 		},
-		// Only offer ratings the actor may assign (server still enforces ceiling).
+		// Only offer network ratings the actor may assign (server still enforces ceiling).
+		// Pilot options are the full official scale (KD-6).
 		RatingOptions:      ratingOptionsUpTo(maxRating, defaultRating),
-		PilotRatingOptions: pilotRatingOptionsUpTo(actorPilotMax, defaultPilot),
+		PilotRatingOptions: pilotRatingOptionsAll(defaultPilot),
 	}
 }
 
@@ -49,20 +46,6 @@ func actorMaxRating(page *userEditorPage) int {
 		return int(protocol.NetworkRatingObserver)
 	}
 	return page.User.NetworkRating
-}
-
-// actorPilotRatingCeiling loads the actor's stored pilot_rating (VATSIM scale).
-// Invalid stored values fall back to the highest official rating at or below
-// the stored number (or P0).
-func (s *Server) actorPilotRatingCeiling(cid int) int {
-	u, err := s.dbRepo.UserRepo.GetUserByCID(cid)
-	if err != nil || u == nil {
-		return int(protocol.PilotRatingNone)
-	}
-	if protocol.IsValidPilotRating(u.PilotRating) {
-		return u.PilotRating
-	}
-	return maxValidPilotRatingAtMost(u.PilotRating)
 }
 
 // loadUserDirectory fills Dir totals/pages and Users rows for the current query.
@@ -197,18 +180,14 @@ func (s *Server) loadUserIntoEditForm(page *userEditorPage, cidStr string) {
 	}
 	page.EditLoaded = true
 	actorMax := actorMaxRating(page)
-	actorPilotMax := int(protocol.PilotRatingNone)
-	if page.User != nil {
-		actorPilotMax = s.actorPilotRatingCeiling(page.User.CID)
-	}
 	// Profile (name/password): SUP+ and target network rating ≤ actor.
-	// Ratings: I1+ may always adjust within ceilings (any target).
+	// Ratings: SUP+ may always adjust within network ceiling (any target).
 	fullOK := page.User != nil && canFullMutateTarget(
 		protocol.NetworkRating(page.User.NetworkRating),
 		protocol.NetworkRating(user.NetworkRating),
 	)
 	page.ProfileLocked = !fullOK
-	page.RatingsLocked = page.User == nil || !page.User.CanAdjustRatings
+	page.RatingsLocked = page.User == nil || !page.User.CanEditUsers
 	page.EditReadOnly = page.ProfileLocked && page.RatingsLocked
 	page.Edit = userForm{
 		CID:           strconv.Itoa(user.CID),
@@ -236,8 +215,9 @@ func (s *Server) loadUserIntoEditForm(page *userEditorPage, cidStr string) {
 			})
 		}
 	}
-	page.PilotRatingOptions = pilotRatingOptionsUpTo(actorPilotMax, user.PilotRating)
-	if user.PilotRating > actorPilotMax {
+	// Full official pilot scale (KD-6); still show invalid stored values if present.
+	page.PilotRatingOptions = pilotRatingOptionsAll(user.PilotRating)
+	if !isValidPilotRating(user.PilotRating) {
 		found := false
 		for _, o := range page.PilotRatingOptions {
 			if o.Value == user.PilotRating {
@@ -305,13 +285,12 @@ func (s *Server) handleFrontendUserCreate(c *gin.Context) {
 	page.Create.Password = "" // never re-render password
 
 	maxRating := int(claims.NetworkRating)
-	actorPilotMax := s.actorPilotRatingCeiling(claims.CID)
 	rating, err := strconv.Atoi(ratingStr)
 	if err != nil {
 		page.Create.RatingError = "Select a network rating"
 		page.Create.NetworkRating = int(protocol.NetworkRatingObserver)
 		page.RatingOptions = ratingOptionsUpTo(maxRating, page.Create.NetworkRating)
-		page.PilotRatingOptions = pilotRatingOptionsUpTo(actorPilotMax, 0)
+		page.PilotRatingOptions = pilotRatingOptionsAll(0)
 		s.reRenderUserEditor(c, &page, dir)
 		return
 	}
@@ -323,21 +302,16 @@ func (s *Server) handleFrontendUserCreate(c *gin.Context) {
 		pilotRating, err = strconv.Atoi(pilotStr)
 		if err != nil || !isValidPilotRating(pilotRating) {
 			page.Create.PilotError = "Invalid pilot rating"
-			page.PilotRatingOptions = pilotRatingOptionsUpTo(actorPilotMax, 0)
+			page.PilotRatingOptions = pilotRatingOptionsAll(0)
 			s.reRenderUserEditor(c, &page, dir)
 			return
 		}
 	}
 	page.Create.PilotRating = pilotRating
-	page.PilotRatingOptions = pilotRatingOptionsUpTo(actorPilotMax, pilotRating)
+	page.PilotRatingOptions = pilotRatingOptionsAll(pilotRating)
 
-	if len(password) < 8 {
-		page.Create.PasswordError = "Password must be at least 8 characters"
-		s.reRenderUserEditor(c, &page, dir)
-		return
-	}
-	if strings.Contains(password, ":") {
-		page.Create.PasswordError = "Password cannot contain colon characters"
+	if msg := validateNewPassword(password); msg != "" {
+		page.Create.PasswordError = msg
 		s.reRenderUserEditor(c, &page, dir)
 		return
 	}
@@ -348,11 +322,6 @@ func (s *Server) handleFrontendUserCreate(c *gin.Context) {
 	}
 	if rating > maxRating {
 		page.Create.Error = "You cannot create a user with that network rating"
-		s.reRenderUserEditor(c, &page, dir)
-		return
-	}
-	if pilotRating > actorPilotMax {
-		page.Create.PilotError = "Cannot set pilot rating above your own"
 		s.reRenderUserEditor(c, &page, dir)
 		return
 	}
@@ -384,8 +353,8 @@ func (s *Server) handleFrontendUserCreate(c *gin.Context) {
 
 // handleFrontendUserUpdate processes POST /usereditor/update (no-JS form path).
 //
-// Instructor1+: may set network_rating and pilot_rating up to actor ceilings on any user.
-// Supervisor+: may also mutate name/password when target network rating ≤ actor.
+// Supervisor+: may set network_rating (≤ actor) and any official pilot_rating on any user;
+// may also mutate name/password when target network rating ≤ actor.
 func (s *Server) handleFrontendUserUpdate(c *gin.Context) {
 	if !s.validateCSRF(c) {
 		c.AbortWithStatus(http.StatusForbidden)
@@ -429,13 +398,12 @@ func (s *Server) handleFrontendUserUpdate(c *gin.Context) {
 	}
 
 	maxRating := int(claims.NetworkRating)
-	actorPilotMax := s.actorPilotRatingCeiling(claims.CID)
 	rating, err := strconv.Atoi(ratingStr)
 	if err != nil || rating < -1 || rating > 12 {
 		page.Edit.RatingError = "Invalid network rating"
 		page.Edit.NetworkRating = int(protocol.NetworkRatingObserver)
 		page.RatingOptions = ratingOptionsUpTo(maxRating, page.Edit.NetworkRating)
-		page.PilotRatingOptions = pilotRatingOptionsUpTo(actorPilotMax, 0)
+		page.PilotRatingOptions = pilotRatingOptionsAll(0)
 		s.reRenderUserEditor(c, &page, dir)
 		return
 	}
@@ -448,22 +416,17 @@ func (s *Server) handleFrontendUserUpdate(c *gin.Context) {
 		if err != nil || !isValidPilotRating(pilotRating) {
 			page.Edit.PilotError = "Invalid pilot rating"
 			page.Edit.PilotRating = int(protocol.PilotRatingNone)
-			page.PilotRatingOptions = pilotRatingOptionsUpTo(actorPilotMax, 0)
+			page.PilotRatingOptions = pilotRatingOptionsAll(0)
 			s.reRenderUserEditor(c, &page, dir)
 			return
 		}
 	}
 	page.Edit.PilotRating = pilotRating
-	page.PilotRatingOptions = pilotRatingOptionsUpTo(actorPilotMax, pilotRating)
+	page.PilotRatingOptions = pilotRatingOptionsAll(pilotRating)
 
 	if password != "" {
-		if len(password) < 8 {
-			page.Edit.PasswordError = "Password must be at least 8 characters"
-			s.reRenderUserEditor(c, &page, dir)
-			return
-		}
-		if strings.Contains(password, ":") {
-			page.Edit.PasswordError = "Password cannot contain colon characters"
+		if msg := validateNewPassword(password); msg != "" {
+			page.Edit.PasswordError = msg
 			s.reRenderUserEditor(c, &page, dir)
 			return
 		}
@@ -495,20 +458,16 @@ func (s *Server) handleFrontendUserUpdate(c *gin.Context) {
 		page.Edit.LastName = lastName
 	}
 
-	// Ceilings apply when *changing* a rating. Leaving a higher existing value
+	// Network ceiling applies when *changing* a rating. Leaving a higher existing value
 	// unchanged is allowed so pilot/network edits can be independent.
 	if rating > maxRating && rating != targetUser.NetworkRating {
 		page.Edit.Error = "Cannot set network rating above your own"
 		s.reRenderUserEditor(c, &page, dir)
 		return
 	}
-	if pilotRating > actorPilotMax && pilotRating != targetUser.PilotRating {
-		page.Edit.PilotError = "Cannot set pilot rating above your own"
-		s.reRenderUserEditor(c, &page, dir)
-		return
-	}
 
-	// Ratings: any target; new values must not exceed actor ceilings.
+	// Ratings: any target; network new values must not exceed actor ceiling.
+	// Pilot: full official scale (KD-6) — no actor pilot ceiling.
 	targetUser.NetworkRating = rating
 	targetUser.PilotRating = pilotRating
 
@@ -532,7 +491,7 @@ func (s *Server) handleFrontendUserUpdate(c *gin.Context) {
 		// Empty password means keep current (UpdateUser contract).
 		targetUser.Password = password
 	} else {
-		// Rating-only path: never change name/password; reject attempts that look like full mutate.
+		// Higher-rated target: never change name/password; reject password attempts.
 		if password != "" {
 			page.Edit.Error = "Only supervisors can change passwords"
 			page.Edit.FirstName = safeStr(targetUser.FirstName)

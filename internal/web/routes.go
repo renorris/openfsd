@@ -118,32 +118,38 @@ func (s *Server) setupFrontendRoutes(parent *gin.RouterGroup) {
 	authed.Use(s.requireSessionHTML)
 	authed.GET("/dashboard", s.handleFrontendDashboard)
 
-	// Instructor1+ user directory: list/load + rating updates (handlers enforce ceilings).
-	// Create + full profile mutation require Supervisor+ (checked in handlers).
+	// Account self-service — any DB-valid session (OBS+).
+	authed.GET("/account", s.handleFrontendAccount)
+	authed.POST("/account/password", s.handleFrontendAccountPassword)
+	authed.POST("/account/delete", s.handleFrontendAccountDelete)
+
+	// User editor — Supervisor+ (create + full profile + ratings).
 	userAdmin := authed.Group("")
-	userAdmin.Use(s.requireMinRatingHTML(protocol.NetworkRatingInstructor1))
+	userAdmin.Use(s.requireMinRatingHTML(protocol.NetworkRatingSupervisor))
 	userAdmin.GET("/usereditor", s.handleFrontendUserEditor)
 	userAdmin.POST("/usereditor/create", s.handleFrontendUserCreate)
 	userAdmin.POST("/usereditor/update", s.handleFrontendUserUpdate)
 
-	// Admin config: form POST mutations with CSRF; no JS required.
+	// Sweatbox instructor UI: Instructor1+ (HTML forms; proxies FSD /sweatbox/*).
+	instructor := authed.Group("")
+	instructor.Use(s.requireMinRatingHTML(protocol.NetworkRatingInstructor1))
+	instructor.GET("/sweatbox", s.handleFrontendSweatbox)
+	instructor.GET("/sweatbox/manual", s.handleFrontendSweatboxManual)
+	instructor.POST("/sweatbox/airport", s.handleFrontendSweatboxAirport)
+	instructor.POST("/sweatbox/scenario", s.handleFrontendSweatboxScenario)
+	instructor.POST("/sweatbox/command", s.handleFrontendSweatboxCommand)
+	instructor.POST("/sweatbox/pause", s.handleFrontendSweatboxPause)
+	instructor.POST("/sweatbox/unpause", s.handleFrontendSweatboxUnpause)
+	instructor.POST("/sweatbox/delete", s.handleFrontendSweatboxDelete)
+	instructor.POST("/sweatbox/delete-all", s.handleFrontendSweatboxDeleteAll)
+
+	// Admin config + airport editor: form POST mutations with CSRF; no JS required.
 	admin := authed.Group("")
 	admin.Use(s.requireMinRatingHTML(protocol.NetworkRatingAdministator))
 	admin.GET("/configeditor", s.handleFrontendConfigEditor)
 	admin.POST("/configeditor", s.handleFrontendConfigUpdate)
 	admin.POST("/configeditor/reset-secret", s.handleFrontendConfigResetSecret)
 	admin.POST("/configeditor/create-token", s.handleFrontendConfigCreateToken)
-
-	// Sweatbox instructor UI: server-rendered forms; proxies FSD /sweatbox/* service HTTP.
-	admin.GET("/sweatbox", s.handleFrontendSweatbox)
-	admin.GET("/sweatbox/manual", s.handleFrontendSweatboxManual)
-	admin.POST("/sweatbox/airport", s.handleFrontendSweatboxAirport)
-	admin.POST("/sweatbox/scenario", s.handleFrontendSweatboxScenario)
-	admin.POST("/sweatbox/command", s.handleFrontendSweatboxCommand)
-	admin.POST("/sweatbox/pause", s.handleFrontendSweatboxPause)
-	admin.POST("/sweatbox/unpause", s.handleFrontendSweatboxUnpause)
-	admin.POST("/sweatbox/delete", s.handleFrontendSweatboxDelete)
-	admin.POST("/sweatbox/delete-all", s.handleFrontendSweatboxDeleteAll)
 
 	// Airport editor: HTML shell + no-JS echo-download (no disk/DB persistence).
 	admin.GET("/airport-editor", s.handleFrontendAirportEditor)

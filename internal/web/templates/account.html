@@ -1,0 +1,115 @@
+{{ define "title" }}Account{{ end }}
+
+{{ define "body" }}
+<main class="container py-4" style="max-width: 36rem">
+    <h1 class="h4 mb-3">Account</h1>
+
+    {{ if .FlashSuccess }}
+    <div class="alert alert-success" role="status">{{ .FlashSuccess }}</div>
+    {{ end }}
+    {{ if .FlashError }}
+    <div class="alert alert-danger" role="alert">{{ .FlashError }}</div>
+    {{ end }}
+    {{ if .FormError }}
+    <div class="alert alert-danger" role="alert">{{ .FormError }}</div>
+    {{ end }}
+
+    <section class="mb-4" aria-labelledby="account-profile-heading">
+        <h2 id="account-profile-heading" class="h5">Profile</h2>
+        <dl class="row mb-0">
+            <dt class="col-sm-4">CID</dt>
+            <dd class="col-sm-8">{{ .CID }}</dd>
+            <dt class="col-sm-4">Name</dt>
+            <dd class="col-sm-8">{{ .FirstName }} {{ .LastName }}</dd>
+            <dt class="col-sm-4">Network rating</dt>
+            <dd class="col-sm-8">{{ .NetworkLabel }}</dd>
+            <dt class="col-sm-4">Pilot rating</dt>
+            <dd class="col-sm-8">{{ .PilotLabel }}</dd>
+        </dl>
+        <p class="text-muted small mt-2 mb-0">
+            Network and pilot ratings can only be changed by a supervisor.
+        </p>
+    </section>
+
+    <section class="mb-4" aria-labelledby="account-password-heading">
+        <h2 id="account-password-heading" class="h5">Change password</h2>
+        <p class="text-muted small">
+            Changing your password does not sign out other devices until their session expires.
+            Deleting or disabling the account ends other sessions on their next request.
+        </p>
+        <form method="post" action="/account/password" novalidate>
+            <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
+            <div class="mb-3">
+                <label for="account-current-password" class="form-label">Current password</label>
+                <input type="password" class="form-control{{ if .CurrentPassError }} is-invalid{{ end }}"
+                       id="account-current-password" name="current_password" required
+                       autocomplete="current-password">
+                {{ if .CurrentPassError }}
+                <div class="invalid-feedback">{{ .CurrentPassError }}</div>
+                {{ end }}
+            </div>
+            <div class="mb-3">
+                <label for="account-new-password" class="form-label">New password</label>
+                <input type="password" class="form-control{{ if .NewPassError }} is-invalid{{ end }}"
+                       id="account-new-password" name="new_password" required minlength="8"
+                       autocomplete="new-password">
+                {{ if .NewPassError }}
+                <div class="invalid-feedback">{{ .NewPassError }}</div>
+                {{ end }}
+            </div>
+            <div class="mb-3">
+                <label for="account-confirm-password" class="form-label">Confirm new password</label>
+                <input type="password" class="form-control{{ if .ConfirmPassError }} is-invalid{{ end }}"
+                       id="account-confirm-password" name="confirm_password" required minlength="8"
+                       autocomplete="new-password">
+                {{ if .ConfirmPassError }}
+                <div class="invalid-feedback">{{ .ConfirmPassError }}</div>
+                {{ end }}
+            </div>
+            <button type="submit" class="btn btn-primary">Update password</button>
+        </form>
+    </section>
+
+    <section class="mb-4 border border-danger rounded p-3" aria-labelledby="account-delete-heading">
+        <h2 id="account-delete-heading" class="h5 text-danger">Delete my account</h2>
+        <p class="small">
+            This deactivates your certificate. You will not be able to log in again.
+            A supervisor can restore a soft-deleted account. Hard delete is irreversible
+            and only available when enabled on this server.
+        </p>
+        {{ if .DeleteError }}
+        <div class="alert alert-danger" role="alert">{{ .DeleteError }}</div>
+        {{ end }}
+        <form method="post" action="/account/delete" novalidate>
+            <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
+            <div class="mb-3">
+                <label for="account-delete-password" class="form-label">Current password</label>
+                <input type="password" class="form-control{{ if .DeletePassError }} is-invalid{{ end }}"
+                       id="account-delete-password" name="current_password" required
+                       autocomplete="current-password">
+                {{ if .DeletePassError }}
+                <div class="invalid-feedback">{{ .DeletePassError }}</div>
+                {{ end }}
+            </div>
+            <div class="mb-3">
+                <label for="account-confirm-cid" class="form-label">Type your CID to confirm</label>
+                <input type="text" class="form-control" id="account-confirm-cid"
+                       name="confirm_cid" required inputmode="numeric"
+                       autocomplete="off" placeholder="{{ .CID }}">
+            </div>
+            {{ if .AllowPermanentDelete }}
+            <div class="mb-3 form-check">
+                <input type="checkbox" class="form-check-input" id="account-permanent"
+                       name="permanent" value="1">
+                <label class="form-check-label text-danger" for="account-permanent">
+                    Permanently delete my account (cannot be undone)
+                </label>
+            </div>
+            {{ end }}
+            <button type="submit" class="btn btn-outline-danger">Delete account</button>
+        </form>
+    </section>
+
+    <p class="mb-0"><a href="/dashboard">← Back to dashboard</a></p>
+</main>
+{{ end }}

@@ -44,17 +44,33 @@ func TestSweatboxPageObserverRedirect(t *testing.T) {
 	}
 }
 
-func TestSweatboxPageSupervisorRedirect(t *testing.T) {
+func TestInstructorCanAccessSweatbox(t *testing.T) {
+	ts := newTestServer(t)
+	inst := createTestUser(t, ts, "pw", int(protocol.NetworkRatingInstructor1))
+	cookies := formLogin(t, ts, inst.CID, "pw")
+
+	w, _ := authedGET(t, ts, "/sweatbox", cookies)
+	if w.Code != http.StatusOK {
+		t.Fatalf("I1 GET /sweatbox status %d want 200 body %s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "Sweatbox") {
+		t.Fatalf("expected sweatbox page, body=%s", clip(body, 400))
+	}
+	// Nav should include Sweatbox for I1
+	if !strings.Contains(body, `href="/sweatbox"`) {
+		t.Fatal("expected sweatbox nav link for I1")
+	}
+}
+
+func TestSweatboxPageSupervisorOK(t *testing.T) {
 	ts := newTestServer(t)
 	sup := createTestUser(t, ts, "pw", int(protocol.NetworkRatingSupervisor))
 	cookies := formLogin(t, ts, sup.CID, "pw")
 
 	w, _ := authedGET(t, ts, "/sweatbox", cookies)
-	if w.Code != http.StatusSeeOther {
-		t.Fatalf("status %d want 303", w.Code)
-	}
-	if loc := w.Header().Get("Location"); loc != "/dashboard" {
-		t.Fatalf("Location=%q want /dashboard", loc)
+	if w.Code != http.StatusOK {
+		t.Fatalf("SUP GET /sweatbox status %d want 200", w.Code)
 	}
 }
 
@@ -85,17 +101,33 @@ func TestSweatboxPageAdminShowsUnavailableWhenFSDDown(t *testing.T) {
 	}
 }
 
-func TestSweatboxNavOnlyForAdmin(t *testing.T) {
+func TestSweatboxNavForInstructorNotObserver(t *testing.T) {
 	ts := newTestServer(t)
 	// Observer dashboard: no sweatbox nav
 	obs := createTestUser(t, ts, "pw", int(protocol.NetworkRatingObserver))
 	cookies := formLogin(t, ts, obs.CID, "pw")
 	w, _ := authedGET(t, ts, "/dashboard", cookies)
 	body := w.Body.String()
-	// Layout nav should not include Sweatbox for non-admin (CanEditConfig false).
-	// Dashboard may still mention connections; check header area for Config/Sweatbox pair.
 	if strings.Contains(body, `href="/sweatbox">Sweatbox</a>`) {
 		t.Fatal("observer must not see Sweatbox nav")
+	}
+	if !strings.Contains(body, `href="/account"`) {
+		t.Fatal("observer dashboard should link to account")
+	}
+
+	inst := createTestUser(t, ts, "inst-pass", int(protocol.NetworkRatingInstructor1))
+	cookies = formLogin(t, ts, inst.CID, "inst-pass")
+	w, _ = authedGET(t, ts, "/dashboard", cookies)
+	body = w.Body.String()
+	if !strings.Contains(body, `href="/sweatbox"`) {
+		t.Fatal("I1 dashboard should link to sweatbox")
+	}
+	// I1 must not see Users or Config
+	if strings.Contains(body, `href="/usereditor"`) {
+		t.Fatal("I1 must not see Users nav")
+	}
+	if strings.Contains(body, `href="/configeditor"`) {
+		t.Fatal("I1 must not see Config nav")
 	}
 
 	admin := createTestUser(t, ts, "admin-pass", int(protocol.NetworkRatingAdministator))
@@ -104,6 +136,9 @@ func TestSweatboxNavOnlyForAdmin(t *testing.T) {
 	body = w.Body.String()
 	if !strings.Contains(body, `href="/sweatbox"`) {
 		t.Fatal("admin dashboard should link to sweatbox")
+	}
+	if !strings.Contains(body, `href="/configeditor"`) {
+		t.Fatal("admin dashboard should link to config")
 	}
 }
 
@@ -152,10 +187,10 @@ func TestSweatboxManualObserverRedirect(t *testing.T) {
 	}
 }
 
-func TestSweatboxManualAdminOK(t *testing.T) {
+func TestSweatboxManualInstructorOK(t *testing.T) {
 	ts := newTestServer(t)
-	admin := createTestUser(t, ts, "admin-pass", int(protocol.NetworkRatingAdministator))
-	cookies := formLogin(t, ts, admin.CID, "admin-pass")
+	inst := createTestUser(t, ts, "inst-pass", int(protocol.NetworkRatingInstructor1))
+	cookies := formLogin(t, ts, inst.CID, "inst-pass")
 
 	w, _ := authedGET(t, ts, "/sweatbox/manual", cookies)
 	if w.Code != http.StatusOK {
@@ -169,10 +204,15 @@ func TestSweatboxManualAdminOK(t *testing.T) {
 		`href="/sweatbox"`,
 		"add rules weight engine",
 		"Pattern &amp; arrival",
+		"Instructor1+",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("manual missing %q, body=%s", want, clip(body, 600))
 		}
+	}
+	// Must not claim Administrator-only access for sweatbox role.
+	if strings.Contains(body, "Administrator network rating (same as Config") {
+		t.Fatal("manual still claims Administrator-only sweatbox access")
 	}
 	// Manual is static HTML — no FSD dependency required.
 	if strings.Contains(body, "Unavailable.") {
@@ -198,7 +238,7 @@ func TestSweatboxPageLinksManualNewTab(t *testing.T) {
 		t.Fatalf("manual link should open in new tab with noopener, body=%s", clip(body, 500))
 	}
 	// Link text should stay quiet (not a primary action button).
-	if !strings.Contains(body, ">Manual</a>") {
+	if !strings.Contains(body, ">User Manual</a>") && !strings.Contains(body, ">Manual</a>") {
 		t.Fatal("expected muted Manual link text")
 	}
 }

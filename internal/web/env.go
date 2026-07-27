@@ -29,6 +29,10 @@ type ServerConfig struct {
 	// Values: "true"/"false" force the flag; empty (default) derives from
 	// TLS / X-Forwarded-Proto so local docker-compose HTTP keeps working.
 	CookieSecure string `env:"COOKIE_SECURE"`
+
+	// AllowPermanentAccountDelete enables the non-default hard-delete checkbox
+	// on POST /account/delete. Default false (soft-delete only).
+	AllowPermanentAccountDelete bool `env:"ALLOW_PERMANENT_ACCOUNT_DELETE, default=false"`
 }
 
 func loadServerConfig(ctx context.Context) (config *ServerConfig, err error) {

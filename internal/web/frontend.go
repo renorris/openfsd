@@ -19,15 +19,28 @@ func (s *Server) handleFrontendLanding(c *gin.Context) {
 
 func (s *Server) handleFrontendLogin(c *gin.Context) {
 	// Already signed in → dashboard.
+	// Delete path clears cookies first so the account-deleted banner is reachable.
 	if claims, err := s.parseSessionCookie(c); err == nil && claims != nil {
-		c.Redirect(http.StatusSeeOther, "/dashboard")
-		return
+		// Still revalidate: inactive sessions must not bounce to dashboard.
+		if _, _, err := s.revalidateSessionFromDB(claims); err == nil {
+			c.Redirect(http.StatusSeeOther, "/dashboard")
+			return
+		}
+		s.clearSessionCookie(c)
+		s.clearCSRFCookie(c)
 	}
-	s.writeTemplate(c, "login", loginPage{
+	page := loginPage{
 		basePage: basePage{
 			CSRFToken: s.issueCSRFToken(c),
 		},
-	})
+	}
+	if c.Query("account") == "deleted" {
+		page.Info = "Your account has been deleted."
+		if c.Query("permanent") == "disabled" {
+			page.Info += " Permanent delete is not enabled on this server; the account was deactivated instead."
+		}
+	}
+	s.writeTemplate(c, "login", page)
 }
 
 // handleFrontendLoginPost processes application/x-www-form-urlencoded login
