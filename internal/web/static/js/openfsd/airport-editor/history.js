@@ -54,10 +54,9 @@ function deepClone(value) {
  * @returns {HistoryStack}
  */
 export function createHistory(opts = {}) {
+  const n = Math.floor(Number(opts.maxDepth));
   const maxDepth =
-    typeof opts.maxDepth === 'number' && opts.maxDepth > 0
-      ? Math.floor(opts.maxDepth)
-      : DEFAULT_HISTORY_MAX_DEPTH;
+    Number.isFinite(n) && n > 0 ? n : DEFAULT_HISTORY_MAX_DEPTH;
   return {
     undoStack: [],
     redoStack: [],

@@ -86,8 +86,15 @@ test('createHistory defaults and custom maxDepth', () => {
   const h2 = createHistory({ maxDepth: 3 });
   assert.equal(h2.maxDepth, 3);
 
-  const h3 = createHistory({ maxDepth: 0 });
-  assert.equal(h3.maxDepth, DEFAULT_HISTORY_MAX_DEPTH);
+  // Invalid / non-positive / non-finite → default
+  assert.equal(createHistory({ maxDepth: 0 }).maxDepth, DEFAULT_HISTORY_MAX_DEPTH);
+  assert.equal(createHistory({ maxDepth: 0.5 }).maxDepth, DEFAULT_HISTORY_MAX_DEPTH);
+  assert.equal(createHistory({ maxDepth: -2 }).maxDepth, DEFAULT_HISTORY_MAX_DEPTH);
+  assert.equal(createHistory({ maxDepth: Infinity }).maxDepth, DEFAULT_HISTORY_MAX_DEPTH);
+  assert.equal(createHistory({ maxDepth: NaN }).maxDepth, DEFAULT_HISTORY_MAX_DEPTH);
+  assert.equal(createHistory({ maxDepth: 'nope' }).maxDepth, DEFAULT_HISTORY_MAX_DEPTH);
+  // Floor then accept: 2.9 → 2
+  assert.equal(createHistory({ maxDepth: 2.9 }).maxDepth, 2);
 });
 
 // ---------------------------------------------------------------------------
@@ -267,6 +274,30 @@ test('maxDepth drops oldest on overflow', () => {
   // Oldest remaining should be from when _nextSurfaceId was 3 (0-based loop: i=2 → id 3)
   assert.equal(h.undoStack[0]._nextSurfaceId, 3);
   assert.equal(h.undoStack[2]._nextSurfaceId, 5);
+});
+
+test('maxDepth trims undo on redo path when stack would exceed max', () => {
+  // Normal undo/redo from a max-sized stack never exceeds max (undo shrinks
+  // undo as it grows redo). Cover the defensive trim in redo by pre-filling
+  // undo to maxDepth with a pending redo entry so redo would push past max.
+  const h = createHistory({ maxDepth: 2 });
+  const doc = createEmptyDocument();
+
+  doc._nextSurfaceId = 1;
+  h.undoStack.push(captureSnapshot(doc));
+  doc._nextSurfaceId = 2;
+  h.undoStack.push(captureSnapshot(doc));
+  doc._nextSurfaceId = 99;
+  h.redoStack.push(captureSnapshot(doc));
+  doc._nextSurfaceId = 3; // live present; redo captures this onto undo
+
+  const r = redo(h, doc);
+  assert.equal(r.ok, true);
+  assert.equal(doc._nextSurfaceId, 99);
+  assert.equal(h.undoStack.length, 2); // not 3 — oldest dropped
+  assert.equal(h.undoStack[0]._nextSurfaceId, 2);
+  assert.equal(h.undoStack[1]._nextSurfaceId, 3);
+  assert.equal(h.redoStack.length, 0);
 });
 
 // ---------------------------------------------------------------------------
