@@ -9,8 +9,7 @@ package server
 //     per-conn SenderWorker). Reliable packets flush immediately; position
 //     packets latest-wins and coalesce by size/idle.
 //   - Login-phase sync writes use gnet.Conn.Write from OnTraffic (same loop).
-//   - HTTP admin remains on net/http. Classic net.Listener path is used when
-//     Deps.Listen is injected (tests).
+//   - HTTP admin remains on net/http.
 
 import (
 	"bytes"
@@ -46,7 +45,7 @@ type fsdConnCtx struct {
 	client     *session.Session
 	registered bool
 	// disconnect broadcast deferred until OnClose after successful register
-	// (mirrors handleConn defer broadcastDisconnectPacket).
+	// (mirrors gnet disconnect / synthetic cleanup broadcastDisconnectPacket).
 
 	remoteIP   string
 	connHeld   bool // limits.tryAcquireConn succeeded

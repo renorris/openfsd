@@ -1,15 +1,11 @@
 package server
 
 import (
-	"bufio"
-	"context"
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/renorris/openfsd/internal/auth"
 	"github.com/renorris/openfsd/internal/db"
@@ -25,138 +21,6 @@ import (
 // connection socket. Post-login code must use session.Session.SendError.
 func sendError(conn io.Writer, code int, message string) (err error) {
 	return protocol.WriteError(conn, protocol.ErrorCode(code), message)
-}
-
-// handleConn manages a single client connection (classic net path).
-// If any errors occur during the process, it sends an error to the client and closes the connection.
-func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
-	defer func() {
-		if err := recover(); err != nil {
-			s.logger.Error("FSD connection goroutine panicked", "err", err)
-		}
-	}()
-
-	ip := remoteIPFromConn(conn)
-	if !s.limits.tryAcquireConn(ip, s.cfg.FsdMaxConnections, s.cfg.FsdMaxConnectionsPerIP) {
-		_ = sendError(conn, ServerFullError, "Server full")
-		_ = conn.Close()
-		s.logger.Debug("connection rejected: connection limit", "ip", ip)
-		return
-	}
-	defer s.limits.releaseConn(ip)
-	defer conn.Close()
-
-	// Login deadline (classic path).
-	if s.cfg.FsdLoginTimeout > 0 {
-		_ = conn.SetReadDeadline(time.Now().Add(s.cfg.FsdLoginTimeout))
-	}
-
-	if err := sendServerIdent(conn); err != nil {
-		s.logger.Debug("error sending server ident", "err", err)
-		return
-	}
-
-	scanner := bufio.NewScanner(conn)
-	buf := make([]byte, 4096)
-	scanner.Buffer(buf, len(buf))
-
-	data, token, err := readLoginPackets(conn, scanner, s.clock)
-	if err != nil {
-		return
-	}
-
-	// Clear login deadline; idle timeouts applied in eventLoop.
-	_ = conn.SetReadDeadline(time.Time{})
-
-	// Check if the requested callsign is OK
-	if !isValidClientCallsign([]byte(data.Callsign)) {
-		sendError(conn, CallsignInvalidError, "Callsign invalid")
-		return
-	}
-
-	client := session.New(ctx, conn, scanner, data)
-	client.Auth = &auth.AuthState{}
-	client.SetRemoteIP(ip)
-	client.LastInboundNs.Store(s.clock.Now().UnixNano())
-
-	// Attempt to authenticate connection (login-phase errors still use sendError on conn)
-	if err = s.attemptAuthentication(client, token); err != nil {
-		return
-	}
-
-	// Per-CID session cap (after auth, before register).
-	if !s.limits.tryAcquireCID(client.CID, s.cfg.FsdMaxSessionsPerCID) {
-		sendError(conn, ServerFullError, "Too many sessions for this CID")
-		return
-	}
-	cidHeld := true
-	defer func() {
-		if cidHeld {
-			s.limits.releaseCID(client.CID)
-		}
-	}()
-
-	// Attempt to register to registry
-	if err = s.registry.Register(client); err != nil {
-		if errors.Is(err, ErrCallsignInUse) {
-			sendError(conn, CallsignInUseError, "Callsign already in use")
-		}
-		return
-	}
-	defer s.registry.Release(client)
-
-	// Start sender before any post-login outbound traffic (MOTD, etc.).
-	// After this point, all writes go through client.Send → SenderWorker.
-	// Direct conn.Write is forbidden outside SenderWorker.
-	go client.SenderWorker()
-
-	// Send hello message to client
-	if err = s.sendMotd(client); err != nil {
-		client.Disconnect()
-		return
-	}
-
-	// Broadcast add packet to entire server
-	s.broadcastAddPacket(client)
-	defer s.broadcastDisconnectPacket(client)
-
-	s.eventLoop(client)
-}
-
-// eventLoop reads packets from the session and dispatches handlers.
-// SenderWorker must already be running before eventLoop is entered.
-func (s *Server) eventLoop(client *session.Session) {
-	defer client.Disconnect()
-
-	for {
-		if s.cfg.FsdIdleTimeout > 0 && client.Conn != nil {
-			_ = client.Conn.SetReadDeadline(time.Now().Add(s.cfg.FsdIdleTimeout))
-		}
-
-		if !client.Scanner.Scan() {
-			return
-		}
-
-		// Copy packet out of the scanner buffer (reused on next Scan) and
-		// re-append CRLF so handlers / fan-out own an immutable payload.
-		raw := client.Scanner.Bytes()
-		packet := make([]byte, len(raw)+2)
-		copy(packet, raw)
-		packet[len(raw)] = '\r'
-		packet[len(raw)+1] = '\n'
-
-		client.LastInboundNs.Store(s.clock.Now().UnixNano())
-
-		// Verify packet and obtain type
-		packetType, ok := verifyPacket(packet, client)
-		if !ok {
-			continue
-		}
-
-		// Run handler
-		handler := s.getHandler(packetType)
-		handler(client, packet)
-	}
 }
 
 // sendServerIdent sends the initial server identification packet to the client.
@@ -175,37 +39,6 @@ var ErrInvalidAddPacket = errors.New("invalid add packet")
 
 // ErrInvalidIDPacket is returned when the ID packet from the client is invalid.
 var ErrInvalidIDPacket = errors.New("invalid ID packet")
-
-// readLoginPackets reads the two expected login packets from the client:
-// the client identification packet and the add packet.
-// It parses these packets to extract the client's data and returns it in a LoginData struct.
-// If any errors occur during reading or parsing, it sends an error to the client and returns an error.
-func readLoginPackets(conn net.Conn, scanner *bufio.Scanner, clock Clock) (data session.LoginData, token string, err error) {
-	// Client ident
-	if !scanner.Scan() {
-		err = ErrInvalidIDPacket
-		sendError(conn, SyntaxError, "Error reading Client ident packet")
-		return
-	}
-	idPacket := append([]byte{}, scanner.Bytes()...)
-
-	// Add packet
-	if !scanner.Scan() {
-		err = ErrInvalidAddPacket
-		sendError(conn, SyntaxError, "Error reading add packet")
-		return
-	}
-	addPacket := append([]byte{}, scanner.Bytes()...)
-
-	var errCode int
-	var errMsg string
-	data, token, errCode, errMsg, err = parseLoginPackets(idPacket, addPacket, clock.Now())
-	if err != nil {
-		sendError(conn, errCode, errMsg)
-		return
-	}
-	return
-}
 
 func (s *Server) attemptAuthentication(client *session.Session, token string) (err error) {
 	ip := client.RemoteIP()
@@ -421,19 +254,4 @@ func (s *Server) sendServerTextMessage(client *session.Session, msg string) (err
 	packet.WriteString("\r\n")
 
 	return client.Send(packet.String())
-}
-
-func remoteIPFromConn(conn net.Conn) string {
-	if conn == nil {
-		return ""
-	}
-	addr := conn.RemoteAddr()
-	if addr == nil {
-		return ""
-	}
-	host, _, err := net.SplitHostPort(addr.String())
-	if err != nil {
-		return addr.String()
-	}
-	return host
 }

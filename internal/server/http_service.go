@@ -186,7 +186,7 @@ func (s *Server) handleKickUser(c *gin.Context) {
 		return
 	}
 
-	// Synthetic (sweatbox) sessions have no handleConn Release defer — Remove
+	// Synthetic (sweatbox) sessions have no gnet disconnect Release defer — Remove
 	// performs pointer-scoped #DP + registry.Release + engine.Delete.
 	if client.Synthetic && s.sweatbox != nil {
 		_ = s.sweatbox.Remove(client.Callsign)

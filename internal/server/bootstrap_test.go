@@ -228,24 +228,18 @@ func TestOnlineUsersSyntheticBadge(t *testing.T) {
 
 func TestRunServiceHTTPAndListen(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	addr := ln.Addr().String()
-	_ = ln.Close()
 
-	// Pre-bind HTTP listener for HTTPListen inject
+	// Pre-bind HTTP listener for HTTPListen inject (service HTTP independent of FSD).
 	httpLn, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	httpAddr := httpLn.Addr().String()
 
-	fsdLn, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	fsdAddr := fsdLn.Addr().String()
-
+	fsdBound := make(chan string, 2)
 	kv := &mapConfig{m: map[string]string{db.ConfigJwtSecretKey: TestJWTSecret}}
 	srv, err := New(Deps{
 		Config: &Config{
-			FsdListenAddrs:        []string{fsdAddr},
+			FsdListenAddrs:        []string{"127.0.0.1:0"},
+			FsdNumEventLoop:       1,
 			ServiceHTTPListenAddr: httpAddr,
 		},
 		Users:    stubUserStore{},
@@ -253,9 +247,7 @@ func TestRunServiceHTTPAndListen(t *testing.T) {
 		Registry: postoffice.New(),
 		Metar:    &recordingMetar{},
 		Clock:    realClock{},
-		Listen: func(ctx context.Context, network, address string) (net.Listener, error) {
-			return fsdLn, nil
-		},
+		FSDBound: fsdBound,
 		HTTPListen: func(network, address string) (net.Listener, error) {
 			return httpLn, nil
 		},
@@ -266,13 +258,26 @@ func TestRunServiceHTTPAndListen(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- srv.Run(ctx) }()
 
-	// Give listeners a moment
-	time.Sleep(50 * time.Millisecond)
-	// Connect TCP briefly
-	conn, err := net.DialTimeout("tcp", fsdAddr, time.Second)
-	if err == nil {
-		_ = conn.Close()
+	// Readiness: FSDBound select (not sleep-only), same style as StartTestServer.
+	var fsdAddr string
+	select {
+	case fsdAddr = <-fsdBound:
+	case err := <-done:
+		cancel()
+		t.Fatalf("server exited before FSD bind: %v", err)
+	case <-time.After(8 * time.Second):
+		cancel()
+		t.Fatal("timeout waiting for FSD listener (gnet OnBoot)")
 	}
+	if host, port, splitErr := net.SplitHostPort(fsdAddr); splitErr == nil {
+		if host == "0.0.0.0" || host == "::" {
+			fsdAddr = net.JoinHostPort("127.0.0.1", port)
+		}
+	}
+
+	conn, err := net.DialTimeout("tcp", fsdAddr, time.Second)
+	require.NoError(t, err)
+	_ = conn.Close()
 
 	cancel()
 	select {
@@ -280,7 +285,6 @@ func TestRunServiceHTTPAndListen(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("Run did not return")
 	}
-	_ = addr
 }
 
 type mapConfig struct{ m map[string]string }

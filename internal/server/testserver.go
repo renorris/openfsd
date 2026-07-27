@@ -250,7 +250,7 @@ func StartTestServerOpts(t testing.TB, opts TestServerOptions) *TestServer {
 	}
 	httpAddr := httpLn.Addr().String()
 
-	// Bound FSD address reported by gnet OnBoot (or classic listenLoop).
+	// Bound FSD address reported by gnet OnBoot.
 	fsdAddrCh := make(chan string, 2)
 
 	cfg := &Config{
@@ -279,7 +279,7 @@ func StartTestServerOpts(t testing.TB, opts TestServerOptions) *TestServer {
 		Metar:           metarSvc,
 		Logger:          logger,
 		SweatboxEnabled: true, // e2e convenience; empty until airport/scenario load
-		// Production gnet path (Listen nil). Bound address via FSDBound.
+		// gnet FSD plane. Bound address via FSDBound.
 		FSDBound: fsdAddrCh,
 		// Return the already-bound listener; never rebind.
 		HTTPListen: func(network, addr string) (net.Listener, error) {
@@ -310,7 +310,7 @@ func StartTestServerOpts(t testing.TB, opts TestServerOptions) *TestServer {
 	case <-time.After(8 * time.Second):
 		cancel()
 		_ = sqlDB.Close()
-		t.Fatal("timeout waiting for FSD listener (gnet OnBoot / classic bind)")
+		t.Fatal("timeout waiting for FSD listener (gnet OnBoot)")
 	}
 	// gnet may report 0.0.0.0 — clients should dial loopback.
 	if host, port, err := net.SplitHostPort(fsdAddr); err == nil {

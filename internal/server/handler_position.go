@@ -140,7 +140,7 @@ func (s *Server) handlePilotPosition(client *session.Session, packet []byte) {
 	const pilotVisRange = 50.0 * 1852.0 // 50 nautical miles
 
 	// Update registry position then fan-out (hot path).
-	// packet is an owned immutable copy (eventLoop / gnet dispatch).
+	// packet is an owned immutable copy (gnet dispatch).
 	s.registry.UpdatePosition(client, [2]float64{lat, lon}, pilotVisRange)
 
 	// Rewrite rating field (index 3) from authenticated session rating.

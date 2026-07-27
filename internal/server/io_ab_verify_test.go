@@ -1,8 +1,8 @@
 //go:build verifyperf
 
-// A/B verification: gnet FSD plane vs classic 2-goroutine-per-conn path.
+// Gnet FSD plane baseline smoke (historical A/B vs classic removed with dual-path).
 //
-//	go test -tags=verifyperf -count=1 -timeout=180s ./internal/server/ -run TestIOAB -v
+//	go test -tags=verifyperf -count=1 -timeout=180s ./internal/server/ -run TestIO_GnetBaseline -v
 //
 // Reports goroutine counts, send throughput, and peer receive counts under a
 // hub-like position storm. Not compiled into default test runs.
@@ -76,59 +76,24 @@ type abResult struct {
 	recvPerSec     float64
 }
 
-func TestIOAB_GnetVsClassic(t *testing.T) {
+func TestIO_GnetBaseline(t *testing.T) {
 	if testing.Short() {
-		t.Skip("verifyperf A/B under -short")
+		t.Skip("verifyperf under -short")
 	}
 	m := abPilots()
 	dur := abDuration()
 	hz := abHz()
 
-	classic := runIOAB(t, "classic", true, m, dur, hz)
-	runtime.GC()
-	time.Sleep(250 * time.Millisecond)
-	gnetRes := runIOAB(t, "gnet", false, m, dur, hz)
+	gnetRes := runIOAB(t, "gnet", m, dur, hz)
 
-	t.Logf("=== A/B summary (M=%d T=%s hz=%.1f) ===", m, dur, hz)
-	logAB(t, classic)
+	t.Logf("=== gnet baseline (M=%d T=%s hz=%.1f) ===", m, dur, hz)
 	logAB(t, gnetRes)
 
-	t.Logf("goroutine_end classic=%d gnet=%d gnet_saves=%.2fx",
-		classic.goroutinesEnd, gnetRes.goroutinesEnd,
-		float64(classic.goroutinesEnd)/float64(max1(gnetRes.goroutinesEnd)))
-	t.Logf("goroutine_peak classic=%d gnet=%d gnet_saves=%.2fx",
-		classic.goroutinesPeak, gnetRes.goroutinesPeak,
-		float64(classic.goroutinesPeak)/float64(max1(gnetRes.goroutinesPeak)))
-	t.Logf("send/s classic=%.0f gnet=%.0f ratio=%.2f",
-		classic.sendPerSec, gnetRes.sendPerSec,
-		gnetRes.sendPerSec/maxF1(classic.sendPerSec))
-	t.Logf("recv/s classic=%.0f gnet=%.0f ratio=%.2f",
-		classic.recvPerSec, gnetRes.recvPerSec,
-		gnetRes.recvPerSec/maxF1(classic.recvPerSec))
-
-	// Objective success criteria for the I/O pass:
-	// 1) fewer goroutines under load (no 2N reader/writer pairs)
-	// 2) fan-out delivery not worse than classic by >15%
-	// 3) send throughput not worse than classic by >15%
-	if gnetRes.goroutinesEnd >= classic.goroutinesEnd {
-		t.Errorf("gnet end goroutines %d not better than classic %d",
-			gnetRes.goroutinesEnd, classic.goroutinesEnd)
-	}
-	saved := classic.goroutinesPeak - gnetRes.goroutinesPeak
-	if saved < m {
-		t.Errorf("expected gnet to save at least ~M=%d peak goroutines, saved only %d (classic peak=%d gnet peak=%d)",
-			m, saved, classic.goroutinesPeak, gnetRes.goroutinesPeak)
-	}
-	if gnetRes.recvPerSec < classic.recvPerSec*0.85 {
-		t.Errorf("gnet recv/s %.0f is >15%% worse than classic %.0f",
-			gnetRes.recvPerSec, classic.recvPerSec)
-	}
-	if gnetRes.sendPerSec < classic.sendPerSec*0.85 {
-		t.Errorf("gnet send/s %.0f is >15%% worse than classic %.0f",
-			gnetRes.sendPerSec, classic.sendPerSec)
-	}
 	if gnetRes.sends == 0 || gnetRes.recvPos == 0 {
 		t.Fatal("gnet path produced zero traffic")
+	}
+	if gnetRes.goroutinesEnd < 1 {
+		t.Fatal("unexpected zero goroutines")
 	}
 }
 
@@ -153,9 +118,9 @@ func maxF1(a float64) float64 {
 	return a
 }
 
-func runIOAB(t *testing.T, name string, classic bool, m int, dur time.Duration, hz float64) abResult {
+func runIOAB(t *testing.T, name string, m int, dur time.Duration, hz float64) abResult {
 	t.Helper()
-	ts := startABServer(t, classic, m)
+	ts := startABServer(t, m)
 
 	clients := make([]*fsdclient.Client, m)
 	callsigns := make([]string, m)
@@ -350,7 +315,7 @@ func (s *abServer) makeJWT(cid int) (string, error) {
 	return tok.SignedString([]byte(s.secret))
 }
 
-func startABServer(t *testing.T, classic bool, m int) *abServer {
+func startABServer(t *testing.T, m int) *abServer {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -436,7 +401,6 @@ func startABServer(t *testing.T, classic bool, m int) *abServer {
 		Metar:           metar.New(1, abNoopHTTP{}),
 		Logger:          logger,
 		SweatboxEnabled: false,
-		ForceClassicFSD: classic,
 		FSDBound:        fsdAddrCh,
 		HTTPListen: func(network, addr string) (net.Listener, error) {
 			return httpLn, nil

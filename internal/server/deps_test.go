@@ -72,9 +72,6 @@ func TestNewRequiresDeps(t *testing.T) {
 	if srv.logger == nil {
 		t.Fatal("logger should default")
 	}
-	if srv.listen == nil {
-		t.Fatal("listen should default")
-	}
 	if !srv.clock.Now().Equal(time.Unix(1_700_000_000, 0)) {
 		t.Fatalf("clock not wired: %v", srv.clock.Now())
 	}

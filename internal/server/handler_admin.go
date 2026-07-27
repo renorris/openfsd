@@ -15,7 +15,7 @@ func (s *Server) handleKillRequest(client *session.Session, packet []byte) {
 		return
 	}
 
-	// Synthetic (sweatbox) sessions have no handleConn Release defer — Remove
+	// Synthetic (sweatbox) sessions have no gnet disconnect Release defer — Remove
 	// performs pointer-scoped #DP + registry.Release + engine.Delete.
 	if victim.Synthetic && s.sweatbox != nil {
 		_ = s.sweatbox.Remove(victim.Callsign)

@@ -8,7 +8,7 @@ import (
 )
 
 // TestGnetFSD_LoginAndPosition exercises the production gnet path (StartTestServer
-// leaves Deps.Listen nil) for dual login, MOTD, and ranged position fan-out.
+// for dual login, MOTD, and ranged position fan-out.
 func TestGnetFSD_LoginAndPosition(t *testing.T) {
 	ts := server.StartTestServer(t)
 

@@ -10,7 +10,6 @@ import (
 	"io"
 	"log/slog"
 	"net"
-	"sync"
 	"time"
 
 	"github.com/renorris/openfsd/internal/db"
@@ -23,23 +22,20 @@ import (
 //
 // # FSD I/O model
 //
-// Production default is the gnet event-driven plane (fixed event-loop count,
-// coalesced AsyncWrite outbound). When Deps.Listen is injected or
-// ForceClassicFSD is set, the classic net.Listener accept loop runs instead
-// (one reader + one SenderWorker per connection) for test harnesses.
+// FSD TCP uses the gnet event-driven plane (fixed event-loop count,
+// coalesced AsyncWrite outbound). There is no classic net.Listener accept
+// path. Tests learn the bound address via Deps.FSDBound (including :0).
+// session.SenderWorker remains for sweatbox synthetic sessions (nil Conn).
 type Server struct {
-	cfg      *Config
-	users    UserStore
-	configKV ConfigStore
-	registry Registry
-	metar    MetarQueue
-	clock    Clock
-	logger   *slog.Logger
-	listen   func(ctx context.Context, network, addr string) (net.Listener, error)
-	// useClassicFSD selects the classic 2-goroutine-per-conn path.
-	useClassicFSD bool
-	fsdBound      chan<- string
-	httpListen    func(network, addr string) (net.Listener, error)
+	cfg        *Config
+	users      UserStore
+	configKV   ConfigStore
+	registry   Registry
+	metar      MetarQueue
+	clock      Clock
+	logger     *slog.Logger
+	fsdBound   chan<- string
+	httpListen func(network, addr string) (net.Listener, error)
 	// httpDone is closed when runServiceHTTP returns (after Serve exits).
 	httpDone chan struct{}
 	// sweatbox is the integrated simulator host (nil when disabled).
@@ -77,28 +73,20 @@ func New(d Deps) (*Server, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	listen := d.Listen
-	if listen == nil {
-		listen = defaultListen
-	}
-	// Classic path when tests inject Listen or ForceClassicFSD.
-	useClassic := d.ForceClassicFSD || d.Listen != nil
 
 	s := &Server{
-		cfg:           d.Config,
-		users:         d.Users,
-		configKV:      d.ConfigKV,
-		registry:      d.Registry,
-		metar:         d.Metar,
-		clock:         clock,
-		logger:        logger,
-		listen:        listen,
-		useClassicFSD: useClassic,
-		fsdBound:      d.FSDBound,
-		httpListen:    d.HTTPListen,
-		httpDone:      make(chan struct{}),
-		limits:        newConnLimits(),
-		authFails:     newAuthFailLimiter(d.Config.AuthFailMax, d.Config.AuthFailWindow),
+		cfg:        d.Config,
+		users:      d.Users,
+		configKV:   d.ConfigKV,
+		registry:   d.Registry,
+		metar:      d.Metar,
+		clock:      clock,
+		logger:     logger,
+		fsdBound:   d.FSDBound,
+		httpListen: d.HTTPListen,
+		httpDone:   make(chan struct{}),
+		limits:     newConnLimits(),
+		authFails:  newAuthFailLimiter(d.Config.AuthFailMax, d.Config.AuthFailWindow),
 	}
 	// Two-phase: Server exists so SweatboxHost can hold a back-ref for
 	// unexported broadcast helpers, registry, clock, and logger.
@@ -225,11 +213,7 @@ func (s *Server) Run(ctx context.Context) (err error) {
 	// Start HTTP service
 	go s.runServiceHTTP(ctx)
 
-	if s.useClassicFSD {
-		err = s.runClassicFSD(ctx)
-	} else {
-		err = s.runGnetFSD(ctx)
-	}
+	err = s.runGnetFSD(ctx)
 
 	// Join service HTTP so callers (and tests) can close shared resources safely.
 	select {
@@ -319,84 +303,6 @@ func (s *Server) runGnetFSD(ctx context.Context) error {
 		case <-time.After(5 * time.Second):
 		}
 		return nil
-	}
-}
-
-// runClassicFSD is the legacy accept-loop path (2 goroutines per connection).
-func (s *Server) runClassicFSD(ctx context.Context) error {
-	errCh := make(chan error, len(s.cfg.FsdListenAddrs))
-	var listenerWg sync.WaitGroup
-
-	for _, addr := range s.cfg.FsdListenAddrs {
-		s.logger.Info(fmt.Sprintf("Listening (classic) on %s\n", addr))
-		listenerWg.Add(1)
-		go func(ctx context.Context, addr string) {
-			defer listenerWg.Done()
-			s.listenLoop(ctx, addr, errCh)
-		}(ctx, addr)
-	}
-
-	go func() {
-		listenerWg.Wait()
-		close(errCh)
-	}()
-
-	var startupErrors []error
-	for err := range errCh {
-		startupErrors = append(startupErrors, err)
-	}
-
-	if len(startupErrors) > 0 {
-		select {
-		case <-s.httpDone:
-		case <-time.After(2 * time.Second):
-		}
-		return fmt.Errorf("some listeners failed: %v", startupErrors)
-	}
-
-	<-ctx.Done()
-	return nil
-}
-
-func (s *Server) listenLoop(ctx context.Context, addr string, errCh chan<- error) {
-	listener, err := s.listen(ctx, "tcp4", addr)
-	if err != nil {
-		errCh <- fmt.Errorf("failed to listen on %s: %w", addr, err)
-		return
-	}
-	defer listener.Close()
-
-	if s.fsdBound != nil {
-		select {
-		case s.fsdBound <- listener.Addr().String():
-		default:
-		}
-	}
-
-	// Start a goroutine to close the listener when the context is cancelled
-	go func() {
-		<-ctx.Done()
-		listener.Close()
-	}()
-
-	// Accept connections in a loop
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			if errors.Is(err, net.ErrClosed) {
-				// Listener was closed due to context cancellation; exit the loop
-				return
-			}
-			// Log or handle non-fatal accept errors
-			continue
-		}
-		// Optional TCP keepalive for half-open detection.
-		if tc, ok := conn.(*net.TCPConn); ok {
-			_ = tc.SetKeepAlive(true)
-			_ = tc.SetKeepAlivePeriod(60 * time.Second)
-		}
-		// Handle the connection in another goroutine
-		go s.handleConn(ctx, conn)
 	}
 }
 
