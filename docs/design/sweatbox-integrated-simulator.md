@@ -5,17 +5,35 @@
 | **Document** | Integrated Sweatbox Simulator + Instructor Web UI |
 | **Author** | _(design author / implementer)_ |
 | **Date** | 2026-07-17 |
-| **Status** | Draft (rev 7 — AfterFunc pointer-safe + stop-before-Cancel) |
+| **Status** | **Implemented** (landed P0+P1; see Implementation status) |
 | **Target repo** | `/Users/rnorris/scratch/openfsd` |
 | **Reference** | `/Users/rnorris/scratch/openfsd-twrtrainer` (UX + sim semantics only) |
 
 ---
 
+## Implementation status
+
+Shipped. Summary of the tree as of closeout:
+
+| Area | Location / notes |
+|------|------------------|
+| Pure engine | `internal/sweatbox` (taxi, pattern, kinematics; apt/air via `pkg/twrfiles`) — coverage floor ≥95% |
+| Host / lifecycle | `internal/server/sweatbox_host.go`, `sweatbox_http.go`, `sweatbox_fpl.go` |
+| Synthetic sessions | `session.Session` with nil `Conn` + `SenderWorker` drain; registered in postoffice |
+| Service HTTP control plane | `/sweatbox/*` under admin service JWT |
+| Web instructor UI | `/sweatbox` MPA + PE (`internal/web` pages/templates/static) |
+| E2E | `internal/server/e2e_sweatbox_test.go` (+ human mix paths) |
+| Product defaults | Admin-only; synthetic CID base 900001; max aircraft cap; datafeed includes synthetics |
+
+Design history below is retained. Background “current state” tables describe pre-implementation integration surfaces unless marked “as of implementation.”
+
+---
+
 ## Overview
 
-openfsd today is a production-shaped FSD server: real TCP pilot/ATC clients, a postoffice registry (`internal/postoffice`), per-connection sessions (`internal/session`), protocol handlers (`internal/server`), and a boring-web admin MPA (`internal/web`) that drives the FSD process via authenticated service HTTP (`internal/server/http_service.go`).
+openfsd is a production-shaped FSD server: real TCP pilot/ATC clients, a postoffice registry (`internal/postoffice`), per-connection sessions (`internal/session`), protocol handlers (`internal/server`), and a boring-web admin MPA (`internal/web`) that drives the FSD process via authenticated service HTTP (`internal/server/http_service.go`).
 
-TWRTrainer (legacy VB6) produces multi-aircraft training traffic by opening **one outbound TCP pilot connection per aircraft** into a remote FSD sweatbox. That model is **explicitly rejected** for openfsd. We will implement a **native, in-process sweatbox simulator**: aircraft are synthetic participants registered in the same postoffice as humans; kinematics, taxi, pattern, and instructor commands run inside the FSD process; the admin service HTTP is the sole control plane; a server-rendered instructor UI drives that plane through the existing web → FSD HTTP proxy pattern.
+TWRTrainer (legacy VB6) produces multi-aircraft training traffic by opening **one outbound TCP pilot connection per aircraft** into a remote FSD sweatbox. That model is **explicitly rejected** for openfsd. openfsd implements a **native, in-process sweatbox simulator**: aircraft are synthetic participants registered in the same postoffice as humans; kinematics, taxi, pattern, and instructor commands run inside the FSD process; the admin service HTTP is the sole control plane; a server-rendered instructor UI drives that plane through the existing web → FSD HTTP proxy pattern.
 
 Result: ATC students connect as normal FSD clients and see sweatbox traffic as ordinary pilots. Instructors never open N pilot sockets. There is no loopback networking tax between simulator and server.
 
@@ -40,22 +58,24 @@ openfsd sweatbox (this design):
 
 ## Background & Motivation
 
-### Current openfsd state (integration surfaces)
+### Historical pre-implementation integration surfaces
+
+> Snapshot of openfsd seams **before** sweatbox landed (kept for design motivation). **As of implementation:** pure engine in `internal/sweatbox`; host in `internal/server/sweatbox_*.go`; gnet FSD I/O (no classic accept path); shared login/broadcast helpers in `conn.go`; synthetics use nil-Conn + `SenderWorker`.
 
 | Surface | Path | Role for sweatbox |
 |---------|------|-------------------|
-| Session | `internal/session/session.go` | Participant after login; atomic lat/lon/alt/gs/hdg; `Send` / `SendPosition` → `sendChan`; `New` documents `conn == nil` for **unit tests** (production synthetics are a deliberate extension of that nil-Conn path) |
+| Session | `internal/session/session.go` | Participant after login; atomic lat/lon/alt/gs/hdg; `Send` / `SendPosition` → `sendChan` or Outbound; `New` documents `conn == nil` for tests and **production synthetics** |
 | Postoffice | `internal/postoffice/postoffice.go` | Callsign map + geo index; `Register` / `Release` / `UpdatePosition` / `Search` / `All` / `Send` / `Find` / `Snapshot` |
 | Registry DI | `internal/server/deps.go` | `Registry` interface used by handlers + HTTP |
-| Service HTTP | `internal/server/http_service.go` | JWT `TokenType == "fsd_service"`, rating ≥ Administrator; today: `GET /online_users`, `POST /kick_user` |
+| Service HTTP | `internal/server/http_service.go` + `sweatbox_http.go` | JWT `TokenType == "fsd_service"`, rating ≥ Administrator; `GET /online_users`, `POST /kick_user`, `/sweatbox/*` |
 | Broadcast | `internal/server/util.go` | `broadcastRanged`, `broadcastRangedVelocity`, `broadcastRangedAtcOnly`, `broadcastAll`, `broadcastAllATC`, `broadcastAllSupervisors`, `sendDirectOrErr` |
-| Conn lifecycle | `internal/server/conn.go` | Real path: login → `Register` → `SenderWorker` → `broadcastAddPacket` → `eventLoop` → defer `Release` + `broadcastDisconnectPacket` |
-| Cancel-only paths | `http_service.go` kick, `handler_admin.go` `$!!`, `handler_delete.go` `#DP` | Humans leave via `handleConn` defers; **Cancel alone does not Release** — critical for synthetic design |
-| Web proxy | `internal/web/data.go` `makeFsdHttpServiceHttpRequest` | Mints short-lived `fsd_service` JWT and calls FSD service HTTP |
-| Dashboard | `internal/web/pages_dashboard.go` + Leaflet PE | Online users already surface via service HTTP |
-| E2E | `internal/server/testserver.go`, `e2e_test.go`, `pkg/fsdclient` | Real TCP clients + service JWT helpers (`MakeServiceJWT`) |
+| Conn lifecycle | `internal/server/gnet_fsd.go` + `conn.go` helpers | Real path: gnet login → `Register` → CoalesceOutbound → MOTD/broadcastAdd; synthetics: host register + `SenderWorker` + broadcast helpers |
+| Cancel-only paths | `http_service.go` kick, `handler_admin.go` `$!!`, `handler_delete.go` `#DP` | Humans leave via gnet disconnect cleanup; **Cancel alone does not Release** — critical for synthetic design |
+| Web proxy | `internal/web` FSD service HTTP client | Mints short-lived `fsd_service` JWT and calls FSD service HTTP |
+| Dashboard | `internal/web/pages_dashboard.go` + Leaflet PE | Online users (incl. synthetics) via service HTTP |
+| E2E | `internal/server/testserver.go`, `e2e_*.go`, `pkg/fsdclient` | Real TCP clients + service JWT helpers |
 | Protocol | `pkg/protocol` | `@` pilot position, `#AP`/`#DP`, `$FP`, `#TM`, etc. |
-| FPL storage | `handler_flightplan.go` + `util.go` | `FlightPlan` atomic holds **info section only** (fields after SOURCE:DEST), not full `$FP` line |
+| FPL storage | `handler_flightplan.go` + util | `FlightPlan` atomic holds **info section only** (fields after SOURCE:DEST), not full `$FP` line |
 
 ### TWRTrainer (what we learn, not what we copy)
 
@@ -1286,9 +1306,11 @@ Lighter than full Participant refactor; still touches postoffice. **Deferred** �
 
 Each PR independently reviewable; green `go test -race ./...`, gofmt, hygiene, import-graph.
 
+**Closeout:** all planned PRs below are **Done** (or pattern polish deferred only as product scope already shipped). Status notes added at each PR header.
+
 ---
 
-### PR 1 — `internal/sweatbox`: airport + scenario parsers
+### PR 1 — `internal/sweatbox`: airport + scenario parsers — **Done**
 
 - **Title:** `sweatbox: add .apt/.air parsers and KBTV fixtures`
 - **Files:** `internal/sweatbox/apt.go`, `air.go`, `types.go`, `testdata/`, unit tests; `scripts/check-import-graph.sh` (sweatbox forbidden edges + **web → sweatbox**); **`Agents.md` §1 package table + §2 forbidden edges** for `internal/sweatbox` (stdlib + `internal/geo` only; must not import session/postoffice/server/web/db/auth/metar/fsdclient)
@@ -1297,7 +1319,7 @@ Each PR independently reviewable; green `go test -race ./...`, gofmt, hygiene, i
 
 ---
 
-### PR 2 — `internal/sweatbox`: airport graph + taxi routing
+### PR 2 — `internal/sweatbox`: airport graph + taxi routing — **Done**
 
 - **Title:** `sweatbox: intersection graph and taxi planner`
 - **Files:** `airport.go`, `taxi.go`, tests
@@ -1306,7 +1328,7 @@ Each PR independently reviewable; green `go test -race ./...`, gofmt, hygiene, i
 
 ---
 
-### PR 3a — `internal/sweatbox`: engine skeleton + lifecycle commands
+### PR 3a — `internal/sweatbox`: engine skeleton + lifecycle commands — **Done**
 
 - **Title:** `sweatbox: engine skeleton with add/del/pause/ops`
 - **Files:** `aircraft.go`, `engine.go`, `snapshot.go`, minimal `command.go`/`dispatch.go`
@@ -1315,7 +1337,7 @@ Each PR independently reviewable; green `go test -race ./...`, gofmt, hygiene, i
 
 ---
 
-### PR 3b — `internal/sweatbox`: ground movement commands
+### PR 3b — `internal/sweatbox`: ground movement commands — **Done**
 
 - **Title:** `sweatbox: taxi/hold/cross/cto command dispatch`
 - **Files:** dispatch extensions, tests
@@ -1324,7 +1346,7 @@ Each PR independently reviewable; green `go test -race ./...`, gofmt, hygiene, i
 
 ---
 
-### PR 3c — `internal/sweatbox`: air vectors + flight-plan fields
+### PR 3c — `internal/sweatbox`: air vectors + flight-plan fields — **Done**
 
 - **Title:** `sweatbox: fh/cm/spd and fp/vp domain updates`
 - **Files:** dispatch + aircraft plan fields (domain only, not wire encode)
@@ -1333,7 +1355,7 @@ Each PR independently reviewable; green `go test -race ./...`, gofmt, hygiene, i
 
 ---
 
-### PR 4 — `internal/sweatbox`: motion tick
+### PR 4 — `internal/sweatbox`: motion tick — **Done**
 
 - **Title:** `sweatbox: kinematics tick for taxi and vectors`
 - **Files:** `motion.go`, `Tick`, tests
@@ -1342,7 +1364,7 @@ Each PR independently reviewable; green `go test -race ./...`, gofmt, hygiene, i
 
 ---
 
-### PR 5 — Synthetic flag, broadcast skip, Conn helper
+### PR 5 — Synthetic flag, broadcast skip, Conn helper — **Done**
 
 - **Title:** `session: Synthetic flag; skip synthetic recipients on all fan-out`
 - **Files:** `session.go` (`Synthetic`, optional `RemoteIP`); `util.go` **all six** broadcast helpers; tests in `util_extra_test.go`
@@ -1356,7 +1378,7 @@ Each PR independently reviewable; green `go test -race ./...`, gofmt, hygiene, i
 
 ---
 
-### PR 6 — SweatboxHost + lifecycle + DI + tick apply
+### PR 6 — SweatboxHost + lifecycle + DI + tick apply — **Done**
 
 - **Title:** `server: SweatboxHost registers synthetic pilots with Cancel-safe lifecycle`
 - **Files:** `sweatbox_host.go`, `sweatbox_fpl.go`, `server.go`, `deps.go`, `config.go`, `handler_admin.go`, `http_service.go` kick branch, `New`/`NewDefault`/`StartTestServer`
@@ -1384,7 +1406,7 @@ Each PR independently reviewable; green `go test -race ./...`, gofmt, hygiene, i
 
 ---
 
-### PR 7 — Service HTTP `/sweatbox/*`
+### PR 7 — Service HTTP `/sweatbox/*` — **Done**
 
 - **Title:** `server: service HTTP sweatbox API (gated)`
 - **Files:** `sweatbox_http.go`, route registration when enabled, DTOs, tests, 2 MiB body limit
@@ -1393,7 +1415,7 @@ Each PR independently reviewable; green `go test -race ./...`, gofmt, hygiene, i
 
 ---
 
-### PR 8 — E2E human ↔ sweatbox
+### PR 8 — E2E human ↔ sweatbox — **Done**
 
 - **Title:** `server: e2e sweatbox visibility, FP, delete, kick/kill lifecycle`
 - **Files:** `e2e_sweatbox_test.go`, testserver helpers
@@ -1402,7 +1424,7 @@ Each PR independently reviewable; green `go test -race ./...`, gofmt, hygiene, i
 
 ---
 
-### PR 9 — Web MPA instructor UI (no-JS primary)
+### PR 9 — Web MPA instructor UI (no-JS primary) — **Done**
 
 - **Title:** `web: boring-web sweatbox instructor page`
 - **Files:** `pages_sweatbox.go`, `templates/sweatbox.html`, nav, routes, CSRF forms, flash PRG, multipart limits, tests
@@ -1411,7 +1433,7 @@ Each PR independently reviewable; green `go test -race ./...`, gofmt, hygiene, i
 
 ---
 
-### PR 10 — Web PE live refresh
+### PR 10 — Web PE live refresh — **Done**
 
 - **Title:** `web: sweatbox live refresh progressive enhancement`
 - **Files:** `sweatbox.js`, `/api/v1/sweatbox/*` proxies with jwt+CSRF, optional map
@@ -1420,7 +1442,7 @@ Each PR independently reviewable; green `go test -race ./...`, gofmt, hygiene, i
 
 ---
 
-### PR 11 — Pattern flying (P1)
+### PR 11 — Pattern flying (P1) — **Done**
 
 - **Title:** `sweatbox: pattern legs and P1 command set`
 - **Files:** `pattern.go`, dispatch, motion, unit + e2e smoke
@@ -1429,7 +1451,7 @@ Each PR independently reviewable; green `go test -race ./...`, gofmt, hygiene, i
 
 ---
 
-### PR 12 — Polish: badge, coverage floor, ops UX
+### PR 12 — Polish: badge, coverage floor, ops UX — **Done**
 
 - **Title:** `sweatbox: synthetic badge, coverage gate, ops polish`
 - **Files:** `OnlineUserPilot.Synthetic`, dashboard badge optional, **`check-coverage.sh` ≥95% for `internal/sweatbox`**, optional stress tag 30 AC

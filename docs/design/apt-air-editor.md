@@ -5,17 +5,35 @@
 | **Document** | Integrated .APT + .AIR Editor on openfsd Web UI |
 | **Author** | _(design author / implementer)_ |
 | **Date** | 2026-07-23 |
-| **Status** | Draft (rev 2 — review issues addressed) |
+| **Status** | **Implemented** (see Implementation status) |
 | **Target repo** | `/Users/rnorris/scratch/openfsd` |
-| **Related** | `docs/design/sweatbox-integrated-simulator.md`, `internal/sweatbox`, `internal/web` |
+| **Related** | `docs/design/sweatbox-integrated-simulator.md`, `pkg/twrfiles`, `internal/sweatbox`, `internal/web` |
+
+---
+
+## Implementation status
+
+Shipped. Summary of the tree as of closeout:
+
+| Area | Location / notes |
+|------|------------------|
+| Parse + Format | `pkg/twrfiles` (`ParseAPT`/`ParseAIR`, `FormatAPT`/`FormatAIR`, fixtures under `pkg/twrfiles/testdata`) |
+| Sweatbox | Thin aliases/wrappers over `pkg/twrfiles` (engine still pure) |
+| Editor MPA | `/airport-editor` shell + Leaflet PE; echo-download; Admin-only |
+| Validate API | `POST /api/v1/editor/validate-apt` / `validate-air` via `pkg/twrfiles` |
+| Web JS | Pure modules under `internal/web/static/js/openfsd/`; Node tests in `webjs/` + `scripts/check-webjs.sh` in CI |
+| Persistence | **None** durable (no disk/DB); Blob download + transient request bodies only |
+| Playwright | **Cancelled** — no browser automation suite |
+
+Design history below is retained. Stale “Format missing / JS tests none” rows are updated in Background.
 
 ---
 
 ## Overview
 
-openfsd already loads TWRTrainer-compatible **`.apt`** (airport geometry) and **`.air`** (scenario aircraft snapshots) into an in-process sweatbox simulator and exposes an instructor control panel at `/sweatbox`. Instructors still author those files outside the product — typically in a text editor or the legacy Windows TWRTrainer UI — then paste or upload them.
+openfsd already loads TWRTrainer-compatible **`.apt`** (airport geometry) and **`.air`** (scenario aircraft snapshots) into an in-process sweatbox simulator and exposes an instructor control panel at `/sweatbox`. Instructors can also author those files in-product via the integrated map editor.
 
-This design adds a **single, integrated map-first editor** on the openfsd admin Web UI for creating and editing **paired** `.apt` and `.air` files. The editor is a **server-rendered MPA shell** with a **JavaScript-heavy progressive enhancement** (Leaflet map + geometry tools). **No durable server persistence** of `.apt` / `.air` (no disk, no DB): primary load is client-local (FileReader / paste) and primary save is **browser Blob download**. Optional Admin-only echo-download and validate POSTs may hold bodies **transiently in process memory** for the duration of the request only — they never write files or store rows.
+This design delivers a **single, integrated map-first editor** on the openfsd admin Web UI for creating and editing **paired** `.apt` and `.air` files. The editor is a **server-rendered MPA shell** with a **JavaScript-heavy progressive enhancement** (Leaflet map + geometry tools). **No durable server persistence** of `.apt` / `.air` (no disk, no DB): primary load is client-local (FileReader / paste) and primary save is **browser Blob download**. Optional Admin-only echo-download and validate POSTs may hold bodies **transiently in process memory** for the duration of the request only — they never write files or store rows.
 
 The page targets a dense **16:9 operator console** matching the sweatbox rail aesthetic, reuses in-tree Leaflet assets, and respects the boring-web house standard and the web ↛ sweatbox import-graph edge.
 
@@ -38,20 +56,20 @@ Instructor workflow (target):
 
 ## Background & Motivation
 
-### Current state
+### Current state (as of implementation)
 
 | Surface | Path | Role |
 |---------|------|------|
-| APT parser | `internal/sweatbox/apt.go` `ParseAPT` | TWRTrainer-compatible; non-fatal `[]string` errors |
-| AIR parser | `internal/sweatbox/air.go` `ParseAIR` | 16 colon fields; best-effort rows + errors |
-| Domain types | `internal/sweatbox/types.go` | `Airport`, `Surface`, `Aircraft`, `Point` |
-| Fixtures | `internal/sweatbox/testdata/KBTV_example.{apt,air}` | Golden samples |
-| Format (write) | **missing** | No `FormatAPT` / `FormatAIR` today — only parse |
-| Sweatbox UI | `internal/web/templates/sweatbox.html` + `sweatbox.css` + `sweatbox.js` | 16:9 rail; forms + PE poll |
-| Sweatbox routes | Admin-only under `requireMinRatingHTML(Administrator)` | `/sweatbox`, form POSTs, CSRF |
-| Dashboard map | `dashboard.html` + `dashboard.js` + embedded Leaflet 1.9.4 | OSM standard tiles; PE exception documented |
-| Import graph | `scripts/check-import-graph.sh` + `Agents.md` | **`internal/web` must not import `internal/sweatbox`** |
-| JS tests | **none** | No package.json / vitest / playwright in repo today |
+| APT/AIR parse+format | `pkg/twrfiles` (`parse_apt.go`, `parse_air.go`, `format_apt.go`, `format_air.go`) | TWRTrainer-compatible Parse + Format; golden fixtures under `pkg/twrfiles/testdata` |
+| Domain types | `pkg/twrfiles` types; sweatbox re-exports/aliases as needed | `Airport`, `Surface`, `Aircraft`, `Point` |
+| Sweatbox engine | `internal/sweatbox` | Pure sim; loads via twrfiles |
+| Format (write) | **present** | `FormatAPT` / `FormatAIR` with byte goldens |
+| Editor UI | `/airport-editor` MPA + Leaflet PE | Map layers, draw/edit, Blob download, validation UX |
+| Validate API | `internal/web` + `pkg/twrfiles` | Admin JSON validate-apt/air; no geometry in response |
+| Sweatbox UI | `internal/web` sweatbox templates/static | 16:9 rail; forms + PE poll |
+| Import graph | `scripts/check-import-graph.sh` + `Agents.md` | **`internal/web` must not import `internal/sweatbox`** (may use `pkg/twrfiles`) |
+| JS tests | `webjs/` + `scripts/check-webjs.sh` (CI) | Node ≥20 pure-module tests; sources stay under `internal/web/static/js/openfsd/` |
+| Playwright | **Cancelled** | No browser automation suite by house policy |
 
 ### Pain points
 
@@ -1272,9 +1290,9 @@ bash scripts/check-webjs.sh
 
 ## Open Questions
 
-1. **Should Supervisors access the editor?** Default Admin-only; product call.
+1. **Should Supervisors access the editor?** **Resolved for v1:** Admin-only (product default; Supervisor access deferred).
 2. **Esri imagery ToS** for each deployer's traffic profile — keep optional and documented.
-3. **Undo stack?** Highly useful; implement simple in-memory undo (50 steps) in model if time permits in map PR; otherwise v1.1.
+3. **Undo stack?** **Deferred v1.1** — not a v1 ship requirement.
 4. **~~Playwright CI~~** — **cancelled.** No browser automation suite.
 
 Resolved by this rev: WIP download allowed (yes); fixture path = `pkg/twrfiles/testdata`; dirty = hash + Mark clean; Format contract frozen; API authz = 403 JSON; JS import path relative from `webjs/`.
@@ -1402,9 +1420,11 @@ AAL123:B738/F:J:I:KBTV:KBOS:29000:BTV4 MPV LEB MHT:/v/charts:2200:S:44.469758:-7
 
 Each PR independently reviewable; green `go test -race ./...`, gofmt. Import-graph/hygiene: run scripts locally; **recommend adding them to CI in PR1**. Webjs unit tests land as CI in **PR4** (not deferred).
 
+**Closeout:** PR1–8 **Done**; PR9 Playwright **Cancelled**.
+
 ---
 
-### PR 1 — Extract `pkg/twrfiles` (Parse + types + aliases)
+### PR 1 — Extract `pkg/twrfiles` (Parse + types + aliases) — **Done**
 
 - **Title:** `twrfiles: extract APT/AIR parse types from sweatbox`
 - **Files/components:**
@@ -1420,7 +1440,7 @@ Each PR independently reviewable; green `go test -race ./...`, gofmt. Import-gra
 
 ---
 
-### PR 2 — `FormatAPT` / `FormatAIR` + golden contract
+### PR 2 — `FormatAPT` / `FormatAIR` + golden contract — **Done**
 
 - **Title:** `twrfiles: add FormatAPT/FormatAIR with byte goldens`
 - **Files:** `pkg/twrfiles/format_apt.go`, `format_air.go`, `testdata/*.formatted.apt|air`, parity cases, tests
@@ -1429,7 +1449,7 @@ Each PR independently reviewable; green `go test -race ./...`, gofmt. Import-gra
 
 ---
 
-### PR 3 — Airport editor HTML shell + authz + no-JS download
+### PR 3 — Airport editor HTML shell + authz + no-JS download — **Done**
 
 - **Title:** `web: add /airport-editor shell with echo-download`
 - **Files:** `routes.go`, `pages_airport_editor.go`, `pagemodel.go`, `templates/airport_editor.html` (fallback fields `apt_text`/`air_text`/`filename`/CSRF), `templates.go`, `layout.html` nav, `airport-editor.css` (layout only), tests, README note
@@ -1438,7 +1458,7 @@ Each PR independently reviewable; green `go test -race ./...`, gofmt. Import-gra
 
 ---
 
-### PR 4 — JS pure parse/format + Node unit tests + CI
+### PR 4 — JS pure parse/format + Node unit tests + CI — **Done**
 
 - **Title:** `webjs: APT/AIR parse-format modules with parity tests`
 - **Files:**
@@ -1453,7 +1473,7 @@ Each PR independently reviewable; green `go test -race ./...`, gofmt. Import-gra
 
 ---
 
-### PR 5 — Optional server validate API
+### PR 5 — Optional server validate API — **Done**
 
 - **Title:** `web: Admin validate-apt/air JSON API via pkg/twrfiles`
 - **Files:** API handlers (inline Admin → **403 JSON**), routes, tests; import-graph allows web → twrfiles
@@ -1462,7 +1482,7 @@ Each PR independently reviewable; green `go test -race ./...`, gofmt. Import-gra
 
 ---
 
-### PR 6 — Map canvas read-only: load, render, select, fit
+### PR 6 — Map canvas read-only: load, render, select, fit — **Done**
 
 - **Title:** `web: airport-editor map layers and surface/aircraft lists (read-only)`
 - **Files:** `main.js`, `map-layers.js`, `ui-rail.js`, `ui-toolbar.js` (open/fit/layer only), CSS; Leaflet + rotated marker; basemap OSM + Esri with **visible attribution**; blank-tile `data-test-tiles` hook for e2e
@@ -1471,7 +1491,7 @@ Each PR independently reviewable; green `go test -race ./...`, gofmt. Import-gra
 
 ---
 
-### PR 7 — Geometry & aircraft editing + Blob download
+### PR 7 — Geometry & aircraft editing + Blob download — **Done**
 
 - **Title:** `web: airport-editor draw/edit modes and Blob download`
 - **Files:** model mutations, draw modes (incl. hold), vertex drag, aircraft place/drag, shortcuts `1`–`6`, `download.js`, dirty hash + Mark clean, `beforeunload`, replace confirms, Raw preview+Apply
@@ -1480,7 +1500,7 @@ Each PR independently reviewable; green `go test -race ./...`, gofmt. Import-gra
 
 ---
 
-### PR 8 — Validation panel + server confirm + polish
+### PR 8 — Validation panel + server confirm + polish — **Done**
 
 - **Title:** `web: airport-editor validation UX and docs polish`
 - **Files:** Validate tab, soft warnings, server validate button, empty states, sweatbox handoff copy, README/wiki residual
