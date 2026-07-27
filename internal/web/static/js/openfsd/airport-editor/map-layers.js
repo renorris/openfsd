@@ -203,13 +203,13 @@ export function escapeHtml(s) {
 }
 
 /** Keep in sync with .apted-vertex-handle width/height in airport-editor.css */
-export const VERTEX_HANDLE_PX = 18;
+export const VERTEX_HANDLE_PX = 10;
 
 /**
  * Pixel radius for vertex grab hit-test (capture-phase, independent of icon DOM hits).
- * Slightly larger than the visible handle so corners are easy to grab.
+ * Larger than the visual handle so small nodes stay easy to grab.
  */
-export const VERTEX_HIT_PX = 20;
+export const VERTEX_HIT_PX = 14;
 
 /** Duration after dragend during which map clicks are ignored. */
 export const MAP_CLICK_SUPPRESS_MS = 250;
@@ -295,6 +295,36 @@ export function findNearestVertexPx(verticesPx, clickPx, maxDistPx) {
   }
   if (bestIdx < 0) return null;
   return { index: bestIdx, dist: bestDist };
+}
+
+/**
+ * Pure: nearest vertex across many surfaces (for grab-without-select).
+ *
+ * @param {{ surfaceIndex: number, points: { x: number, y: number }[] }[]} surfacesPx
+ * @param {{ x: number, y: number }} clickPx
+ * @param {number} maxDistPx
+ * @returns {{ surfaceIndex: number, vertexIndex: number, dist: number }|null}
+ */
+export function findNearestVertexAcrossSurfaces(surfacesPx, clickPx, maxDistPx) {
+  if (!Array.isArray(surfacesPx) || !clickPx) return null;
+  const max = Number(maxDistPx);
+  if (!Number.isFinite(max) || max < 0) return null;
+
+  /** @type {{ surfaceIndex: number, vertexIndex: number, dist: number }|null} */
+  let best = null;
+  for (const s of surfacesPx) {
+    if (!s || !Array.isArray(s.points)) continue;
+    const hit = findNearestVertexPx(s.points, clickPx, max);
+    if (!hit) continue;
+    if (!best || hit.dist < best.dist) {
+      best = {
+        surfaceIndex: s.surfaceIndex,
+        vertexIndex: hit.index,
+        dist: hit.dist,
+      };
+    }
+  }
+  return best;
 }
 
 /**
@@ -598,6 +628,8 @@ export class OverlayController {
     this.onMapClick = opts.onMapClick || null;
     this.onMapDblClick = opts.onMapDblClick || null;
     this.editable = opts.editable !== false;
+    /** When false (e.g. draw modes), hide nodes and ignore vertex grab. */
+    this.vertexEditActive = opts.vertexEditActive !== false;
     this.planeIconUrl = opts.planeIconUrl || '/static/images/plane.png';
     this.group = L.featureGroup().addTo(map);
     this.vertexGroup = L.featureGroup().addTo(map);
@@ -688,6 +720,8 @@ export class OverlayController {
     if (this._vertexDrag) {
       this._airport = airport;
       this._aircraft = Array.isArray(aircraft) ? aircraft : [];
+      // Keep selection in sync for rail without recreating layers.
+      this._selection = normalizeSelection(selection);
       return;
     }
 
@@ -707,11 +741,20 @@ export class OverlayController {
       this._addAircraft(this._aircraft[i], i);
     }
 
-    // Vertex handles for selected surface (visual markers; grab is capture hit-test).
-    if (this.editable && this._selection?.type === 'surface') {
-      const s = surfaces[this._selection.index];
-      if (s) this._addVertexHandles(s, this._selection.index);
+    // Small vertex nodes on every surface — grab via capture hit-test (no pre-select).
+    if (this.editable && this.vertexEditActive) {
+      for (let i = 0; i < surfaces.length; i++) {
+        this._addVertexHandles(surfaces[i], i);
+      }
     }
+  }
+
+  /**
+   * Enable/disable always-on vertex nodes + grab (typically Select mode only).
+   * @param {boolean} active
+   */
+  setVertexEditActive(active) {
+    this.vertexEditActive = !!active;
   }
 
   /**
@@ -918,57 +961,67 @@ export class OverlayController {
   }
 
   /**
-   * Hit-test selected surface vertices in container pixels.
+   * Hit-test every surface vertex in container pixels (no pre-select required).
    * @param {MouseEvent|TouchEvent} domEv
    * @returns {{ surfaceIndex: number, vertexIndex: number, handle: *|null }|null}
    */
-  _hitTestSelectedVertex(domEv) {
-    if (!this.editable) return null;
-    if (this._selection?.type !== 'surface') return null;
-    const si = this._selection.index;
-    const surface = this._airport?.surfaces?.[si];
-    if (!surface || !Array.isArray(surface.points)) return null;
+  _hitTestAnyVertex(domEv) {
+    if (!this.editable || !this.vertexEditActive) return null;
+    const airport = this._airport;
+    if (!airport || !Array.isArray(airport.surfaces) || airport.surfaces.length === 0) {
+      return null;
+    }
 
     const clickPx = this._containerPointFromPointerEvent(domEv);
     if (!clickPx) return null;
 
     const map = this.map;
-    /** @type {{ x: number, y: number }[]} */
-    const verticesPx = [];
-    for (const p of surface.points) {
-      if (!Number.isFinite(p?.lat) || !Number.isFinite(p?.lon)) {
-        verticesPx.push({ x: NaN, y: NaN });
-        continue;
+    /** @type {{ surfaceIndex: number, points: { x: number, y: number }[] }[]} */
+    const surfacesPx = [];
+    for (let si = 0; si < airport.surfaces.length; si++) {
+      const surface = airport.surfaces[si];
+      const pts = surface?.points;
+      if (!Array.isArray(pts) || pts.length === 0) continue;
+      /** @type {{ x: number, y: number }[]} */
+      const verticesPx = [];
+      for (const p of pts) {
+        if (!Number.isFinite(p?.lat) || !Number.isFinite(p?.lon)) {
+          verticesPx.push({ x: NaN, y: NaN });
+          continue;
+        }
+        try {
+          const cp = map.latLngToContainerPoint([p.lat, p.lon]);
+          verticesPx.push({ x: cp.x, y: cp.y });
+        } catch {
+          verticesPx.push({ x: NaN, y: NaN });
+        }
       }
-      try {
-        const cp = map.latLngToContainerPoint([p.lat, p.lon]);
-        verticesPx.push({ x: cp.x, y: cp.y });
-      } catch {
-        verticesPx.push({ x: NaN, y: NaN });
-      }
+      surfacesPx.push({ surfaceIndex: si, points: verticesPx });
     }
 
-    const hit = findNearestVertexPx(verticesPx, clickPx, VERTEX_HIT_PX);
+    const hit = findNearestVertexAcrossSurfaces(surfacesPx, clickPx, VERTEX_HIT_PX);
     if (!hit) return null;
-    const key = `${si}:${hit.index}`;
+    const key = `${hit.surfaceIndex}:${hit.vertexIndex}`;
     return {
-      surfaceIndex: si,
-      vertexIndex: hit.index,
+      surfaceIndex: hit.surfaceIndex,
+      vertexIndex: hit.vertexIndex,
       handle: this._handleByKey.get(key) || null,
     };
   }
 
   /**
    * Capture-phase mousedown/touchstart on map container.
-   * If near a selected-surface vertex: stop map pan and start vertex drag.
+   * If near any surface vertex: stop map pan and start vertex drag (auto-selects surface).
    * @param {MouseEvent|TouchEvent} ev
    */
   _handlePointerDownCapture(ev) {
-    if (!this.editable || this._vertexDrag || this._dragging) return;
+    if (!this.editable || !this.vertexEditActive || this._vertexDrag || this._dragging) {
+      return;
+    }
     // Ignore non-primary mouse buttons.
     if ('button' in ev && ev.button !== 0 && ev.type === 'mousedown') return;
 
-    const hit = this._hitTestSelectedVertex(ev);
+    const hit = this._hitTestAnyVertex(ev);
     if (!hit) return;
 
     // Critical: prevent Leaflet Map.Drag (listens on container, bubble phase)
@@ -977,7 +1030,12 @@ export class OverlayController {
     if (typeof ev.stopImmediatePropagation === 'function') ev.stopImmediatePropagation();
     else if (typeof ev.stopPropagation === 'function') ev.stopPropagation();
 
+    // Begin drag first so onSelect → refresh sees _vertexDrag and skips rebuild.
     this._beginVertexDrag(hit.surfaceIndex, hit.vertexIndex, hit.handle, ev);
+
+    // Select the surface so rail/highlight follow (no prior click required).
+    this._featureClickAt = Date.now();
+    this.onSelect({ type: 'surface', index: hit.surfaceIndex });
   }
 
   /**
@@ -1023,11 +1081,9 @@ export class OverlayController {
       /* ignore */
     }
 
-    // Seed first position from the pointer if available.
-    const seed = this._latLngFromPointerEvent(/** @type {MouseEvent|TouchEvent} */ (domEv));
-    if (seed) {
-      this._applyVertexDrag(surfaceIndex, vertexIndex, seed.lat, seed.lng, handle);
-    }
+    // Do not snap vertex to cursor on mousedown — that made the knob feel off-center.
+    // Only update geometry once the pointer actually moves.
+    void domEv;
 
     const onMove = (ev) => {
       if (!this._vertexDrag) return;
@@ -1090,8 +1146,8 @@ export class OverlayController {
   }
 
   /**
-   * Vertex handle *visuals* for selected surface (non-interactive markers).
-   * Grab is owned by capture-phase hit-test on the map container.
+   * Small vertex handle *visuals* for a surface (non-interactive markers).
+   * Grab is owned by capture-phase hit-test on the map container (any surface).
    * @param {import('./model.js').Surface} surface
    * @param {number} surfaceIndex
    */
@@ -1100,12 +1156,19 @@ export class OverlayController {
     const pts = surface.points || [];
     ensureVertexPane(this.map);
 
+    const selected =
+      this._selection?.type === 'surface' && this._selection.index === surfaceIndex;
+    const iconBase = buildVertexHandleIconOptions();
+
     for (let vi = 0; vi < pts.length; vi++) {
       const p = pts[vi];
       if (!Number.isFinite(p.lat) || !Number.isFinite(p.lon)) continue;
       const handle = L.marker([p.lat, p.lon], {
         ...buildVertexHandleOptions(vi),
-        icon: L.divIcon(buildVertexHandleIconOptions()),
+        icon: L.divIcon({
+          ...iconBase,
+          className: iconBase.className + (selected ? ' is-selected' : ''),
+        }),
       });
       handle.addTo(this.vertexGroup);
       this._handleByKey.set(`${surfaceIndex}:${vi}`, handle);

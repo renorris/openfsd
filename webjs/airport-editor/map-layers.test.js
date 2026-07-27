@@ -30,6 +30,7 @@ import {
   buildVertexHandleOptions,
   buildVertexHandleIconOptions,
   findNearestVertexPx,
+  findNearestVertexAcrossSurfaces,
   shouldSuppressMapClick,
   stopLeafletClickBubble,
   pointsToLatLngs,
@@ -358,13 +359,15 @@ test('stopLeafletClickBubble sets originalEvent._stopped (Leaflet map bubble gua
   stopLeafletClickBubble({}, null);
 });
 
-test('buildVertexHandleIconOptions: iconSize/iconAnchor symmetry', () => {
+test('buildVertexHandleIconOptions: iconSize/iconAnchor symmetry (centered disc)', () => {
   const icon = buildVertexHandleIconOptions();
-  assert.equal(VERTEX_HANDLE_PX, 18);
+  assert.equal(VERTEX_HANDLE_PX, 10);
   assert.equal(icon.iconSize[0], VERTEX_HANDLE_PX);
   assert.equal(icon.iconSize[1], VERTEX_HANDLE_PX);
+  // Anchor must be exact half so the disc centers on the lat/lng.
   assert.equal(icon.iconAnchor[0], VERTEX_HANDLE_PX / 2);
   assert.equal(icon.iconAnchor[1], VERTEX_HANDLE_PX / 2);
+  assert.equal(icon.iconAnchor[0] * 2, icon.iconSize[0]);
   assert.match(icon.className, /apted-vertex-handle/);
   assert.match(icon.className, /leaflet-div-icon/);
 });
@@ -383,8 +386,33 @@ test('buildVertexHandleOptions: visual-only (capture-phase owns drag)', () => {
   assert.match(opts.title, /Vertex 3/);
 });
 
+test('findNearestVertexAcrossSurfaces: grab without pre-select', () => {
+  const surfaces = [
+    {
+      surfaceIndex: 0,
+      points: [
+        { x: 0, y: 0 },
+        { x: 100, y: 0 },
+      ],
+    },
+    {
+      surfaceIndex: 2,
+      points: [
+        { x: 50, y: 50 },
+        { x: 200, y: 200 },
+      ],
+    },
+  ];
+  const hit = findNearestVertexAcrossSurfaces(surfaces, { x: 52, y: 48 }, 14);
+  assert.ok(hit);
+  assert.equal(hit.surfaceIndex, 2);
+  assert.equal(hit.vertexIndex, 0);
+  assert.equal(findNearestVertexAcrossSurfaces(surfaces, { x: 900, y: 900 }, 14), null);
+  assert.equal(findNearestVertexAcrossSurfaces(null, { x: 0, y: 0 }, 14), null);
+});
+
 test('findNearestVertexPx: hit-test matrix (RCA capture-phase grab)', () => {
-  assert.ok(VERTEX_HIT_PX >= 16);
+  assert.ok(VERTEX_HIT_PX >= 10);
   const verts = [
     { x: 100, y: 100 },
     { x: 200, y: 100 },

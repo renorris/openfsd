@@ -430,7 +430,7 @@ function main() {
       }
       refresh();
       const tips = {
-        [MODE_SELECT]: 'Select mode — click features; drag vertices.',
+        [MODE_SELECT]: 'Select mode — drag any white vertex; click a line to select.',
         [MODE_PARK]: 'Park mode — click map to place parking.',
         [MODE_TAXI]: 'Taxi mode — click vertices; Enter/double-click finish.',
         [MODE_RUNWAY]: 'Runway mode — click ≥2 points; Enter/double-click finish.',
@@ -733,6 +733,8 @@ function main() {
    * @param {{ fit?: boolean }} [opts]
    */
   function refresh(opts = {}) {
+    // Vertex nodes + grab only in Select mode (draw modes keep full map free).
+    overlays.setVertexEditActive(doc.mode === MODE_SELECT);
     overlays.render(doc.airport, doc.aircraft, doc.selection);
     if (draw.active && draw.points.length) {
       overlays.setDrawPreview(draw.points, draw.kind || SurfaceTaxiway);
@@ -763,7 +765,7 @@ function main() {
 
   /** Status banner for surface select in Select mode (not mid-drag). */
   const SURFACE_SELECT_TIP =
-    'Selected — drag the white dots to move vertices. Click empty map to deselect.';
+    'Drag any white vertex to reshape. Click empty map to deselect.';
 
   /**
    * Show tip when selection is a surface; clear it when selection leaves a
