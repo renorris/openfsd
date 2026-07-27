@@ -35,6 +35,19 @@ func (s *Server) handleFrontendSweatbox(c *gin.Context) {
 	s.writeTemplate(c, "sweatbox", page)
 }
 
+// handleFrontendSweatboxManual GET /sweatbox/manual — full instructor user manual.
+// Same Administrator gate as the control panel. Static HTML (no FSD dependency).
+func (s *Server) handleFrontendSweatboxManual(c *gin.Context) {
+	claims, ok := requireJwtContext(c)
+	if !ok {
+		return
+	}
+	s.writeTemplate(c, "sweatbox_manual", basePage{
+		User:      pageUserFromClaims(claims),
+		CSRFToken: s.issueCSRFToken(c),
+	})
+}
+
 func (s *Server) newSweatboxPage(c *gin.Context) sweatboxPage {
 	claims, ok := requireJwtContext(c)
 	if !ok {

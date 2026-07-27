@@ -1,0 +1,281 @@
+/*
+ * Sweatbox instructor manual — readable document layout.
+ * Separate from the dense operator console (sweatbox.css).
+ */
+
+.sbxm {
+  --sbxm-max: 52rem;
+  --sbxm-toc-w: 14rem;
+  --sbxm-gap: 1.5rem;
+  --sbxm-border: #d0d4d9;
+  --sbxm-muted: #5c636a;
+  --sbxm-bg: #f8f9fa;
+  --sbxm-panel: #fff;
+  --sbxm-link: #0b57d0;
+  --sbxm-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --sbxm-font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  box-sizing: border-box;
+  font-family: var(--sbxm-font);
+  font-size: 0.9375rem;
+  line-height: 1.55;
+  color: #1a1a1a;
+  background: var(--sbxm-bg);
+  max-width: none;
+  margin: 0;
+  padding: 1rem 1.25rem 3rem;
+}
+
+.sbxm *,
+.sbxm *::before,
+.sbxm *::after {
+  box-sizing: border-box;
+}
+
+.sbxm-header {
+  max-width: calc(var(--sbxm-max) + var(--sbxm-toc-w) + var(--sbxm-gap));
+  margin: 0 auto 1.25rem;
+}
+
+.sbxm-kicker {
+  margin: 0 0 0.35rem;
+  font-size: 0.8125rem;
+}
+
+.sbxm-kicker a {
+  color: var(--sbxm-muted);
+  text-decoration: none;
+}
+
+.sbxm-kicker a:hover,
+.sbxm-kicker a:focus-visible {
+  color: var(--sbxm-link);
+  text-decoration: underline;
+}
+
+.sbxm-header h1 {
+  margin: 0 0 0.5rem;
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.sbxm-lead {
+  margin: 0;
+  max-width: 42rem;
+  color: var(--sbxm-muted);
+  font-size: 0.95rem;
+}
+
+.sbxm-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sbxm-gap);
+  max-width: calc(var(--sbxm-max) + var(--sbxm-toc-w) + var(--sbxm-gap));
+  margin: 0 auto;
+  align-items: start;
+}
+
+@media (min-width: 56rem) {
+  .sbxm-layout {
+    grid-template-columns: var(--sbxm-toc-w) minmax(0, 1fr);
+  }
+
+  .sbxm-toc {
+    position: sticky;
+    top: 0.75rem;
+    max-height: calc(100dvh - 1.5rem);
+    overflow: auto;
+  }
+}
+
+.sbxm-toc {
+  background: var(--sbxm-panel);
+  border: 1px solid var(--sbxm-border);
+  border-radius: 0.35rem;
+  padding: 0.75rem 0.9rem;
+  font-size: 0.8125rem;
+}
+
+.sbxm-toc h2 {
+  margin: 0 0 0.4rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--sbxm-muted);
+}
+
+.sbxm-toc ol {
+  margin: 0;
+  padding-left: 1.15rem;
+}
+
+.sbxm-toc li {
+  margin: 0.2rem 0;
+}
+
+.sbxm-toc a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.sbxm-toc a:hover,
+.sbxm-toc a:focus-visible {
+  color: var(--sbxm-link);
+  text-decoration: underline;
+}
+
+.sbxm-doc {
+  background: var(--sbxm-panel);
+  border: 1px solid var(--sbxm-border);
+  border-radius: 0.35rem;
+  padding: 1.25rem 1.35rem 2rem;
+  max-width: var(--sbxm-max);
+}
+
+.sbxm-doc section {
+  margin: 0 0 1.75rem;
+  scroll-margin-top: 0.75rem;
+}
+
+.sbxm-doc section:last-child {
+  margin-bottom: 0;
+}
+
+.sbxm-doc h2 {
+  margin: 0 0 0.65rem;
+  font-size: 1.15rem;
+  font-weight: 700;
+  border-bottom: 1px solid var(--sbxm-border);
+  padding-bottom: 0.35rem;
+}
+
+.sbxm-doc h3 {
+  margin: 1rem 0 0.4rem;
+  font-size: 1rem;
+  font-weight: 650;
+}
+
+.sbxm-doc p,
+.sbxm-doc ul,
+.sbxm-doc ol {
+  margin: 0 0 0.75rem;
+}
+
+.sbxm-doc ul,
+.sbxm-doc ol {
+  padding-left: 1.35rem;
+}
+
+.sbxm-doc li {
+  margin: 0.25rem 0;
+}
+
+.sbxm-doc code {
+  font-family: var(--sbxm-mono);
+  font-size: 0.88em;
+  background: #f0f2f4;
+  padding: 0.08em 0.28em;
+  border-radius: 0.2rem;
+}
+
+.sbxm-doc a {
+  color: var(--sbxm-link);
+}
+
+.sbxm-doc a:focus-visible {
+  outline: 2px solid var(--sbxm-link);
+  outline-offset: 2px;
+}
+
+.sbxm-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+  margin: 0 0 0.85rem;
+}
+
+.sbxm-table th,
+.sbxm-table td {
+  border: 1px solid var(--sbxm-border);
+  padding: 0.4rem 0.55rem;
+  vertical-align: top;
+  text-align: left;
+}
+
+.sbxm-table th {
+  background: #eef1f4;
+  font-weight: 650;
+}
+
+.sbxm-cmd td:first-child {
+  white-space: nowrap;
+  font-family: var(--sbxm-mono);
+  font-size: 0.82em;
+  width: 38%;
+}
+
+.sbxm-dl {
+  margin: 0 0 0.85rem;
+}
+
+.sbxm-dl dt {
+  font-weight: 650;
+  margin-top: 0.5rem;
+}
+
+.sbxm-dl dd {
+  margin: 0.15rem 0 0.35rem 0;
+  color: #2a2a2a;
+}
+
+.sbxm-note {
+  font-size: 0.875rem;
+  color: var(--sbxm-muted);
+  border-left: 3px solid var(--sbxm-border);
+  padding-left: 0.65rem;
+}
+
+.sbxm-cols {
+  columns: 1;
+}
+
+@media (min-width: 40rem) {
+  .sbxm-cols {
+    columns: 2;
+    column-gap: 1.5rem;
+  }
+}
+
+.sbxm-foot {
+  margin-top: 1.25rem;
+  font-size: 0.8125rem;
+  color: var(--sbxm-muted);
+}
+
+@media print {
+  .sbxm {
+    background: #fff;
+    padding: 0;
+  }
+
+  .sbxm-toc {
+    display: none;
+  }
+
+  .sbxm-doc {
+    border: none;
+    padding: 0;
+  }
+
+  .sbxm-kicker {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sbxm-doc section {
+    scroll-margin-top: 0;
+  }
+}

@@ -125,6 +125,84 @@ func TestSweatboxPOSTRequiresCSRF(t *testing.T) {
 	}
 }
 
+func TestSweatboxManualUnauthRedirect(t *testing.T) {
+	ts := newTestServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/sweatbox/manual", nil)
+	w := httptest.NewRecorder()
+	ts.engine.ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status %d want 303", w.Code)
+	}
+	if loc := w.Header().Get("Location"); loc != "/login" {
+		t.Fatalf("Location=%q want /login", loc)
+	}
+}
+
+func TestSweatboxManualObserverRedirect(t *testing.T) {
+	ts := newTestServer(t)
+	obs := createTestUser(t, ts, "pw", int(protocol.NetworkRatingObserver))
+	cookies := formLogin(t, ts, obs.CID, "pw")
+
+	w, _ := authedGET(t, ts, "/sweatbox/manual", cookies)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status %d want 303", w.Code)
+	}
+	if loc := w.Header().Get("Location"); loc != "/dashboard" {
+		t.Fatalf("Location=%q want /dashboard", loc)
+	}
+}
+
+func TestSweatboxManualAdminOK(t *testing.T) {
+	ts := newTestServer(t)
+	admin := createTestUser(t, ts, "admin-pass", int(protocol.NetworkRatingAdministator))
+	cookies := formLogin(t, ts, admin.CID, "admin-pass")
+
+	w, _ := authedGET(t, ts, "/sweatbox/manual", cookies)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d body %s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	for _, want := range []string{
+		"Sweatbox instructor manual",
+		"Command language",
+		"SWEATBOX_ENABLED",
+		`href="/sweatbox"`,
+		"add rules weight engine",
+		"Pattern &amp; arrival",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("manual missing %q, body=%s", want, clip(body, 600))
+		}
+	}
+	// Manual is static HTML — no FSD dependency required.
+	if strings.Contains(body, "Unavailable.") {
+		t.Fatal("manual must not depend on FSD availability banner")
+	}
+}
+
+func TestSweatboxPageLinksManualNewTab(t *testing.T) {
+	ts := newTestServer(t)
+	admin := createTestUser(t, ts, "admin-pass", int(protocol.NetworkRatingAdministator))
+	cookies := formLogin(t, ts, admin.CID, "admin-pass")
+
+	w, _ := authedGET(t, ts, "/sweatbox", cookies)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d body %s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	// Non-invasive titlebar link; opens in a new tab.
+	if !strings.Contains(body, `href="/sweatbox/manual"`) {
+		t.Fatal("expected /sweatbox/manual link on control panel")
+	}
+	if !strings.Contains(body, `target="_blank"`) || !strings.Contains(body, `rel="noopener noreferrer"`) {
+		t.Fatalf("manual link should open in new tab with noopener, body=%s", clip(body, 500))
+	}
+	// Link text should stay quiet (not a primary action button).
+	if !strings.Contains(body, ">Manual</a>") {
+		t.Fatal("expected muted Manual link text")
+	}
+}
+
 func TestSweatboxCommandEmptyRedirectsErrorFlash(t *testing.T) {
 	ts := newTestServer(t)
 	admin := createTestUser(t, ts, "pw", int(protocol.NetworkRatingAdministator))

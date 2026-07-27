@@ -136,6 +136,7 @@ func (s *Server) setupFrontendRoutes(parent *gin.RouterGroup) {
 
 	// Sweatbox instructor UI: server-rendered forms; proxies FSD /sweatbox/* service HTTP.
 	admin.GET("/sweatbox", s.handleFrontendSweatbox)
+	admin.GET("/sweatbox/manual", s.handleFrontendSweatboxManual)
 	admin.POST("/sweatbox/airport", s.handleFrontendSweatboxAirport)
 	admin.POST("/sweatbox/scenario", s.handleFrontendSweatboxScenario)
 	admin.POST("/sweatbox/command", s.handleFrontendSweatboxCommand)

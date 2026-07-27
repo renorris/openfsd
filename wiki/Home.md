@@ -18,6 +18,7 @@ Operator documentation for [openfsd](https://github.com/renorris/openfsd).
 | URL | Who | Notes |
 |-----|-----|--------|
 | `/sweatbox` | Administrator | Live ground/taxi simulator control (needs FSD + sweatbox enabled) |
+| `/sweatbox/manual` | Administrator | Instructor user manual (also linked from the control panel, opens in a new tab) |
 | `/airport-editor` | Administrator | Map-first `.apt` / `.air` authoring; **download only** (no server save). Validate tab has live client checks + optional server confirm. Download files, then load them on `/sweatbox`. Design: repo `docs/design/apt-air-editor.md` |
 
 ## Quick links

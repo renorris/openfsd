@@ -25,6 +25,7 @@ var pageTemplateKeys = []string{
 	"usereditor",
 	"configeditor",
 	"sweatbox",
+	"sweatbox_manual",
 	"airport_editor",
 }
 

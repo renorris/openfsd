@@ -1,0 +1,460 @@
+{{ define "title" }}Sweatbox manual{{ end }}
+
+{{ define "body" }}
+<link href="/static/css/openfsd/sweatbox-manual.css" rel="stylesheet">
+
+<main class="sbxm container-fluid">
+  <header class="sbxm-header">
+    <p class="sbxm-kicker"><a href="/sweatbox">← Sweatbox control panel</a></p>
+    <h1>Sweatbox instructor manual</h1>
+    <p class="sbxm-lead">
+      How to run openfsd’s in-process traffic simulator for tower training.
+      Synthetic aircraft appear on the FSD network as normal pilots so ATC clients
+      (vSTARS, Euroscope, vatSys, etc.) see realistic traffic without N pilot logins.
+    </p>
+  </header>
+
+  <div class="sbxm-layout">
+    <nav class="sbxm-toc" aria-label="Manual contents">
+      <h2>Contents</h2>
+      <ol>
+        <li><a href="#overview">Overview</a></li>
+        <li><a href="#requirements">Requirements &amp; enablement</a></li>
+        <li><a href="#ui">Control panel UI</a></li>
+        <li><a href="#workflow">Typical workflow</a></li>
+        <li><a href="#files">Airport &amp; scenario files</a></li>
+        <li><a href="#commands">Command language</a></li>
+        <li><a href="#cmd-spawn">Spawn &amp; session</a></li>
+        <li><a href="#cmd-ground">Ground</a></li>
+        <li><a href="#cmd-air">Airborne</a></li>
+        <li><a href="#cmd-pattern">Pattern &amp; arrival</a></li>
+        <li><a href="#cmd-xpdr-fp">Transponder &amp; flight plan</a></li>
+        <li><a href="#status">Status vocabulary</a></li>
+        <li><a href="#students">What students see</a></li>
+        <li><a href="#ops">Ops notes &amp; troubleshooting</a></li>
+      </ol>
+    </nav>
+
+    <article class="sbxm-doc">
+      <section id="overview">
+        <h2>1. Overview</h2>
+        <p>
+          The sweatbox is a <strong>native, in-process simulator</strong> inside the FSD process.
+          Aircraft are synthetic registry participants (no TCP pilot sockets). You drive them
+          from the Administrator web page at <code>/sweatbox</code> with text commands that
+          follow TWRTrainer-style vocabulary.
+        </p>
+        <ul>
+          <li><strong>Control plane:</strong> web forms → openfsd web → FSD service HTTP (<code>/sweatbox/*</code>).</li>
+          <li><strong>Wire:</strong> synthetics inject <code>#AP</code>, position <code>@</code>, flight plans, and <code>#DP</code> like real pilots.</li>
+          <li><strong>Primary path:</strong> HTML forms work with JavaScript disabled. JS only refreshes the table live.</li>
+        </ul>
+      </section>
+
+      <section id="requirements">
+        <h2>2. Requirements &amp; enablement</h2>
+        <table class="sbxm-table">
+          <thead>
+            <tr><th>Need</th><th>Detail</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Role</td>
+              <td>Administrator network rating (same as Config / Airport Editor).</td>
+            </tr>
+            <tr>
+              <td>FSD process</td>
+              <td>Running and reachable by the web process over service HTTP (default <code>:13618</code>).</td>
+            </tr>
+            <tr>
+              <td>Feature flag</td>
+              <td><code>SWEATBOX_ENABLED=true</code> on the FSD process (default is <strong>off</strong>). Restart after changing.</td>
+            </tr>
+            <tr>
+              <td>Optional env</td>
+              <td><code>SWEATBOX_CID</code> (default <code>900001</code>) — synthetic pilot CID shared by all sweatbox aircraft.</td>
+            </tr>
+          </tbody>
+        </table>
+        <p>
+          If the page says <strong>Disabled</strong>, sweatbox routes are absent on FSD.
+          If it says <strong>Unavailable</strong>, the web UI cannot reach FSD service HTTP.
+        </p>
+      </section>
+
+      <section id="ui">
+        <h2>3. Control panel UI</h2>
+        <p>Dense 16:9 operator layout at <code>/sweatbox</code>.</p>
+        <dl class="sbxm-dl">
+          <dt>Status strip</dt>
+          <dd>ICAO, pause state, elapsed sim time, arrival/departure counts. Pause / Unpause / Refresh.</dd>
+          <dt>Aircraft table</dt>
+          <dd>
+            Callsign, type, rules, squawk, heading, altitude, speed, status, instruction.
+            Click a row (or Tab + Enter with JS) to copy the callsign into <strong>Selected CS</strong>.
+            Per-row <strong>Del</strong> removes that synthetic; <strong>Delete all</strong> needs the confirm checkbox.
+          </dd>
+          <dt>Command rail</dt>
+          <dd>
+            <strong>Selected CS</strong> + command <strong>Line</strong> + <strong>Run</strong>.
+            Target forms: embed callsign in the line (<code>AAL123, taxi A</code>) or fill Selected CS and type only the verb.
+          </dd>
+          <dt>Airport / scenario</dt>
+          <dd>Load <code>.apt</code> and <code>.air</code> via file upload or paste. Scenario load auto-pauses the sim.</dd>
+        </dl>
+        <p>
+          With JavaScript enabled, the table polls about every 1.5&nbsp;s. Draft fields may persist in browser storage.
+          <strong>Commands always execute on the server</strong> — client JS never authorizes mutations.
+        </p>
+      </section>
+
+      <section id="workflow">
+        <h2>4. Typical workflow</h2>
+        <ol>
+          <li>Enable sweatbox on FSD and open <code>/sweatbox</code> as Administrator.</li>
+          <li>
+            Load an <strong>airport</strong> (<code>.apt</code>). Use
+            <a href="/airport-editor">Airport Editor</a> to author/download files if needed
+            (editor never injects into a live session — you load files here).
+          </li>
+          <li>Optionally load a <strong>scenario</strong> (<code>.air</code>). Sim pauses automatically.</li>
+          <li>Unpause when ready for motion.</li>
+          <li>
+            Spawn or select aircraft, issue taxi / takeoff / pattern / vector commands while students
+            control as normal ATC on the FSD port.
+          </li>
+          <li>Delete aircraft when finished, or use Delete all.</li>
+        </ol>
+      </section>
+
+      <section id="files">
+        <h2>5. Airport &amp; scenario files</h2>
+        <h3>Airport (<code>.apt</code>)</h3>
+        <p>
+          TWRTrainer-compatible airport geometry: ICAO, magnetic variation, parking spots,
+          runways, taxiways, holds. Defines the graph used for taxi routing (~100&nbsp;ft intersection snap).
+        </p>
+        <ul>
+          <li><strong>Replace</strong> checkbox clears existing aircraft when loading a new airport.</li>
+          <li>Max upload/paste size is 2&nbsp;MiB.</li>
+          <li>
+            Bulk XP12 conversion: operator-fetched <code>apt.dat</code> via
+            <code>go run ./cmd/aptdat2apt …</code> (see repo docs on X-Plane airport data).
+          </li>
+        </ul>
+        <h3>Scenario (<code>.air</code>)</h3>
+        <p>
+          Colon-delimited aircraft snapshots (callsign, type, engine, rules, position, plan fields, …).
+          Load is best-effort: soft parse issues may be reported while accepted aircraft still spawn.
+          Loading a scenario <strong>auto-pauses</strong> the engine.
+        </p>
+        <h3>Airport Editor</h3>
+        <p>
+          <code>/airport-editor</code> is map-first authoring with Blob download only (no server save).
+          Workflow: edit → download <code>.apt</code>/<code>.air</code> → load on Sweatbox.
+        </p>
+      </section>
+
+      <section id="commands">
+        <h2>6. Command language</h2>
+        <p>Commands are plain text. Soft failures return a message (flash); success is often silent motion.</p>
+        <h3>Targeting</h3>
+        <ul>
+          <li><strong>Global</strong> (no aircraft): <code>add</code>, <code>p</code>/<code>pause</code>, <code>un</code>/<code>unpause</code>, <code>ops</code>/<code>stats</code>.</li>
+          <li><strong>Callsign prefix:</strong> <code>AAL123, taxi A B hs 33</code> or <code>AAL123 taxi A B hs 33</code> (comma optional).</li>
+          <li><strong>Selected CS:</strong> fill Selected CS, then <code>taxi A B hs 33</code>.</li>
+        </ul>
+        <h3>Aliases</h3>
+        <p>
+          Many verbs accept short forms (e.g. <code>p</code>=pause, <code>ph</code>=pos, <code>cancel</code>=ctoc,
+          <code>speed</code>/<code>slow</code>=spd, <code>tcn</code>=tc). Prefer the canonical names below when teaching.
+        </p>
+      </section>
+
+      <section id="cmd-spawn">
+        <h2>7. Spawn &amp; session commands</h2>
+        <table class="sbxm-table sbxm-cmd">
+          <thead>
+            <tr><th>Command</th><th>Meaning</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>add rules weight engine runway distance [type]</code></td>
+              <td>
+                Place on approach to <em>runway</em> at <em>distance</em> NM.
+                <em>rules</em>: <code>v</code>/<code>i</code> (VFR/IFR).
+                <em>weight</em>: <code>s</code>/<code>m</code>/<code>l</code>/<code>h</code>.
+                <em>engine</em>: <code>p</code>/<code>t</code>/<code>j</code>/<code>h</code> (prop / turboprop / jet / helo).
+                Optional ICAO type override.
+              </td>
+            </tr>
+            <tr>
+              <td><code>add rules weight engine @parking [type]</code></td>
+              <td>Parked at named parking space (e.g. <code>@GA1</code>).</td>
+            </tr>
+            <tr>
+              <td><code>add rules weight engine -bearing distance altitude [type]</code></td>
+              <td>Airborne on radial from field: negative bearing, distance NM, altitude feet.</td>
+            </tr>
+            <tr>
+              <td><code>del</code></td>
+              <td>Delete selected / targeted aircraft (disconnect synthetic).</td>
+            </tr>
+            <tr>
+              <td><code>p</code> / <code>pause</code></td>
+              <td>Freeze motion; aircraft remain online.</td>
+            </tr>
+            <tr>
+              <td><code>un</code> / <code>unpause</code></td>
+              <td>Resume motion.</td>
+            </tr>
+            <tr>
+              <td><code>ops</code> / <code>stats</code></td>
+              <td>Session stats: elapsed, arrivals, departures, rates.</td>
+            </tr>
+          </tbody>
+        </table>
+        <p class="sbxm-note">
+          Example approach spawn: <code>add i h j 33 8</code> — IFR heavy jet on 8&nbsp;NM final for runway 33.
+          Example parking: <code>add v s p @GA1 C172</code>.
+        </p>
+      </section>
+
+      <section id="cmd-ground">
+        <h2>8. Ground commands</h2>
+        <table class="sbxm-table sbxm-cmd">
+          <thead>
+            <tr><th>Command</th><th>Meaning</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>taxi path… [hs name…]</code></td>
+              <td>
+                Taxi via taxiway/runway names. Optional <code>hs</code> tokens insert hold-shorts
+                (e.g. <code>taxi K C D 33 hs 15</code>). First step must intersect current surface.
+                Max path length is limited (on the order of 100 steps).
+              </td>
+            </tr>
+            <tr>
+              <td><code>hold</code></td>
+              <td>Hold present position (stop taxi).</td>
+            </tr>
+            <tr>
+              <td><code>res</code></td>
+              <td>Resume after hold / hold-short / cross wait.</td>
+            </tr>
+            <tr>
+              <td><code>cross name</code></td>
+              <td>Cross the named surface currently holding short of.</td>
+            </tr>
+            <tr>
+              <td><code>pos</code> / <code>ph</code></td>
+              <td>Line up and wait (position and hold) on departure runway.</td>
+            </tr>
+            <tr>
+              <td><code>cto [hdg]</code></td>
+              <td>Cleared for takeoff; optional departure heading.</td>
+            </tr>
+            <tr>
+              <td><code>ctoc</code> / <code>cancel</code></td>
+              <td>Cancel takeoff clearance.</td>
+            </tr>
+            <tr>
+              <td><code>ctomlt</code> / <code>ctomrt</code></td>
+              <td>Cleared takeoff into left / right closed traffic.</td>
+            </tr>
+            <tr>
+              <td><code>nostop</code> / <code>nohold</code></td>
+              <td>Cancel planned stop/hold-short behavior (e.g. during rollout taxi intent).</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="cmd-air">
+        <h2>9. Airborne / vector commands</h2>
+        <table class="sbxm-table sbxm-cmd">
+          <thead>
+            <tr><th>Command</th><th>Meaning</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>fh hdg</code></td><td>Fly heading (shortest turn).</td></tr>
+            <tr><td><code>fhn hdg</code></td><td>Fly heading now (snap / immediate).</td></tr>
+            <tr><td><code>tr hdg</code> / <code>tl hdg</code></td><td>Turn right / left to heading (forced direction, may long-arc).</td></tr>
+            <tr><td><code>fph</code></td><td>Fly present heading.</td></tr>
+            <tr><td><code>cm alt</code></td><td>Climb/maintain altitude (feet).</td></tr>
+            <tr><td><code>spd n</code></td><td>Speed control (knots). Aliases include <code>speed</code>, <code>slow</code>.</td></tr>
+            <tr><td><code>ga</code></td><td>Go around from approach/pattern/landing context.</td></tr>
+            <tr><td><code>go</code></td><td>Continue after stop-and-go wait on the runway.</td></tr>
+          </tbody>
+        </table>
+        <p>
+          Kinematics are training-oriented (constant turn/climb rates), not a full flight model.
+          There is no collision AI between aircraft.
+        </p>
+      </section>
+
+      <section id="cmd-pattern">
+        <h2>10. Pattern &amp; arrival commands</h2>
+        <table class="sbxm-table sbxm-cmd">
+          <thead>
+            <tr><th>Command</th><th>Meaning</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>erc</code> / <code>erd</code> / <code>erb</code> <em>rwy</em></td>
+              <td>Enter right crosswind / downwind / base for runway.</td>
+            </tr>
+            <tr>
+              <td><code>elc</code> / <code>eld</code> / <code>elb</code> <em>rwy</em></td>
+              <td>Enter left crosswind / downwind / base.</td>
+            </tr>
+            <tr>
+              <td><code>ef</code> <em>rwy</em></td>
+              <td>Enter final.</td>
+            </tr>
+            <tr>
+              <td><code>tg</code></td>
+              <td>Touch and go.</td>
+            </tr>
+            <tr>
+              <td><code>sg [sec]</code></td>
+              <td>Stop and go; optional seconds to hold, else wait for <code>go</code>.</td>
+            </tr>
+            <tr>
+              <td><code>la</code></td>
+              <td>Low approach.</td>
+            </tr>
+            <tr>
+              <td><code>fs</code></td>
+              <td>Full stop landing.</td>
+            </tr>
+            <tr>
+              <td><code>ext</code></td>
+              <td>Extend current pattern leg (upwind/crosswind/downwind).</td>
+            </tr>
+            <tr>
+              <td><code>mlt</code> / <code>mrt</code></td>
+              <td>Make left / right traffic.</td>
+            </tr>
+            <tr>
+              <td><code>msa</code> / <code>mna</code></td>
+              <td>Make short approach / normal approach (short cuts base from downwind).</td>
+            </tr>
+            <tr>
+              <td><code>ps</code> <em>nm</em></td>
+              <td>Pattern size in nautical miles.</td>
+            </tr>
+            <tr>
+              <td><code>tc</code> / <code>td</code> / <code>tb</code></td>
+              <td>Turn crosswind / downwind / base now (end extend / advance leg).</td>
+            </tr>
+          </tbody>
+        </table>
+        <p class="sbxm-note">
+          Closed-traffic takeoff (<code>ctomlt</code>/<code>ctomrt</code>) joins the circuit after climb.
+          Midfield downwind is reflected in the Instruction column when crossed.
+        </p>
+      </section>
+
+      <section id="cmd-xpdr-fp">
+        <h2>11. Transponder &amp; flight plan</h2>
+        <table class="sbxm-table sbxm-cmd">
+          <thead>
+            <tr><th>Command</th><th>Meaning</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>sq code</code></td><td>Squawk code.</td></tr>
+            <tr><td><code>sqi code</code></td><td>Squawk code and ident.</td></tr>
+            <tr><td><code>sn</code></td><td>Squawk normal (Mode C).</td></tr>
+            <tr><td><code>ss</code></td><td>Squawk standby.</td></tr>
+            <tr><td><code>id</code></td><td>Ident.</td></tr>
+            <tr><td><code>fp type alt route…</code></td><td>IFR flight plan fields (type, cruise alt, route tokens).</td></tr>
+            <tr><td><code>vp type alt route…</code></td><td>VFR flight plan fields.</td></tr>
+            <tr><td><code>remarks text…</code></td><td>Flight plan remarks.</td></tr>
+          </tbody>
+        </table>
+        <p>
+          ATC clients can query and amend flight plans on the wire. The instructor table merges
+          live session plan fields after ATC amends, so the UI stays honest about what controllers see.
+        </p>
+      </section>
+
+      <section id="status">
+        <h2>12. Status vocabulary</h2>
+        <p>Common Status column values (aligned with TWRTrainer where practical):</p>
+        <ul class="sbxm-cols">
+          <li>Parked, Taxiing, Holding Short, Holding in Position, Holding</li>
+          <li>Takeoff, Departing, On Approach, Airborne, Landed</li>
+          <li>Upwind, Crosswind, Downwind, Base, Final</li>
+        </ul>
+        <p>
+          <strong>Instruction</strong> is a short human-readable cue (taxi plan, pattern leg,
+          midfield report, landing type, etc.). Use it together with Status when briefing or debugging.
+        </p>
+      </section>
+
+      <section id="students">
+        <h2>13. What students see</h2>
+        <ul>
+          <li>Normal pilot targets: callsigns, positions, flight plans, squawk.</li>
+          <li>Late-joining ATC does <strong>not</strong> receive historical <code>#AP</code> for already-online traffic (same as real pilots); they see subsequent positions in range and can query plans.</li>
+          <li>Direct text / CPDLC-like traffic <em>to</em> synthetics is not answered (drain-and-drop). Instructors use the web command box, not the radio, to control aircraft.</li>
+          <li>Dashboard may badge synthetic connections; public datafeed can include them when sweatbox is enabled—know your ops policy.</li>
+        </ul>
+      </section>
+
+      <section id="ops">
+        <h2>14. Ops notes &amp; troubleshooting</h2>
+        <table class="sbxm-table">
+          <thead>
+            <tr><th>Symptom</th><th>Check</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Page shows Disabled</td>
+              <td><code>SWEATBOX_ENABLED=true</code> on FSD; restart FSD/binary.</td>
+            </tr>
+            <tr>
+              <td>Page shows Unavailable</td>
+              <td>Web can reach FSD service HTTP; shared JWT secret/config; FSD process up.</td>
+            </tr>
+            <tr>
+              <td>Command soft-fails</td>
+              <td>Read flash message: missing CS, not taxiing, runway not found, no intersection, etc.</td>
+            </tr>
+            <tr>
+              <td>No motion</td>
+              <td>Sim paused (scenario load pauses). Unpause.</td>
+            </tr>
+            <tr>
+              <td>Callsign conflict</td>
+              <td>Shared registry with human pilots; pick another CS or remove the human connection.</td>
+            </tr>
+            <tr>
+              <td>Taxi “do not intersect”</td>
+              <td>Path steps must chain via ~100&nbsp;ft graph snap; fix airport geometry in Airport Editor.</td>
+            </tr>
+          </tbody>
+        </table>
+        <h3>Limits (defaults)</h3>
+        <ul>
+          <li>Max aircraft on the order of 64 (clamped; see server config).</li>
+          <li>Upload bodies capped at 2&nbsp;MiB for airport/scenario.</li>
+          <li>One active airport / scenario namespace per FSD process.</li>
+        </ul>
+        <h3>Related tools</h3>
+        <ul>
+          <li><a href="/airport-editor">Airport Editor</a> — author <code>.apt</code> / <code>.air</code></li>
+          <li><a href="/dashboard">Dashboard</a> — online users including synthetics</li>
+          <li><a href="/sweatbox">Sweatbox control panel</a> — live session</li>
+        </ul>
+        <p class="sbxm-foot">
+          This manual describes the openfsd instructor control plane. It is not a substitute for
+          local training procedures or client-specific ATC software docs.
+        </p>
+      </section>
+    </article>
+  </div>
+</main>
+{{ end }}
