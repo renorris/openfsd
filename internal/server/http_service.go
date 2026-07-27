@@ -198,7 +198,7 @@ func (s *Server) handleKickUser(c *gin.Context) {
 		return
 	}
 
-	// Disconnect cancels context and closes gnet/classic transports.
+	// Disconnect cancels context and closes gnet outbound / channel-path transports.
 	client.Disconnect()
 
 	c.AbortWithStatus(http.StatusNoContent)

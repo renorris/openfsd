@@ -40,7 +40,7 @@ type Config struct {
 	FsdMaxConnectionsPerIP int `env:"FSD_MAX_CONNECTIONS_PER_IP, default=50"`
 	FsdMaxSessionsPerCID   int `env:"FSD_MAX_SESSIONS_PER_CID, default=5"`
 
-	// Timeouts (0 = disabled). Applied on classic and gnet FSD planes.
+	// Timeouts (0 = disabled). Applied on the gnet FSD plane.
 	FsdLoginTimeout time.Duration `env:"FSD_LOGIN_TIMEOUT, default=30s"`
 	FsdIdleTimeout  time.Duration `env:"FSD_IDLE_TIMEOUT, default=120s"`
 

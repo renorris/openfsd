@@ -473,9 +473,12 @@ func TestAttemptAuth_SuccessPassword(t *testing.T) {
 }
 
 func TestAttemptAuth_JWT(t *testing.T) {
-	// JWT path loads the user for pilot_rating checks (REQUIRE_PILOT_PPL).
+	// JWT path loads the user for pilot_rating checks (REQUIRE_PILOT_PPL) and
+	// must stick PilotRating on LoginData for online_users / datafeed.
 	srv := newAuthTestServer(t, &fakeUserStore{byCID: map[int]*db.User{
 		42: {CID: 42, NetworkRating: int(protocol.NetworkRatingStudent1), PilotRating: int(protocol.PilotRatingNone)},
+		43: {CID: 43, NetworkRating: int(protocol.NetworkRatingStudent1), PilotRating: int(protocol.PilotRatingCMEL)},
+		44: {CID: 44, NetworkRating: int(protocol.NetworkRatingStudent1), PilotRating: 2}, // invalid wire ID
 	}}, nil)
 	tok, err := auth.MakeJwtToken(&auth.CustomFields{
 		TokenType:     "fsd",
@@ -498,6 +501,58 @@ func TestAttemptAuth_JWT(t *testing.T) {
 	if err := srv.attemptAuthentication(client, signed); err != nil {
 		t.Fatalf("jwt auth: %v", err)
 	}
+	if client.PilotRating != int(protocol.PilotRatingNone) {
+		t.Fatalf("JWT PilotRating=%d want P0(%d)", client.PilotRating, protocol.PilotRatingNone)
+	}
+
+	// Non-zero certificate rating must stick on the JWT branch.
+	tokCMEL, err := auth.MakeJwtToken(&auth.CustomFields{
+		TokenType:     "fsd",
+		CID:           43,
+		NetworkRating: protocol.NetworkRatingStudent1,
+	}, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signedCMEL, err := tokCMEL.SignedString([]byte(TestJWTSecret))
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientCMEL := session.New(context.Background(), &discardConn{}, nil, session.LoginData{
+		Callsign: "N43", CID: 43, NetworkRating: protocol.NetworkRatingObserver,
+	})
+	clientCMEL.Auth = &auth.AuthState{}
+	if err := srv.attemptAuthentication(clientCMEL, signedCMEL); err != nil {
+		t.Fatalf("jwt CMEL auth: %v", err)
+	}
+	if clientCMEL.PilotRating != int(protocol.PilotRatingCMEL) {
+		t.Fatalf("JWT PilotRating=%d want CMEL(%d)", clientCMEL.PilotRating, protocol.PilotRatingCMEL)
+	}
+
+	// Invalid pilot_rating from DB → session 0.
+	tokBad, err := auth.MakeJwtToken(&auth.CustomFields{
+		TokenType:     "fsd",
+		CID:           44,
+		NetworkRating: protocol.NetworkRatingStudent1,
+	}, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signedBad, err := tokBad.SignedString([]byte(TestJWTSecret))
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientBad := session.New(context.Background(), &discardConn{}, nil, session.LoginData{
+		Callsign: "N44", CID: 44, NetworkRating: protocol.NetworkRatingObserver,
+	})
+	clientBad.Auth = &auth.AuthState{}
+	if err := srv.attemptAuthentication(clientBad, signedBad); err != nil {
+		t.Fatalf("jwt invalid rating auth: %v", err)
+	}
+	if clientBad.PilotRating != 0 {
+		t.Fatalf("invalid PilotRating must store 0, got %d", clientBad.PilotRating)
+	}
+
 	// Wrong token type
 	tok2, _ := auth.MakeJwtToken(&auth.CustomFields{
 		TokenType:     "access",
@@ -553,7 +608,7 @@ func TestAttemptAuth_RequirePilotPPL(t *testing.T) {
 		t.Fatalf("ATC must not be gated by pilot PPL: %v", err)
 	}
 
-	// Raise pilot rating to PPL → pilot OK.
+	// Raise pilot rating to PPL → pilot OK; rating must stick on session.
 	f.byCID[9].PilotRating = int(protocol.PilotRatingPPL)
 	pilot2 := session.New(context.Background(), &discardConn{}, nil, session.LoginData{
 		Callsign: "N9B", CID: 9, NetworkRating: protocol.NetworkRatingObserver, IsAtc: false,
@@ -561,6 +616,9 @@ func TestAttemptAuth_RequirePilotPPL(t *testing.T) {
 	pilot2.Auth = &auth.AuthState{}
 	if err := srv.attemptAuthentication(pilot2, "secret"); err != nil {
 		t.Fatalf("PPL pilot should connect: %v", err)
+	}
+	if pilot2.PilotRating != int(protocol.PilotRatingPPL) {
+		t.Fatalf("PPL success PilotRating=%d want %d", pilot2.PilotRating, protocol.PilotRatingPPL)
 	}
 }
 

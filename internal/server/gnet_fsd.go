@@ -299,6 +299,7 @@ func (e *fsdEngine) finishLogin(c gnet.Conn, cc *fsdConnCtx, idPacket, addPacket
 	)
 	if outErr != nil {
 		// Defensive: writeAsync is non-nil above; should never fire in production.
+		e.srv.logger.Error("coalesce outbound", "err", outErr)
 		return gnet.Close
 	}
 	client.SetOutbound(out)
@@ -347,7 +348,7 @@ func (e *fsdEngine) attemptAuthGnet(c gnet.Conn, client *session.Session, token 
 	adapter := &gnetLoginConn{gc: c, remote: c.RemoteAddr(), local: c.LocalAddr()}
 	client.Conn = adapter
 	err := e.srv.attemptAuthentication(client, token)
-	// Clear classic Conn so post-login path cannot Conn.Write.
+	// Clear temporary login adapter so post-login path cannot Conn.Write.
 	client.Conn = nil
 	return err
 }
@@ -422,7 +423,7 @@ func toGnetAddr(addr string) string {
 	if strings.Contains(addr, "://") {
 		return addr
 	}
-	// Default FSD to IPv4 TCP (matches classic listenLoop "tcp4").
+	// Default FSD to IPv4 TCP (historical tcp4 bind preference).
 	if strings.HasPrefix(addr, ":") {
 		return "tcp4://0.0.0.0" + addr
 	}

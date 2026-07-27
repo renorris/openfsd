@@ -55,7 +55,7 @@ type LatLon struct {
 //
 // # Field ownership
 //
-// Writer: owning read loop only (eventLoop / packet handlers on this connection).
+// Writer: owning read loop only (gnet dispatch / packet handlers on this connection).
 // Concurrent readers without extra sync are allowed for the fields below where
 // noted; they may observe a torn value — acceptable for snapshot/privilege checks:
 //   - SendFastEnabled, ClosestVelocityClientDistance — read-loop only; not read
@@ -88,8 +88,8 @@ type LatLon struct {
 //
 // After login, all packet writes to the client MUST go through Send / SendPosition.
 // Two sinks are supported:
-//  1. Channel path: Send → sendChan → SenderWorker → Conn.Write (classic / synthetic).
-//  2. Outbound path: Send → Outbound (coalesced AsyncWrite; no per-conn writer goroutine).
+//  1. Channel path: Send → sendChan → SenderWorker → Conn.Write (synthetic / tests).
+//  2. Outbound path: Send → Outbound (coalesced AsyncWrite; gnet; no per-conn writer).
 //
 // Direct Conn.Write outside SenderWorker is forbidden post-login on the channel path
 // (login-phase errors may still use protocol.WriteError on the raw connection
@@ -100,7 +100,8 @@ type LatLon struct {
 // skip them as recipients; direct registry.Send still enqueues and relies on
 // SenderWorker drain (no network write when Conn is nil).
 type Session struct {
-	// Conn is the underlying network connection (classic net path).
+	// Conn is the underlying network connection when a net.Conn is used
+	// (channel-path synthetics/tests). Gnet sets Conn nil and uses Outbound.
 	// Exported for RemoteAddr and login-phase protocol.WriteError only.
 	// Post-login packet writes MUST use Send, not Conn.Write.
 	// May be nil for synthetic / unit-test / gnet sessions; use RemoteIP().
