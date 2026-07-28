@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"net/http"
@@ -32,7 +33,7 @@ func (s *Server) getUserByCID(c *gin.Context) {
 		return
 	}
 
-	user, err := s.dbRepo.UserRepo.GetUserByCID(reqBody.CID)
+	user, err := s.dbRepo.UserRepo.GetUserByCID(context.Background(), reqBody.CID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeAPIV1Response(c, http.StatusNotFound, &genericAPIV1NotFound)
@@ -76,7 +77,7 @@ func (s *Server) updateUser(c *gin.Context) {
 		return
 	}
 
-	targetUser, err := s.dbRepo.UserRepo.GetUserByCID(reqBody.CID)
+	targetUser, err := s.dbRepo.UserRepo.GetUserByCID(context.Background(), reqBody.CID)
 	if err != nil {
 		writeAPIV1Response(c, http.StatusNotFound, &genericAPIV1NotFound)
 		return
@@ -125,7 +126,7 @@ func (s *Server) updateUser(c *gin.Context) {
 		targetUser.PilotRating = *reqBody.PilotRating
 	}
 
-	err = s.dbRepo.UserRepo.UpdateUser(targetUser)
+	err = s.dbRepo.UserRepo.UpdateUser(context.Background(), targetUser)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeAPIV1Response(c, http.StatusNotFound, &genericAPIV1NotFound)
@@ -178,7 +179,7 @@ func (s *Server) createUser(c *gin.Context) {
 		PilotRating:   reqBody.PilotRating,
 	}
 
-	if err := s.dbRepo.UserRepo.CreateUser(user); err != nil {
+	if err := s.dbRepo.UserRepo.CreateUser(context.Background(), user); err != nil {
 		writeAPIV1Response(c, http.StatusInternalServerError, &genericAPIV1InternalServerError)
 		return
 	}

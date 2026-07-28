@@ -134,7 +134,12 @@ type Session struct {
 	// Concurrent Search readers load the pointer; may observe a stale snapshot.
 	secVis atomic.Pointer[secVisSnapshot]
 
-	ClosestVelocityClientDistance float64 // Closest Velocity-compatible client distance in meters
+	ClosestVelocityClientDistance float64 // Closest Velocity-compatible client distance in meters (local Search only)
+
+	// RemoteClosestVelocityM is the multi-peer mesh aggregate min distance (meters).
+	// Writer: mesh workers only (via HybridRegistry). Reader: owning position loop.
+	// +Inf / unset (0 bits) means no remote hint.
+	RemoteClosestVelocityM atomic.Float64
 
 	FlightPlan         atomic.String
 	AssignedBeaconCode atomic.String
@@ -204,6 +209,8 @@ func New(ctx context.Context, conn net.Conn, scanner *bufio.Scanner, data LoginD
 		LoginData: data,
 	}
 	s.SetLatLon(0, 0)
+	// Unset remote $SF proximity = +Inf (never treat zero as "0 m away").
+	s.RemoteClosestVelocityM.Store(math.Inf(1))
 	return s
 }
 
@@ -565,6 +572,23 @@ func (s *Session) SecondaryVisCenterCount() int {
 		}
 	}
 	return n
+}
+
+// EachSecondaryVisBox calls fn for each active SECPOS secondary AABB [min,max].
+func (s *Session) EachSecondaryVisBox(fn func(min, max [2]float64)) {
+	snap := s.secVis.Load()
+	if snap == nil {
+		return
+	}
+	for i := range snap.slots {
+		if !snap.slots[i].valid {
+			continue
+		}
+		fn(
+			[2]float64{snap.slots[i].minLat, snap.slots[i].minLon},
+			[2]float64{snap.slots[i].maxLat, snap.slots[i].maxLon},
+		)
+	}
 }
 
 // VisBoxesOverlap reports whether any visibility AABB of a overlaps any of b.

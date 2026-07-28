@@ -141,25 +141,49 @@ func (s *Server) handleGetServersJSON(c *gin.Context) {
 	_, isSweatbox := c.Get("is_sweatbox")
 
 	type ServersJson []DataJsonServer
-	dataJson := ServersJson{
-		{
-			Ident:                    serverIdent,
-			HostnameOrIp:             serverHostname,
-			Location:                 serverLocation,
-			Name:                     serverIdent,
-			ClientConnectionsAllowed: true,
-			ClientsConnectionAllowed: 99,
-			IsSweatbox:               isSweatbox,
-		},
-		{
-			Ident:                    "AUTOMATIC",
-			HostnameOrIp:             serverHostname,
-			Location:                 serverLocation,
-			Name:                     serverIdent,
-			ClientConnectionsAllowed: true,
-			ClientsConnectionAllowed: 99,
-			IsSweatbox:               isSweatbox,
-		},
+	// Multi-FSD: one entry per service address (geo sticky needs distinct hostnames).
+	// When only one FSD URL is configured, keep the historical AUTOMATIC twin entry.
+	urls := s.fsdServiceURLs()
+	dataJson := ServersJson{}
+	if len(urls) > 1 {
+		for i, u := range urls {
+			ident := fmt.Sprintf("%s-%d", serverIdent, i+1)
+			host := serverHostname
+			// Prefer host from service URL when it is not loopback-only.
+			if h := hostFromURL(u); h != "" && h != "127.0.0.1" && h != "localhost" {
+				host = h
+			}
+			dataJson = append(dataJson, DataJsonServer{
+				Ident:                    ident,
+				HostnameOrIp:             host,
+				Location:                 serverLocation,
+				Name:                     ident,
+				ClientConnectionsAllowed: true,
+				ClientsConnectionAllowed: 99,
+				IsSweatbox:               isSweatbox,
+			})
+		}
+	} else {
+		dataJson = ServersJson{
+			{
+				Ident:                    serverIdent,
+				HostnameOrIp:             serverHostname,
+				Location:                 serverLocation,
+				Name:                     serverIdent,
+				ClientConnectionsAllowed: true,
+				ClientsConnectionAllowed: 99,
+				IsSweatbox:               isSweatbox,
+			},
+			{
+				Ident:                    "AUTOMATIC",
+				HostnameOrIp:             serverHostname,
+				Location:                 serverLocation,
+				Name:                     serverIdent,
+				ClientConnectionsAllowed: true,
+				ClientsConnectionAllowed: 99,
+				IsSweatbox:               isSweatbox,
+			},
+		}
 	}
 
 	res, err := json.Marshal(&dataJson)
@@ -172,6 +196,19 @@ func (s *Server) handleGetServersJSON(c *gin.Context) {
 	c.Writer.Header().Set("Content-Type", "application/json")
 	c.Writer.WriteHeader(http.StatusOK)
 	c.Writer.Write(res)
+}
+
+func hostFromURL(raw string) string {
+	// http://host:port → host
+	raw = strings.TrimPrefix(raw, "https://")
+	raw = strings.TrimPrefix(raw, "http://")
+	if i := strings.IndexByte(raw, '/'); i >= 0 {
+		raw = raw[:i]
+	}
+	if i := strings.IndexByte(raw, ':'); i >= 0 {
+		raw = raw[:i]
+	}
+	return raw
 }
 
 func (s *Server) handleGetServersTxt(c *gin.Context) {
@@ -195,25 +232,45 @@ func (s *Server) generateServersTxt() (txt string, err error) {
 	}
 
 	type TemplateData []DataJsonServer
-	tmplData := TemplateData{
-		{
-			Ident:                    serverIdent,
-			HostnameOrIp:             serverHostname,
-			Location:                 serverLocation,
-			Name:                     serverIdent,
-			ClientConnectionsAllowed: true,
-			ClientsConnectionAllowed: 99,
-			IsSweatbox:               false,
-		},
-		{
-			Ident:                    "AUTOMATIC",
-			HostnameOrIp:             serverHostname,
-			Location:                 serverLocation,
-			Name:                     serverIdent,
-			ClientConnectionsAllowed: true,
-			ClientsConnectionAllowed: 99,
-			IsSweatbox:               false,
-		},
+	var tmplData TemplateData
+	if urls := s.fsdServiceURLs(); len(urls) > 1 {
+		for i, u := range urls {
+			ident := fmt.Sprintf("%s-%d", serverIdent, i+1)
+			host := serverHostname
+			if h := hostFromURL(u); h != "" && h != "127.0.0.1" && h != "localhost" {
+				host = h
+			}
+			tmplData = append(tmplData, DataJsonServer{
+				Ident:                    ident,
+				HostnameOrIp:             host,
+				Location:                 serverLocation,
+				Name:                     ident,
+				ClientConnectionsAllowed: true,
+				ClientsConnectionAllowed: 99,
+				IsSweatbox:               false,
+			})
+		}
+	} else {
+		tmplData = TemplateData{
+			{
+				Ident:                    serverIdent,
+				HostnameOrIp:             serverHostname,
+				Location:                 serverLocation,
+				Name:                     serverIdent,
+				ClientConnectionsAllowed: true,
+				ClientsConnectionAllowed: 99,
+				IsSweatbox:               false,
+			},
+			{
+				Ident:                    "AUTOMATIC",
+				HostnameOrIp:             serverHostname,
+				Location:                 serverLocation,
+				Name:                     serverIdent,
+				ClientConnectionsAllowed: true,
+				ClientsConnectionAllowed: 99,
+				IsSweatbox:               false,
+			},
+		}
 	}
 
 	buf := bytes.Buffer{}
@@ -228,19 +285,19 @@ func (s *Server) generateServersTxt() (txt string, err error) {
 }
 
 func (s *Server) getFsdServerInfo() (serverIdent string, serverHostname string, serverLocation string, err error) {
-	serverIdent, err = s.dbRepo.ConfigRepo.Get(db.ConfigFsdServerIdent)
+	serverIdent, err = s.dbRepo.ConfigRepo.Get(context.Background(), db.ConfigFsdServerIdent)
 	if err != nil {
 		slog.Error(err.Error())
 		return
 	}
 
-	serverHostname, err = s.dbRepo.ConfigRepo.Get(db.ConfigFsdServerHostname)
+	serverHostname, err = s.dbRepo.ConfigRepo.Get(context.Background(), db.ConfigFsdServerHostname)
 	if err != nil {
 		slog.Error(err.Error())
 		return
 	}
 
-	serverLocation, err = s.dbRepo.ConfigRepo.Get(db.ConfigFsdServerLocation)
+	serverLocation, err = s.dbRepo.ConfigRepo.Get(context.Background(), db.ConfigFsdServerLocation)
 	if err != nil {
 		slog.Error(err.Error())
 		return
@@ -256,7 +313,7 @@ func writePlaintext500Error(c *gin.Context, msg string) {
 }
 
 func (s *Server) getBaseURLOrErr(c *gin.Context) (baseURL string, ok bool) {
-	baseURL, err := s.dbRepo.ConfigRepo.Get(db.ConfigApiServerBaseURL)
+	baseURL, err := s.dbRepo.ConfigRepo.Get(context.Background(), db.ConfigApiServerBaseURL)
 	if err != nil {
 		c.Writer.WriteHeader(http.StatusInternalServerError)
 		if !errors.Is(err, db.ErrConfigKeyNotFound) {
@@ -414,7 +471,15 @@ func (s *Server) generateDatafeed() (feed *DatafeedCache, err error) {
 //
 // method sets the HTTP method, path is the relative HTTP path (e.g. /online_users), and body is an optional request body.
 func (s *Server) makeFsdHttpServiceHttpRequest(method string, path string, body io.Reader) (req *http.Request, err error) {
-	// Generate JWT bearer token
+	base := s.cfg.FsdHttpServiceAddress
+	if urls := s.fsdServiceURLs(); len(urls) > 0 {
+		base = urls[0]
+	}
+	return s.makeFsdHttpServiceHttpRequestTo(base, method, path, body)
+}
+
+// makeFsdHttpServiceHttpRequestTo is like makeFsdHttpServiceHttpRequest but uses an explicit base URL.
+func (s *Server) makeFsdHttpServiceHttpRequestTo(base, method, path string, body io.Reader) (req *http.Request, err error) {
 	customFields := auth.CustomFields{
 		TokenType:     "fsd_service",
 		CID:           -1,
@@ -424,7 +489,7 @@ func (s *Server) makeFsdHttpServiceHttpRequest(method string, path string, body 
 	if err != nil {
 		return
 	}
-	secretKey, err := s.dbRepo.ConfigRepo.Get(db.ConfigJwtSecretKey)
+	secretKey, err := s.dbRepo.ConfigRepo.Get(context.Background(), db.ConfigJwtSecretKey)
 	if err != nil {
 		return
 	}
@@ -433,14 +498,12 @@ func (s *Server) makeFsdHttpServiceHttpRequest(method string, path string, body 
 		return
 	}
 
-	url := s.cfg.FsdHttpServiceAddress + path
+	url := strings.TrimRight(base, "/") + path
 	req, err = http.NewRequest(method, url, body)
 	if err != nil {
 		return
 	}
-
 	req.Header.Set("Authorization", "Bearer "+tokenStr)
-
 	return
 }
 

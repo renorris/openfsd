@@ -1,9 +1,11 @@
 package server
 
 import (
+	"math"
 	"strconv"
 	"unsafe"
 
+	"github.com/renorris/openfsd/internal/cluster"
 	"github.com/renorris/openfsd/internal/session"
 	"github.com/renorris/openfsd/pkg/protocol"
 )
@@ -69,7 +71,9 @@ func (s *Server) handleATCPosition(client *session.Session, packet []byte) {
 	// ' for each secondary (Network.SendPosition); we clear after broadcast
 	// and re-apply when ' packets arrive.
 	broadcastRanged(s.registry, client, out)
+	s.meshForwardPosition(client, out, false)
 	client.ClearSecondaryVisCenters()
+	s.markInterestDirtyIfHybrid()
 
 	client.LastUpdated.Store(s.clock.Now())
 }
@@ -98,7 +102,14 @@ func (s *Server) handleSecondaryVisCenter(client *session.Session, packet []byte
 		// Out-of-range index: ignore (do not $ER — clients may probe caps).
 		return
 	}
+	s.markInterestDirtyIfHybrid()
 	client.LastUpdated.Store(s.clock.Now())
+}
+
+func (s *Server) markInterestDirtyIfHybrid() {
+	if hr, ok := s.registry.(*HybridRegistry); ok {
+		hr.markInterestDirty()
+	}
 }
 
 // handlePilotPosition handles logic for 0.2hz `@` pilot position updates.
@@ -146,6 +157,7 @@ func (s *Server) handlePilotPosition(client *session.Session, packet []byte) {
 	// Rewrite rating field (index 3) from authenticated session rating.
 	out := rewriteField(packet, 3, strconv.Itoa(int(client.NetworkRating)))
 	broadcastRanged(s.registry, client, out)
+	s.meshForwardPosition(client, out, false)
 
 	// Update state from the same field split (copy for atomics that store string).
 	client.Transponder.Store(string(fields[2]))
@@ -163,15 +175,35 @@ func (s *Server) handlePilotPosition(client *session.Session, packet []byte) {
 
 	client.LastUpdated.Store(s.clock.Now())
 
-	// Check if we need to update the sendfast state
+	// Check if we need to update the sendfast state (local Search min + remote mesh min).
+	// RemoteClosestVelocityM uses +Inf sentinel when unset (issue 21).
 	if client.ProtoRevision == 101 {
+		// postoffice.Search sets ClosestVelocityClientDistance to MaxFloat64 when
+		// no peer; 0 is a valid distance (R2-9). Only MaxFloat64/+Inf is unset.
+		localClosest := client.ClosestVelocityClientDistance
+		if math.IsInf(localClosest, 1) || localClosest >= math.MaxFloat64/2 {
+			localClosest = math.Inf(1)
+		}
+		remoteClosest := client.RemoteClosestVelocityM.Load()
+		if math.IsNaN(remoteClosest) || math.IsInf(remoteClosest, 1) || remoteClosest >= math.MaxFloat64/2 {
+			remoteClosest = math.Inf(1)
+		}
+		// Refresh from HybridRegistry TTL map when clustered (authoritative).
+		if hr, ok := s.registry.(*HybridRegistry); ok {
+			remoteClosest = hr.RemoteClosestM(client.Callsign, s.clock.Now())
+			client.RemoteClosestVelocityM.Store(remoteClosest)
+		}
+		eff := localClosest
+		if remoteClosest < eff {
+			eff = remoteClosest
+		}
 		if client.SendFastEnabled {
-			if (client.ClosestVelocityClientDistance / 1852.0) > 5.0 { // 5.0 nautical miles
+			if (eff / 1852.0) > 5.0 { // 5.0 nautical miles
 				client.SendFastEnabled = false
 				sendDisableSendFastPacket(client)
 			}
 		} else {
-			if (client.ClosestVelocityClientDistance / 1852.0) < 5.0 { // 5.0 nautical miles
+			if (eff / 1852.0) < 5.0 { // 5.0 nautical miles
 				client.SendFastEnabled = true
 				sendEnableSendFastPacket(client)
 			}
@@ -189,6 +221,32 @@ func (s *Server) handleFastPilotPosition(client *session.Session, packet []byte)
 	}
 	// Broadcast position update
 	broadcastRangedVelocity(s.registry, client, packet)
+	s.meshForwardPosition(client, packet, true)
+}
+
+// meshForwardPosition non-blocking mesh position fan-out based on sender vis boxes.
+func (s *Server) meshForwardPosition(client *session.Session, packet []byte, velocity bool) {
+	hr, ok := s.registry.(*HybridRegistry)
+	if !ok || hr.Mesh() == nil {
+		return
+	}
+	boxes := sessionSenderBoxes(client)
+	hr.MeshForwardPosition(packet, boxes, velocity, client.Callsign)
+}
+
+func sessionSenderBoxes(client *session.Session) []cluster.AABB {
+	min, max := client.VisBox()
+	boxes := []cluster.AABB{{
+		MinLat: min[0], MinLon: min[1],
+		MaxLat: max[0], MaxLon: max[1],
+	}}
+	client.EachSecondaryVisBox(func(bMin, bMax [2]float64) {
+		boxes = append(boxes, cluster.AABB{
+			MinLat: bMin[0], MinLon: bMin[1],
+			MaxLat: bMax[0], MaxLon: bMax[1],
+		})
+	})
+	return boxes
 }
 
 // splitFieldsN fills dst[i] with field i of a colon-delimited FSD packet (without

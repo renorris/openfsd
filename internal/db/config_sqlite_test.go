@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	_ "modernc.org/sqlite"
@@ -29,19 +30,19 @@ func TestInitDefaultConfig(t *testing.T) {
 	defer db.Close()
 
 	// Initially, the key should not exist
-	_, err := repo.Get(ConfigJwtSecretKey)
+	_, err := repo.Get(context.Background(), ConfigJwtSecretKey)
 	if !errors.Is(err, ErrConfigKeyNotFound) {
 		t.Errorf("expected ErrConfigKeyNotFound, got %v", err)
 	}
 
 	// Call InitDefaultConfig
-	err = InitDefaultConfig(repo)
+	err = InitDefaultConfig(context.Background(), repo)
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
 	}
 
 	// Verify the key exists and is a 64-character hex string (32 random bytes).
-	value, err := repo.Get(ConfigJwtSecretKey)
+	value, err := repo.Get(context.Background(), ConfigJwtSecretKey)
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
 	}
@@ -50,13 +51,13 @@ func TestInitDefaultConfig(t *testing.T) {
 	}
 
 	// Call InitDefaultConfig again
-	err = InitDefaultConfig(repo)
+	err = InitDefaultConfig(context.Background(), repo)
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
 	}
 
 	// Verify the key has not changed
-	newValue, err := repo.Get(ConfigJwtSecretKey)
+	newValue, err := repo.Get(context.Background(), ConfigJwtSecretKey)
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
 	}
@@ -73,13 +74,13 @@ func TestSet(t *testing.T) {
 	// Set a new key-value pair
 	key := "test_key"
 	value := "test_value"
-	err := repo.Set(key, value)
+	err := repo.Set(context.Background(), key, value)
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
 	}
 
 	// Retrieve and verify
-	retrievedValue, err := repo.Get(key)
+	retrievedValue, err := repo.Get(context.Background(), key)
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
 	}
@@ -89,13 +90,13 @@ func TestSet(t *testing.T) {
 
 	// Update the key with a new value
 	newValue := "new_test_value"
-	err = repo.Set(key, newValue)
+	err = repo.Set(context.Background(), key, newValue)
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
 	}
 
 	// Retrieve and verify again
-	retrievedValue, err = repo.Get(key)
+	retrievedValue, err = repo.Get(context.Background(), key)
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
 	}
@@ -110,7 +111,7 @@ func TestGet(t *testing.T) {
 	defer db.Close()
 
 	// Try to get a non-existing key
-	_, err := repo.Get("non_existing_key")
+	_, err := repo.Get(context.Background(), "non_existing_key")
 	if !errors.Is(err, ErrConfigKeyNotFound) {
 		t.Errorf("expected ErrConfigKeyNotFound, got %v", err)
 	}
@@ -118,13 +119,13 @@ func TestGet(t *testing.T) {
 	// Set a key-value pair
 	key := "another_key"
 	value := "another_value"
-	err = repo.Set(key, value)
+	err = repo.Set(context.Background(), key, value)
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
 	}
 
 	// Retrieve and verify
-	retrievedValue, err := repo.Get(key)
+	retrievedValue, err := repo.Get(context.Background(), key)
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
 	}
@@ -139,37 +140,37 @@ func TestMultipleSets(t *testing.T) {
 	defer db.Close()
 
 	// Set multiple keys
-	err := repo.Set("key1", "value1")
+	err := repo.Set(context.Background(), "key1", "value1")
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
 	}
-	err = repo.Set("key2", "value2")
+	err = repo.Set(context.Background(), "key2", "value2")
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
 	}
 
 	// Retrieve and verify
-	val1, err := repo.Get("key1")
+	val1, err := repo.Get(context.Background(), "key1")
 	if err != nil || val1 != "value1" {
 		t.Errorf("expected value1, got %s, err %v", val1, err)
 	}
-	val2, err := repo.Get("key2")
+	val2, err := repo.Get(context.Background(), "key2")
 	if err != nil || val2 != "value2" {
 		t.Errorf("expected value2, got %s, err %v", val2, err)
 	}
 
 	// Update one key
-	err = repo.Set("key1", "new_value1")
+	err = repo.Set(context.Background(), "key1", "new_value1")
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
 	}
 
 	// Check both keys
-	val1, err = repo.Get("key1")
+	val1, err = repo.Get(context.Background(), "key1")
 	if err != nil || val1 != "new_value1" {
 		t.Errorf("expected new_value1, got %s, err %v", val1, err)
 	}
-	val2, err = repo.Get("key2")
+	val2, err = repo.Get(context.Background(), "key2")
 	if err != nil || val2 != "value2" {
 		t.Errorf("expected value2, got %s, err %v", val2, err)
 	}
@@ -202,16 +203,16 @@ func TestParseBoolConfig(t *testing.T) {
 func TestRequirePilotPPLDefault(t *testing.T) {
 	dbConn, repo := setupConfigTestDB(t)
 	defer dbConn.Close()
-	if err := InitDefaultConfig(repo); err != nil {
+	if err := InitDefaultConfig(context.Background(), repo); err != nil {
 		t.Fatal(err)
 	}
-	if RequirePilotPPL(repo) {
+	if RequirePilotPPL(context.Background(), repo) {
 		t.Fatal("default REQUIRE_PILOT_PPL should be false")
 	}
-	if err := repo.Set(ConfigRequirePilotPPL, "true"); err != nil {
+	if err := repo.Set(context.Background(), ConfigRequirePilotPPL, "true"); err != nil {
 		t.Fatal(err)
 	}
-	if !RequirePilotPPL(repo) {
+	if !RequirePilotPPL(context.Background(), repo) {
 		t.Fatal("expected true after Set")
 	}
 }

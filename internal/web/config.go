@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
@@ -43,7 +44,7 @@ func (s *Server) handleGetConfig(c *gin.Context) {
 
 	for i := range configKeys {
 		key := configKeys[i]
-		val, err := s.dbRepo.ConfigRepo.Get(key)
+		val, err := s.dbRepo.ConfigRepo.Get(context.Background(), key)
 		if err != nil {
 			if !errors.Is(err, db.ErrConfigKeyNotFound) {
 				res := newAPIV1Failure("Error reading key/value from persistent storage")
@@ -91,7 +92,7 @@ func (s *Server) handleUpdateConfig(c *gin.Context) {
 			writeAPIV1Response(c, http.StatusBadRequest, &res)
 			return
 		}
-		if err := s.dbRepo.ConfigRepo.Set(kv.Key, kv.Value); err != nil {
+		if err := s.dbRepo.ConfigRepo.Set(context.Background(), kv.Key, kv.Value); err != nil {
 			res := newAPIV1Failure("Error writing key/value into persistent storage")
 			writeAPIV1Response(c, http.StatusInternalServerError, &res)
 			return
@@ -118,7 +119,7 @@ func (s *Server) handleResetSecretKey(c *gin.Context) {
 		return
 	}
 
-	if err = s.dbRepo.ConfigRepo.Set(db.ConfigJwtSecretKey, secretKey); err != nil {
+	if err = s.dbRepo.ConfigRepo.Set(context.Background(), db.ConfigJwtSecretKey, secretKey); err != nil {
 		writeAPIV1Response(c, http.StatusInternalServerError, &genericAPIV1InternalServerError)
 		return
 	}

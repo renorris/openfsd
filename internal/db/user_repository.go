@@ -1,5 +1,7 @@
 package db
 
+import "context"
+
 type User struct {
 	CID           int
 	Password      string
@@ -36,31 +38,31 @@ type UserRepository interface {
 	// The CID value is automatically populated in the provided User struct.
 	//
 	// The provided password must be in plaintext.
-	CreateUser(*User) (err error)
+	CreateUser(ctx context.Context, user *User) (err error)
 
 	// GetUserByCID retrieves a User record by CID.
 	//
 	// Returns sql.ErrNoRows when no rows are found.
-	GetUserByCID(cid int) (*User, error)
+	GetUserByCID(ctx context.Context, cid int) (*User, error)
 
 	// UpdateUser updates a User record by CID.
 	//
 	// All fields must be provided except:
 	//
 	// 1. Password is only updated if a non-empty string is provided.
-	UpdateUser(*User) error
+	UpdateUser(ctx context.Context, user *User) error
 
 	// ListUsers returns matching users. Password must be left empty (list SELECT
 	// omits password column). Callers that need the hash use GetUserByCID.
-	ListUsers(filter UserListFilter) ([]*User, error)
+	ListUsers(ctx context.Context, filter UserListFilter) ([]*User, error)
 
 	// CountUsers counts rows matching Query + Rating only (Sort/Limit/Offset ignored).
-	CountUsers(filter UserListFilter) (int, error)
+	CountUsers(ctx context.Context, filter UserListFilter) (int, error)
 
 	// VerifyPasswordHash verifies a User password hash.
 	VerifyPasswordHash(plaintext string, hash string) (ok bool)
 
 	// DeleteUser permanently removes the user row by CID.
 	// Returns sql.ErrNoRows if no row was deleted.
-	DeleteUser(cid int) error
+	DeleteUser(ctx context.Context, cid int) error
 }

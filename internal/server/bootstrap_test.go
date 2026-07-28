@@ -49,6 +49,8 @@ func TestLoadConfigDefaults(t *testing.T) {
 	require.True(t, cfg.FsdEnableRateLimits)
 	require.Equal(t, 30*time.Second, cfg.FsdLoginTimeout)
 	require.Equal(t, 120*time.Second, cfg.FsdIdleTimeout)
+	// R2-15: cluster off by default
+	require.False(t, cfg.ClusterEnabled)
 }
 
 func TestNewDefaultCreatesAdmin(t *testing.T) {
@@ -70,7 +72,7 @@ func TestNewDefaultCreatesAdmin(t *testing.T) {
 	require.NotNil(t, srv)
 
 	// CID 1 should exist after generateDefaultAdminUser
-	u, err := srv.users.GetUserByCID(1)
+	u, err := srv.users.GetUserByCID(context.Background(), 1)
 	require.NoError(t, err)
 	require.Equal(t, 1, u.CID)
 
@@ -88,7 +90,7 @@ func TestGenerateDefaultAdminUser(t *testing.T) {
 	repos, err := db.NewRepositories(sqlDB)
 	require.NoError(t, err)
 
-	user, err := generateDefaultAdminUser(repos)
+	user, err := generateDefaultAdminUser(context.Background(), repos)
 	require.NoError(t, err)
 	require.Equal(t, 1, user.CID)
 	require.NotEmpty(t, user.Password)
@@ -299,7 +301,7 @@ func TestRunServiceHTTPAndListen(t *testing.T) {
 
 type mapConfig struct{ m map[string]string }
 
-func (m *mapConfig) Get(key string) (string, error) {
+func (m *mapConfig) Get(ctx context.Context, key string) (string, error) {
 	v, ok := m.m[key]
 	if !ok {
 		return "", db.ErrConfigKeyNotFound

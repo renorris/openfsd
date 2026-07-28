@@ -25,10 +25,12 @@ Use the web UI (**Configure Server**) to set these.
 
 | Name | Description | Default |
 |------|-------------|---------|
-| `DATABASE_SOURCE_NAME` | SQLite DSN: file path (preferred) or `:memory:`. Default is a local file with WAL + busy timeout so colocated FSD+web share one database. Bare `:memory:` is private per connection; when both services run in one process it is rewritten to a shared in-memory DSN. | `openfsd.db?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)` |
-| `DATABASE_DRIVER` | **Compatibility only.** Must be omitted or `sqlite`. Any other value (including `postgres`) fails startup. See [Migrating from PostgreSQL](Migrating-from-PostgreSQL.md). | `sqlite` |
-| `DATABASE_AUTO_MIGRATE` | When `true`, FSD and web apply SQLite migrations on startup (idempotent). | `true` |
-| `DATABASE_MAX_CONNS` | Max open SQL connections. `1` is fine for small servers. | `1` |
+| `DATABASE_SOURCE_NAME` | SQLite DSN (file path preferred) **or** rqlite HTTP base URL when `DATABASE_DRIVER=rqlite` (e.g. `http://rqlite:4001`). Bare `:memory:` is private per connection; when both services run in one process it is rewritten to a shared in-memory DSN. | `openfsd.db?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)` |
+| `DATABASE_DRIVER` | `sqlite` (default) or `rqlite`. Legacy `postgres` fails startup — see [Migrating from PostgreSQL](Migrating-from-PostgreSQL.md). | `sqlite` |
+| `DATABASE_AUTO_MIGRATE` | When `true`, apply migrations on startup. For rqlite, only the process with `DATABASE_MIGRATE_LEADER=true` migrates. | `true` |
+| `DATABASE_MIGRATE_LEADER` | When `true` with rqlite, this process runs schema migrations (exactly one leader). | `false` |
+| `DATABASE_MAX_CONNS` | Max open SQL connections (sqlite). `1` is fine for small servers. | `1` |
+| `AUTH_READ_LEVEL` | rqlite read consistency for login `GetUserByCID`: `weak` / `strong` / `none`. | `weak` |
 
 Example production DSN:
 
@@ -44,12 +46,27 @@ Example production DSN:
 | `NUM_METAR_WORKERS` | METAR fetch worker count | `4` |
 | `SERVICE_HTTP_LISTEN_ADDR` | Internal HTTP service (web ↔ FSD control plane) | `:13618` |
 
+### Cluster (optional multi-node FSD mesh)
+
+Default is **off**. See [Deployment](Deployment.md#optional-multi-node-cluster) and `docs/design/distributed-openfsd.md`.
+
+| Name | Description | Default |
+|------|-------------|---------|
+| `CLUSTER_ENABLED` | Enable inter-node mesh | `false` |
+| `CLUSTER_NODE_ID` | Stable node id (e.g. `us-east-1`) | *(required when enabled)* |
+| `CLUSTER_LISTEN` | Mesh listen `host:port` | *(required when enabled)* |
+| `CLUSTER_PEERS` | `id=host:port,...` static peers (≤8), trust root | *(required when enabled)* |
+| `CLUSTER_MESH_PSK` | **Required** shared secret for mesh Hello | *(required when enabled)* |
+| `CLUSTER_CLAIM_TIMEOUT` | Owner claim RPC timeout | `400ms` |
+| `CLUSTER_PEER_DEATH_GRACE` | Peer hard-death grace before synthetic leave | `15s` |
+
 ### Web server
 
 | Name | Description | Default |
 |------|-------------|---------|
 | `LISTEN_ADDR` | HTTP listen address for UI + `/api/v1` | `:8000` |
 | `FSD_HTTP_SERVICE_ADDRESS` | Base URL of the FSD internal HTTP API. Default assumes colocated FSD. | `http://127.0.0.1:13618` |
+| `FSD_HTTP_SERVICE_ADDRESSES` | Multi-FSD list: bare URLs or `nodeID=http://host:port` pairs (kick routing + online_users aggregate) | *(empty → single address)* |
 | `COOKIE_SECURE` | `true` / `false` force Secure cookies; empty derives from TLS / `X-Forwarded-Proto` | *(empty)* |
 
 ### Logging

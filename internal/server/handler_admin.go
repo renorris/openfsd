@@ -1,6 +1,8 @@
 package server
 
-import "github.com/renorris/openfsd/internal/session"
+import (
+	"github.com/renorris/openfsd/internal/session"
+)
 
 func (s *Server) handleKillRequest(client *session.Session, packet []byte) {
 	if client.NetworkRating < NetworkRatingSupervisor {
@@ -9,8 +11,15 @@ func (s *Server) handleKillRequest(client *session.Session, packet []byte) {
 
 	// Attempt to find the victim client
 	recipient := getField(packet, 1)
-	victim, err := s.registry.Find(string(recipient))
+	cs := string(recipient)
+	victim, err := s.registry.Find(cs)
 	if err != nil {
+		if _, ok := s.registry.(*HybridRegistry); ok {
+			// R2-4 / R2-11: rating checked on origin (supervisor gate above);
+			// HomeRPC off gnet via authPool.
+			s.meshForceDisconnectAsync(client, cs)
+			return
+		}
 		client.SendError(NoSuchCallsignError, "No such callsign")
 		return
 	}

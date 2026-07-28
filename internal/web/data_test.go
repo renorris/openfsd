@@ -86,7 +86,7 @@ func TestGetBaseURLOrErr(t *testing.T) {
 	assert.NotEmpty(t, base)
 
 	// Clear base URL key to hit error path
-	require.NoError(t, env.server.dbRepo.ConfigRepo.Set(db.ConfigApiServerBaseURL, ""))
+	require.NoError(t, env.server.dbRepo.ConfigRepo.Set(context.Background(), db.ConfigApiServerBaseURL, ""))
 	// empty string still returns ok with empty base depending on Get semantics
 	// Delete by setting missing: use a fresh server without InitDefault for missing key
 }

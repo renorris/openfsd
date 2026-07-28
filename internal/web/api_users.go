@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"log/slog"
@@ -64,7 +65,7 @@ func (s *Server) handleAPIListUsers(c *gin.Context) {
 		Offset: (q.Page - 1) * q.PageSize,
 	}
 
-	total, err := s.dbRepo.UserRepo.CountUsers(filter)
+	total, err := s.dbRepo.UserRepo.CountUsers(context.Background(), filter)
 	if err != nil {
 		slog.Error("api users list count failed", "err", err)
 		writeAPIV1Response(c, http.StatusInternalServerError, &genericAPIV1InternalServerError)
@@ -77,7 +78,7 @@ func (s *Server) handleAPIListUsers(c *gin.Context) {
 	filter.Offset = (q.Page - 1) * q.PageSize
 	filter.Limit = q.PageSize
 
-	users, err := s.dbRepo.UserRepo.ListUsers(filter)
+	users, err := s.dbRepo.UserRepo.ListUsers(context.Background(), filter)
 	if err != nil {
 		slog.Error("api users list failed", "err", err)
 		writeAPIV1Response(c, http.StatusInternalServerError, &genericAPIV1InternalServerError)
@@ -120,7 +121,7 @@ func (s *Server) handleAPIGetUser(c *gin.Context) {
 		return
 	}
 
-	user, err := s.dbRepo.UserRepo.GetUserByCID(cid)
+	user, err := s.dbRepo.UserRepo.GetUserByCID(context.Background(), cid)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeAPIV1Response(c, http.StatusNotFound, &genericAPIV1NotFound)

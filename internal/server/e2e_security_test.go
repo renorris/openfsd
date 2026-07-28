@@ -207,7 +207,7 @@ func TestE2E_RequirePilotPPL(t *testing.T) {
 	_ = c.Close(context.Background())
 
 	// Enable gate.
-	if err := ts.ConfigRepo.Set(db.ConfigRequirePilotPPL, "true"); err != nil {
+	if err := ts.ConfigRepo.Set(context.Background(), db.ConfigRequirePilotPPL, "true"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -217,13 +217,13 @@ func TestE2E_RequirePilotPPL(t *testing.T) {
 	waitError(t, c2, protocol.RequestedLevelTooHighError)
 
 	// Raise pilot certificate to PPL → allowed.
-	u, err := ts.UserRepo.GetUserByCID(ts.PilotCID)
+	u, err := ts.UserRepo.GetUserByCID(context.Background(), ts.PilotCID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	u.PilotRating = int(protocol.PilotRatingPPL)
 	u.Password = "" // keep hash
-	if err := ts.UserRepo.UpdateUser(u); err != nil {
+	if err := ts.UserRepo.UpdateUser(context.Background(), u); err != nil {
 		t.Fatal(err)
 	}
 

@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -44,7 +45,7 @@ func setupTestAPI(t *testing.T) *testAPIEnv {
 
 	repos, err := db.NewRepositories(sqlDB)
 	require.NoError(t, err)
-	require.NoError(t, db.InitDefaultConfig(repos.ConfigRepo))
+	require.NoError(t, db.InitDefaultConfig(context.Background(), repos.ConfigRepo))
 
 	adminPass := "adminpass1"
 	observerPass := "observerpass1"
@@ -55,7 +56,7 @@ func setupTestAPI(t *testing.T) *testAPIEnv {
 		LastName:      strPtr("User"),
 		NetworkRating: int(protocol.NetworkRatingAdministator),
 	}
-	require.NoError(t, repos.UserRepo.CreateUser(admin))
+	require.NoError(t, repos.UserRepo.CreateUser(context.Background(), admin))
 
 	observer := &db.User{
 		Password:      observerPass,
@@ -63,7 +64,7 @@ func setupTestAPI(t *testing.T) *testAPIEnv {
 		LastName:      strPtr("Server"),
 		NetworkRating: int(protocol.NetworkRatingObserver),
 	}
-	require.NoError(t, repos.UserRepo.CreateUser(observer))
+	require.NoError(t, repos.UserRepo.CreateUser(context.Background(), observer))
 
 	// Repos are injected into NewServer; DSN fields on cfg are unused in these tests.
 	cfg := &ServerConfig{
@@ -261,7 +262,7 @@ func TestFsdJwt(t *testing.T) {
 		FirstName:     strPtr("Suspended"),
 		NetworkRating: int(protocol.NetworkRatingSuspended),
 	}
-	require.NoError(t, env.server.dbRepo.UserRepo.CreateUser(suspended))
+	require.NoError(t, env.server.dbRepo.UserRepo.CreateUser(context.Background(), suspended))
 
 	w = env.doJSON(t, http.MethodPost, "/api/v1/fsd-jwt", map[string]any{
 		"cid":      fmt.Sprintf("%d", suspended.CID),
@@ -379,7 +380,7 @@ func TestConfigLoadAndUpdate(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 
 	// verify persisted
-	val, err := env.server.dbRepo.ConfigRepo.Get(db.ConfigWelcomeMessage)
+	val, err := env.server.dbRepo.ConfigRepo.Get(context.Background(), db.ConfigWelcomeMessage)
 	require.NoError(t, err)
 	assert.Equal(t, "Hello from test", val)
 
@@ -492,11 +493,11 @@ func TestDataServersJSONUnauthenticated(t *testing.T) {
 func TestBearerActorRevalidation(t *testing.T) {
 	setRating := func(t *testing.T, env *testAPIEnv, cid, rating int) {
 		t.Helper()
-		u, err := env.server.dbRepo.UserRepo.GetUserByCID(cid)
+		u, err := env.server.dbRepo.UserRepo.GetUserByCID(context.Background(), cid)
 		require.NoError(t, err)
 		u.NetworkRating = rating
 		u.Password = ""
-		require.NoError(t, env.server.dbRepo.UserRepo.UpdateUser(u))
+		require.NoError(t, env.server.dbRepo.UserRepo.UpdateUser(context.Background(), u))
 	}
 
 	tests := []struct {
@@ -540,7 +541,7 @@ func TestBearerActorRevalidation(t *testing.T) {
 		{
 			name: "hard_deleted_401",
 			mutate: func(t *testing.T, env *testAPIEnv) {
-				require.NoError(t, env.server.dbRepo.UserRepo.DeleteUser(env.admin.CID))
+				require.NoError(t, env.server.dbRepo.UserRepo.DeleteUser(context.Background(), env.admin.CID))
 			},
 			method:        http.MethodPost,
 			path:          "/api/v1/user/load",

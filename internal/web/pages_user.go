@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"log/slog"
@@ -60,7 +61,7 @@ func (s *Server) loadUserDirectory(page *userEditorPage, selectedCID int) {
 		Offset: (page.Dir.Page - 1) * page.Dir.PageSize,
 	}
 
-	total, err := s.dbRepo.UserRepo.CountUsers(filter)
+	total, err := s.dbRepo.UserRepo.CountUsers(context.Background(), filter)
 	if err != nil {
 		slog.Error("user directory count failed", "err", err)
 		page.FlashError = "Unable to load user directory"
@@ -73,7 +74,7 @@ func (s *Server) loadUserDirectory(page *userEditorPage, selectedCID int) {
 	filter.Offset = (page.Dir.Page - 1) * page.Dir.PageSize
 	filter.Limit = page.Dir.PageSize
 
-	users, err := s.dbRepo.UserRepo.ListUsers(filter)
+	users, err := s.dbRepo.UserRepo.ListUsers(context.Background(), filter)
 	if err != nil {
 		slog.Error("user directory list failed", "err", err)
 		page.FlashError = "Unable to load user directory"
@@ -168,7 +169,7 @@ func (s *Server) loadUserIntoEditForm(page *userEditorPage, cidStr string) {
 		page.FlashError = "Enter a valid CID"
 		return
 	}
-	user, err := s.dbRepo.UserRepo.GetUserByCID(cid)
+	user, err := s.dbRepo.UserRepo.GetUserByCID(context.Background(), cid)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			page.FlashError = "User not found"
@@ -341,7 +342,7 @@ func (s *Server) handleFrontendUserCreate(c *gin.Context) {
 		NetworkRating: rating,
 		PilotRating:   pilotRating,
 	}
-	if err := s.dbRepo.UserRepo.CreateUser(user); err != nil {
+	if err := s.dbRepo.UserRepo.CreateUser(context.Background(), user); err != nil {
 		slog.Error("user create failed", "err", err)
 		page.Create.Error = "Unable to create user"
 		s.reRenderUserEditor(c, &page, dir)
@@ -432,7 +433,7 @@ func (s *Server) handleFrontendUserUpdate(c *gin.Context) {
 		}
 	}
 
-	targetUser, err := s.dbRepo.UserRepo.GetUserByCID(cid)
+	targetUser, err := s.dbRepo.UserRepo.GetUserByCID(context.Background(), cid)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			page.Edit.Error = "User not found"
@@ -503,7 +504,7 @@ func (s *Server) handleFrontendUserUpdate(c *gin.Context) {
 		targetUser.Password = ""
 	}
 
-	if err := s.dbRepo.UserRepo.UpdateUser(targetUser); err != nil {
+	if err := s.dbRepo.UserRepo.UpdateUser(context.Background(), targetUser); err != nil {
 		slog.Error("user update failed", "cid", cid, "err", err)
 		page.Edit.Error = "Unable to update user"
 		s.reRenderUserEditor(c, &page, dir)

@@ -95,7 +95,7 @@ func (s *Server) authMiddleware(c *gin.Context) {
 		return
 	}
 
-	jwtSecret, err := s.configKV.Get(db.ConfigJwtSecretKey)
+	jwtSecret, err := s.configKV.Get(context.Background(), db.ConfigJwtSecretKey)
 	if err != nil {
 		s.logger.Error(err.Error())
 		c.AbortWithStatus(http.StatusInternalServerError)
@@ -137,6 +137,7 @@ func (s *Server) handleGetOnlineUsers(c *gin.Context) {
 			Longitude:        latLon[1],
 			LogonTime:        client.LoginTime,
 			LastUpdated:      client.LastUpdated.Load(),
+			NodeID:           s.nodeID,
 		}
 
 		if client.IsAtc {

@@ -26,43 +26,56 @@ func NewDefaultServer(ctx context.Context) (server *Server, err error) {
 		return
 	}
 
-	if err = db.RequireSQLiteDriver(cfg.DatabaseDriver); err != nil {
+	if err = db.RequireDatabaseDriver(cfg.DatabaseDriver); err != nil {
 		return
 	}
 
-	slog.Info("using sqlite")
+	driver := cfg.DatabaseDriver
+	if driver == "" {
+		driver = "sqlite"
+	}
+	slog.Info("using database driver", "driver", driver)
 
-	slog.Debug("connecting to SQL")
-	sqlDb, err := sql.Open("sqlite", cfg.DatabaseSourceName)
-	if err != nil {
+	readLevel, errRL := db.ParseReadLevel(cfg.AuthReadLevel)
+	if errRL != nil {
+		err = errRL
 		return
 	}
-	slog.Debug("SQL OK")
 
-	if err = sqlDb.PingContext(ctx); err != nil {
-		return
-	}
-
-	sqlDb.SetMaxOpenConns(cfg.DatabaseMaxConns)
-
-	// Migrate here too so -web alone (or web starting against a fresh file)
-	// works. When colocated, FSD migrates first; second Up is ErrNoChange.
-	if cfg.DatabaseAutoMigrate {
+	// Migrate sqlite locally; rqlite only if migrate leader.
+	if cfg.DatabaseAutoMigrate && (driver == "sqlite" || driver == "") {
 		slog.Debug("automatically migrating database")
-		if err = db.Migrate(sqlDb); err != nil {
+		sqlDb, errOpen := sql.Open("sqlite", cfg.DatabaseSourceName)
+		if errOpen != nil {
+			err = errOpen
 			return
 		}
+		if err = sqlDb.PingContext(ctx); err != nil {
+			_ = sqlDb.Close()
+			return
+		}
+		sqlDb.SetMaxOpenConns(cfg.DatabaseMaxConns)
+		if err = db.Migrate(sqlDb); err != nil {
+			_ = sqlDb.Close()
+			return
+		}
+		_ = sqlDb.Close()
 		slog.Debug("migrate OK")
+	} else if cfg.DatabaseAutoMigrate && driver == "rqlite" && cfg.DatabaseMigrateLeader {
+		client := db.NewRqliteClient(cfg.DatabaseSourceName, db.RqliteClientOptions{})
+		if err = db.MigrateRqlite(ctx, client); err != nil {
+			return
+		}
 	}
 
-	dbRepo, err := db.NewRepositories(sqlDb)
+	dbRepo, err := db.OpenRepositories(ctx, driver, cfg.DatabaseSourceName, readLevel, true)
 	if err != nil {
 		return
 	}
 
 	// Seed JWT/welcome defaults if missing (SetIfNotExists). Safe when FSD
 	// already initialized config on the same database.
-	if err = db.InitDefaultConfig(dbRepo.ConfigRepo); err != nil {
+	if err = db.InitDefaultConfig(ctx, dbRepo.ConfigRepo); err != nil {
 		return
 	}
 

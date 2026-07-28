@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -68,7 +69,7 @@ func (s *Server) cookieSecure(c *gin.Context) bool {
 }
 
 func (s *Server) jwtSecret() ([]byte, error) {
-	secret, err := s.dbRepo.ConfigRepo.Get(db.ConfigJwtSecretKey)
+	secret, err := s.dbRepo.ConfigRepo.Get(context.Background(), db.ConfigJwtSecretKey)
 	if err != nil {
 		return nil, err
 	}

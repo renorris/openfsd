@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -25,7 +26,7 @@ func (s *Server) newConfigEditorPage(c *gin.Context) configEditorPage {
 		Fields: make([]configField, 0, len(editableConfigKeys)),
 	}
 	for _, meta := range editableConfigKeys {
-		val, err := s.dbRepo.ConfigRepo.Get(meta.Key)
+		val, err := s.dbRepo.ConfigRepo.Get(context.Background(), meta.Key)
 		if err != nil && !errors.Is(err, db.ErrConfigKeyNotFound) {
 			// Leave value empty; surface a flash if whole load fails hard.
 			val = ""
@@ -89,7 +90,7 @@ func (s *Server) handleFrontendConfigUpdate(c *gin.Context) {
 			s.writeTemplate(c, "configeditor", page)
 			return
 		}
-		if err := s.dbRepo.ConfigRepo.Set(f.Key, f.Value); err != nil {
+		if err := s.dbRepo.ConfigRepo.Set(context.Background(), f.Key, f.Value); err != nil {
 			page.FlashError = "Error writing configuration"
 			s.writeTemplate(c, "configeditor", page)
 			return
@@ -130,7 +131,7 @@ func (s *Server) handleFrontendConfigResetSecret(c *gin.Context) {
 		s.writeTemplate(c, "configeditor", page)
 		return
 	}
-	if err = s.dbRepo.ConfigRepo.Set(db.ConfigJwtSecretKey, secretKey); err != nil {
+	if err = s.dbRepo.ConfigRepo.Set(context.Background(), db.ConfigJwtSecretKey, secretKey); err != nil {
 		page := s.newConfigEditorPage(c)
 		page.FlashError = "Unable to store secret key"
 		s.writeTemplate(c, "configeditor", page)
@@ -202,7 +203,7 @@ func (s *Server) handleFrontendConfigCreateToken(c *gin.Context) {
 		return
 	}
 
-	secretKey, err := s.dbRepo.ConfigRepo.Get(db.ConfigJwtSecretKey)
+	secretKey, err := s.dbRepo.ConfigRepo.Get(context.Background(), db.ConfigJwtSecretKey)
 	if err != nil {
 		page.FlashError = "Unable to create token"
 		s.writeTemplate(c, "configeditor", page)

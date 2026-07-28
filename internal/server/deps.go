@@ -6,6 +6,7 @@ import (
 	"net"
 	"time"
 
+	"github.com/renorris/openfsd/internal/cluster"
 	"github.com/renorris/openfsd/internal/db"
 	"github.com/renorris/openfsd/internal/postoffice"
 	"github.com/renorris/openfsd/internal/session"
@@ -20,16 +21,16 @@ var (
 )
 
 // UserStore is the consumer-side user repository surface used by login.
-// Signatures match db.UserRepository (no context yet).
+// Signatures match db.UserRepository (with context).
 type UserStore interface {
-	GetUserByCID(cid int) (*db.User, error)
+	GetUserByCID(ctx context.Context, cid int) (*db.User, error)
 	VerifyPasswordHash(plaintext, hash string) bool
 }
 
 // ConfigStore is the consumer-side config KV surface.
-// Signature matches db.ConfigRepository.Get (no context yet).
+// Signature matches db.ConfigRepository.Get (with context).
 type ConfigStore interface {
-	Get(key string) (string, error)
+	Get(ctx context.Context, key string) (string, error)
 }
 
 // Registry abstracts the callsign/geo registry (postoffice.PostOffice).
@@ -77,6 +78,9 @@ type Deps struct {
 	// SweatboxEnabled gates SweatboxHost allocation. NewDefault copies from Config.
 	// StartTestServer defaults true for e2e convenience.
 	SweatboxEnabled bool
+	// Mesh is optional cluster mesh (nil when CLUSTER_ENABLED=false).
+	// HybridRegistry wraps Registry when Mesh is non-nil.
+	Mesh cluster.Mesh
 }
 
 type realClock struct{}

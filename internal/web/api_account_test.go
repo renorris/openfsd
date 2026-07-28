@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -138,7 +139,7 @@ func TestAPIAccountPasswordBearerSuccess(t *testing.T) {
 		}
 	}
 
-	u, err := ts.dbRepo.UserRepo.GetUserByCID(user.CID)
+	u, err := ts.dbRepo.UserRepo.GetUserByCID(context.Background(), user.CID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,7 +170,7 @@ func TestAPIAccountPasswordCookieSessionReissue(t *testing.T) {
 		t.Fatalf("status %d body %s", w.Code, w.Body.String())
 	}
 	// Password must actually change (not only cookie side effects).
-	u, err := ts.dbRepo.UserRepo.GetUserByCID(user.CID)
+	u, err := ts.dbRepo.UserRepo.GetUserByCID(context.Background(), user.CID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -285,7 +286,7 @@ func TestAPIAccountPasswordValidation(t *testing.T) {
 				t.Fatalf("err=%q want substring %q", errString(res), tc.want)
 			}
 			// Password unchanged on every validation failure.
-			u, err := ts.dbRepo.UserRepo.GetUserByCID(user.CID)
+			u, err := ts.dbRepo.UserRepo.GetUserByCID(context.Background(), user.CID)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -357,7 +358,7 @@ func TestAPIAccountDeleteSoftBearer(t *testing.T) {
 		}
 	}
 
-	u, err := ts.dbRepo.UserRepo.GetUserByCID(user.CID)
+	u, err := ts.dbRepo.UserRepo.GetUserByCID(context.Background(), user.CID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -395,7 +396,7 @@ func TestAPIAccountDeleteHardWhenEnabled(t *testing.T) {
 	if !strings.Contains(string(data), `"hard_deleted"`) {
 		t.Fatalf("data=%s want hard_deleted", data)
 	}
-	_, err := ts.dbRepo.UserRepo.GetUserByCID(user.CID)
+	_, err := ts.dbRepo.UserRepo.GetUserByCID(context.Background(), user.CID)
 	if err == nil {
 		t.Fatal("expected row gone after hard delete")
 	}
@@ -420,7 +421,7 @@ func TestAPIAccountDeletePermanentFailClosed(t *testing.T) {
 		t.Fatalf("err=%q", errString(res))
 	}
 	// No mutation — intentional JSON divergence from HTML soft-fallback.
-	u, err := ts.dbRepo.UserRepo.GetUserByCID(user.CID)
+	u, err := ts.dbRepo.UserRepo.GetUserByCID(context.Background(), user.CID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -449,7 +450,7 @@ func TestAPIAccountDeletePermanentFailClosedCookie(t *testing.T) {
 	if !strings.Contains(errString(res), "permanent delete is disabled") {
 		t.Fatalf("err=%q", errString(res))
 	}
-	u, err := ts.dbRepo.UserRepo.GetUserByCID(user.CID)
+	u, err := ts.dbRepo.UserRepo.GetUserByCID(context.Background(), user.CID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -517,7 +518,7 @@ func TestAPIAccountDeleteValidation(t *testing.T) {
 			if !strings.Contains(errString(res), tc.want) {
 				t.Fatalf("err=%q want %q", errString(res), tc.want)
 			}
-			u, err := ts.dbRepo.UserRepo.GetUserByCID(user.CID)
+			u, err := ts.dbRepo.UserRepo.GetUserByCID(context.Background(), user.CID)
 			if err != nil {
 				t.Fatal(err)
 			}

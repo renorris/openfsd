@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"database/sql/driver"
 	"strings"
@@ -88,31 +89,31 @@ func TestGetWelcomeMessageAndInitDefault(t *testing.T) {
 	require.NoError(t, err)
 
 	// Before init — empty welcome
-	msg := GetWelcomeMessage(repos.ConfigRepo)
+	msg := GetWelcomeMessage(context.Background(), repos.ConfigRepo)
 	require.Equal(t, "", msg)
 
-	require.NoError(t, InitDefaultConfig(repos.ConfigRepo))
-	msg = GetWelcomeMessage(repos.ConfigRepo)
+	require.NoError(t, InitDefaultConfig(context.Background(), repos.ConfigRepo))
+	msg = GetWelcomeMessage(context.Background(), repos.ConfigRepo)
 	require.Equal(t, "Connected to openfsd", msg)
 
 	// Second init is idempotent (SetIfNotExists)
-	require.NoError(t, InitDefaultConfig(repos.ConfigRepo))
+	require.NoError(t, InitDefaultConfig(context.Background(), repos.ConfigRepo))
 
 	// Set/Get/SetIfNotExists paths
-	require.NoError(t, repos.ConfigRepo.Set("CUSTOM_KEY", "v1"))
-	v, err := repos.ConfigRepo.Get("CUSTOM_KEY")
+	require.NoError(t, repos.ConfigRepo.Set(context.Background(), "CUSTOM_KEY", "v1"))
+	v, err := repos.ConfigRepo.Get(context.Background(), "CUSTOM_KEY")
 	require.NoError(t, err)
 	require.Equal(t, "v1", v)
-	require.NoError(t, repos.ConfigRepo.SetIfNotExists("CUSTOM_KEY", "v2"))
-	v, err = repos.ConfigRepo.Get("CUSTOM_KEY")
+	require.NoError(t, repos.ConfigRepo.SetIfNotExists(context.Background(), "CUSTOM_KEY", "v2"))
+	v, err = repos.ConfigRepo.Get(context.Background(), "CUSTOM_KEY")
 	require.NoError(t, err)
 	require.Equal(t, "v1", v) // unchanged
-	require.NoError(t, repos.ConfigRepo.Set("CUSTOM_KEY", "v3"))
-	v, err = repos.ConfigRepo.Get("CUSTOM_KEY")
+	require.NoError(t, repos.ConfigRepo.Set(context.Background(), "CUSTOM_KEY", "v3"))
+	v, err = repos.ConfigRepo.Get(context.Background(), "CUSTOM_KEY")
 	require.NoError(t, err)
 	require.Equal(t, "v3", v)
 
-	_, err = repos.ConfigRepo.Get("NO_SUCH_KEY_XYZ")
+	_, err = repos.ConfigRepo.Get(context.Background(), "NO_SUCH_KEY_XYZ")
 	require.ErrorIs(t, err, ErrConfigKeyNotFound)
 }
 

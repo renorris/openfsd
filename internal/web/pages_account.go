@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -38,7 +39,7 @@ func (s *Server) loadAccountPage(c *gin.Context, cid int) accountPage {
 	user := getDBUser(c)
 	if user == nil || user.CID != cid {
 		var err error
-		user, err = s.dbRepo.UserRepo.GetUserByCID(cid)
+		user, err = s.dbRepo.UserRepo.GetUserByCID(context.Background(), cid)
 		if err != nil {
 			page.FormError = "Unable to load account"
 			return page
@@ -68,7 +69,7 @@ func (s *Server) handleFrontendAccountPassword(c *gin.Context) {
 
 	page := s.loadAccountPage(c, claims.CID)
 
-	user, err := s.dbRepo.UserRepo.GetUserByCID(claims.CID)
+	user, err := s.dbRepo.UserRepo.GetUserByCID(context.Background(), claims.CID)
 	if err != nil {
 		s.clearSessionCookie(c)
 		s.clearCSRFCookie(c)
@@ -104,7 +105,7 @@ func (s *Server) handleFrontendAccountPassword(c *gin.Context) {
 	}
 
 	user.Password = newPW
-	if err := s.dbRepo.UserRepo.UpdateUser(user); err != nil {
+	if err := s.dbRepo.UserRepo.UpdateUser(context.Background(), user); err != nil {
 		slog.Error("account password update failed", "cid", claims.CID, "err", err)
 		page.FormError = "Unable to update password"
 		s.writeTemplate(c, "account", page)
@@ -145,7 +146,7 @@ func (s *Server) handleFrontendAccountDelete(c *gin.Context) {
 
 	page := s.loadAccountPage(c, claims.CID)
 
-	user, err := s.dbRepo.UserRepo.GetUserByCID(claims.CID)
+	user, err := s.dbRepo.UserRepo.GetUserByCID(context.Background(), claims.CID)
 	if err != nil || user.NetworkRating <= int(protocol.NetworkRatingSuspended) {
 		s.clearSessionCookie(c)
 		s.clearCSRFCookie(c)
@@ -174,7 +175,7 @@ func (s *Server) handleFrontendAccountDelete(c *gin.Context) {
 	permanentDisabled := wantPermanent && !allowHard
 
 	if wantPermanent && allowHard {
-		if err := s.dbRepo.UserRepo.DeleteUser(user.CID); err != nil {
+		if err := s.dbRepo.UserRepo.DeleteUser(context.Background(), user.CID); err != nil {
 			slog.Error("account hard-delete failed", "cid", claims.CID, "err", err)
 			page.DeleteError = "Unable to delete account"
 			s.writeTemplate(c, "account", page)
@@ -189,7 +190,7 @@ func (s *Server) handleFrontendAccountDelete(c *gin.Context) {
 		// Soft-delete (default, or permanent requested but disabled).
 		user.NetworkRating = int(protocol.NetworkRatingInactive)
 		user.Password = "" // keep existing hash
-		if err := s.dbRepo.UserRepo.UpdateUser(user); err != nil {
+		if err := s.dbRepo.UserRepo.UpdateUser(context.Background(), user); err != nil {
 			slog.Error("account soft-delete failed", "cid", claims.CID, "err", err)
 			page.DeleteError = "Unable to delete account"
 			s.writeTemplate(c, "account", page)

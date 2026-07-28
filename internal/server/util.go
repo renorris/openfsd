@@ -408,16 +408,26 @@ func broadcastAllSupervisors(reg Registry, client *session.Session, packet []byt
 // If the registry responds with ErrCallsignDoesNotExist, the client
 // is notified with a NoSuchCallsignError.
 // Uses TrySend via Find so fan-out does not block on a slow peer.
+// When the target is remote (HybridRegistry + mesh directory), forwards via mesh.
 func sendDirectOrErr(reg Registry, client *session.Session, recipient []byte, packet []byte) {
-	target, err := reg.Find(string(recipient))
-	if err != nil {
-		client.SendError(NoSuchCallsignError, "No such callsign")
+	cs := string(recipient)
+	target, err := reg.Find(cs)
+	if err == nil {
+		if !target.TrySend(string(packet)) {
+			// Queue full or disconnecting — soft drop for abuse resistance.
+		}
 		return
 	}
-	if !target.TrySend(string(packet)) {
-		// Queue full or disconnecting — soft drop for abuse resistance.
-		return
+	// Remote path
+	if hr, ok := reg.(*HybridRegistry); ok && hr.Mesh() != nil {
+		if _, _, ok := hr.LookupRemote(cs); ok {
+			if meshErr := hr.MeshSendDirect(cs, packet); meshErr != nil {
+				client.SendError(NoSuchCallsignError, "No such callsign")
+			}
+			return
+		}
 	}
+	client.SendError(NoSuchCallsignError, "No such callsign")
 }
 
 // extractFlightplanInfoSection extracts the useful flightplan information from an $FP or $AM packet

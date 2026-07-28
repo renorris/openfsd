@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -69,7 +70,7 @@ func (s *Server) attemptAuthentication(client *session.Session, token string) (e
 	// Check if the provided token is actually a JWT
 	if mostLikelyJwt([]byte(token)) {
 		var jwtSecret string
-		if jwtSecret, err = s.configKV.Get(db.ConfigJwtSecretKey); err != nil {
+		if jwtSecret, err = s.configKV.Get(context.Background(), db.ConfigJwtSecretKey); err != nil {
 			return
 		}
 
@@ -109,7 +110,7 @@ func (s *Server) attemptAuthentication(client *session.Session, token string) (e
 		client.MaxNetworkRating = claims.NetworkRating
 
 		// Pilot PPL gate needs DB pilot_rating (JWT claims do not carry it).
-		user, userErr := s.users.GetUserByCID(client.CID)
+		user, userErr := s.users.GetUserByCID(context.Background(), client.CID)
 		if userErr != nil {
 			s.authFails.recordFailure(ip, now)
 			err = ErrInvalidAddPacket
@@ -129,7 +130,7 @@ func (s *Server) attemptAuthentication(client *session.Session, token string) (e
 
 	// Attempt to fetch user; always run a bcrypt compare (dummy on miss) to
 	// reduce CID-existence timing oracle.
-	user, userErr := s.users.GetUserByCID(client.CID)
+	user, userErr := s.users.GetUserByCID(context.Background(), client.CID)
 	hash := dummyBcryptHash
 	if userErr == nil && user != nil {
 		hash = user.Password
@@ -185,7 +186,7 @@ func (s *Server) enforcePilotPPLRequirement(client *session.Session, user *db.Us
 	if s.configKV == nil {
 		return nil
 	}
-	raw, err := s.configKV.Get(db.ConfigRequirePilotPPL)
+	raw, err := s.configKV.Get(context.Background(), db.ConfigRequirePilotPPL)
 	if err != nil || !db.ParseBoolConfig(raw) {
 		return nil
 	}
@@ -198,26 +199,36 @@ func (s *Server) enforcePilotPPLRequirement(client *session.Session, user *db.Us
 }
 
 func (s *Server) broadcastAddPacket(client *session.Session) {
-	var packet string
+	packet := s.addWire(client)
+	broadcastAll(s.registry, client, []byte(packet))
+}
+
+// addWire returns the #AA/#AP join packet for mesh flood.
+func (s *Server) addWire(client *session.Session) string {
 	if client.IsAtc {
-		packet = fmt.Sprintf(
+		return fmt.Sprintf(
 			"#AA%s:SERVER:%s:%d::%d:%d\r\n",
 			client.Callsign,
 			client.RealName,
 			client.CID,
 			client.NetworkRating,
 			client.ProtoRevision)
-	} else {
-		packet = fmt.Sprintf(
-			"#AP%s:SERVER:%d::%d:%d:1:%s\r\n",
-			client.Callsign,
-			client.CID,
-			client.NetworkRating,
-			client.ProtoRevision,
-			client.RealName)
 	}
+	return fmt.Sprintf(
+		"#AP%s:SERVER:%d::%d:%d:1:%s\r\n",
+		client.Callsign,
+		client.CID,
+		client.NetworkRating,
+		client.ProtoRevision,
+		client.RealName)
+}
 
-	broadcastAll(s.registry, client, []byte(packet))
+// disconnectWire returns the #DA/#DP leave packet for mesh flood.
+func (s *Server) disconnectWire(client *session.Session) []byte {
+	if client.IsAtc {
+		return []byte(fmt.Sprintf("#DA%s:SERVER:%d\r\n", client.Callsign, client.CID))
+	}
+	return []byte(fmt.Sprintf("#DP%s:SERVER:%d\r\n", client.Callsign, client.CID))
 }
 
 func (s *Server) broadcastDisconnectPacket(client *session.Session) {
@@ -242,7 +253,7 @@ func (s *Server) broadcastDisconnectPacket(client *session.Session) {
 }
 
 func (s *Server) sendMotd(client *session.Session) (err error) {
-	welcomeMsg, _ := s.configKV.Get(db.ConfigWelcomeMessage)
+	welcomeMsg, _ := s.configKV.Get(context.Background(), db.ConfigWelcomeMessage)
 	if welcomeMsg != "" {
 		lines := strings.Split(welcomeMsg, "\n")
 		for i := range lines {

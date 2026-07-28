@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -46,7 +47,7 @@ func TestAPISweatboxStateAllowedForInstructor(t *testing.T) {
 		LastName:      strPtr("One"),
 		NetworkRating: int(protocol.NetworkRatingInstructor1),
 	}
-	require.NoError(t, env.server.dbRepo.UserRepo.CreateUser(i1))
+	require.NoError(t, env.server.dbRepo.UserRepo.CreateUser(context.Background(), i1))
 
 	access, _ := env.login(t, i1.CID, i1Pass)
 	w := env.doJSON(t, http.MethodGet, "/api/v1/sweatbox/state", nil, access)
@@ -238,7 +239,7 @@ func createInstructor1(t *testing.T, env *testAPIEnv) (cid int, access string) {
 		LastName:      strPtr("One"),
 		NetworkRating: int(protocol.NetworkRatingInstructor1),
 	}
-	require.NoError(t, env.server.dbRepo.UserRepo.CreateUser(u))
+	require.NoError(t, env.server.dbRepo.UserRepo.CreateUser(context.Background(), u))
 	access, _ = env.login(t, u.CID, pass)
 	return u.CID, access
 }

@@ -14,14 +14,16 @@ import (
 
 type stubUserStore struct{}
 
-func (stubUserStore) GetUserByCID(cid int) (*db.User, error) {
+func (stubUserStore) GetUserByCID(ctx context.Context, cid int) (*db.User, error) {
 	return nil, errors.New("not implemented")
 }
 func (stubUserStore) VerifyPasswordHash(plaintext, hash string) bool { return false }
 
 type stubConfigStore struct{}
 
-func (stubConfigStore) Get(key string) (string, error) { return "", errors.New("not found") }
+func (stubConfigStore) Get(ctx context.Context, key string) (string, error) {
+	return "", errors.New("not found")
+}
 
 type stubRegistry struct{}
 

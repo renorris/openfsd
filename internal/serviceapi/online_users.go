@@ -18,6 +18,10 @@ type OnlineUserGeneralData struct {
 	Longitude        float64   `json:"longitude"`
 	LogonTime        time.Time `json:"logon_time"`
 	LastUpdated      time.Time `json:"last_updated"`
+	// NodeID is the FSD edge node hosting this session (empty on single-node).
+	NodeID string `json:"node_id,omitempty"`
+	// ServerIdent is optional server identity string for multi-FSD UIs.
+	ServerIdent string `json:"server_ident,omitempty"`
 }
 
 // OnlineUserPilot is a pilot entry in the online-users snapshot.

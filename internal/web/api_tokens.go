@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"net/http"
 	"time"
 
@@ -57,7 +58,7 @@ func (s *Server) handleCreateNewAPIToken(c *gin.Context) {
 		return
 	}
 
-	secretKey, err := s.dbRepo.ConfigRepo.Get(db.ConfigJwtSecretKey)
+	secretKey, err := s.dbRepo.ConfigRepo.Get(context.Background(), db.ConfigJwtSecretKey)
 	if err != nil {
 		writeAPIV1Response(c, http.StatusInternalServerError, &genericAPIV1InternalServerError)
 		return

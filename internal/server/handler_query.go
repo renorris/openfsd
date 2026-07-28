@@ -3,6 +3,7 @@ package server
 import (
 	"fmt"
 
+	"github.com/renorris/openfsd/internal/cluster"
 	"github.com/renorris/openfsd/internal/session"
 )
 
@@ -65,7 +66,7 @@ func (s *Server) handleProcontroller(client *session.Session, packet []byte) {
 		// Persist assigned beacon for late joiners / $CQ SERVER:FP re-request.
 		// Wire: #PC{src}:{to}:CCP:BC:{target}:{code}
 		if string(pcType) == "BC" {
-			s.storeAssignedBeacon(string(getField(packet, 4)), string(getField(packet, 5)))
+			s.assignBeacon(client, string(getField(packet, 4)), string(getField(packet, 5)))
 		}
 		if recipient[0] == '@' {
 			broadcastRangedAtcOnly(s.registry, client, packet)
@@ -138,7 +139,7 @@ func (s *Server) handleClientQuery(client *session.Session, packet []byte) {
 		}
 		// Persist assigned beacon: $CQ{src}:@94835:BC:{target}:{code}
 		if string(queryType) == "BC" && countFields(packet) >= 5 {
-			s.storeAssignedBeacon(string(getField(packet, 3)), string(getField(packet, 4)))
+			s.assignBeacon(client, string(getField(packet, 3)), string(getField(packet, 4)))
 		}
 		forwardClientQuery(s.registry, client, packet)
 
@@ -169,15 +170,46 @@ func (s *Server) handleClientQueryATCRequest(client *session.Session, packet []b
 		return
 	}
 
-	targetCallsign := getField(packet, 3)
-	targetClient, err := s.registry.Find(string(targetCallsign))
-	if err != nil {
-		client.SendError(NoSuchCallsignError, "No such callsign")
+	targetCallsign := string(getField(packet, 3))
+	targetClient, err := s.registry.Find(targetCallsign)
+	if err == nil {
+		var p string
+		if isValidATC(targetClient) {
+			p = fmt.Sprintf("$CRSERVER:%s:ATC:Y:%s\r\n", client.Callsign, targetCallsign)
+		} else {
+			p = fmt.Sprintf("$CRSERVER:%s:ATC:N:%s\r\n", client.Callsign, targetCallsign)
+		}
+		client.Send(p)
 		return
 	}
+	// Remote: directory ATC flag first, else async HomeRPC QuerySessionMeta.
+	if hr, ok := s.registry.(*HybridRegistry); ok && hr.Mesh() != nil {
+		if _, meta, ok := hr.LookupRemote(targetCallsign); ok {
+			s.sendATCReply(client, targetCallsign, meta.IsATC)
+			return
+		}
+		// Not in directory — still try HomeRPC async (may have been missed).
+		s.meshHomeRPC(client, targetCallsign, cluster.HomeOpQuerySessionMeta, nil,
+			func(resp []byte) {
+				meta, err := cluster.DecodeSessionMeta(resp)
+				if err != nil {
+					client.SendError(NoSuchCallsignError, "No such callsign")
+					return
+				}
+				s.sendATCReply(client, targetCallsign, meta.IsATC)
+			},
+			func(err error) {
+				client.SendError(NoSuchCallsignError, "No such callsign")
+			},
+		)
+		return
+	}
+	client.SendError(NoSuchCallsignError, "No such callsign")
+}
 
+func (s *Server) sendATCReply(client *session.Session, targetCallsign string, isATC bool) {
 	var p string
-	if isValidATC(targetClient) {
+	if isATC {
 		p = fmt.Sprintf("$CRSERVER:%s:ATC:Y:%s\r\n", client.Callsign, targetCallsign)
 	} else {
 		p = fmt.Sprintf("$CRSERVER:%s:ATC:N:%s\r\n", client.Callsign, targetCallsign)
@@ -202,17 +234,31 @@ func isValidATC(target *session.Session) bool {
 	return target.NetworkRating > NetworkRatingObserver
 }
 
-// storeAssignedBeacon records a privileged BC assignment on the target session.
-// Invalid codes (empty or non-octal SSR) are ignored; no $ER (packet still forwarded).
-func (s *Server) storeAssignedBeacon(targetCallsign, code string) {
+// assignBeacon records a BC assignment locally or via async HomeRPC (never blocks gnet).
+func (s *Server) assignBeacon(client *session.Session, targetCallsign, code string) {
 	if targetCallsign == "" || !isValidBeaconCode(code) {
 		return
 	}
 	target, err := s.registry.Find(targetCallsign)
-	if err != nil {
+	if err == nil {
+		target.AssignedBeaconCode.Store(code)
+		if hr, ok := s.registry.(*HybridRegistry); ok && hr.Mesh() != nil {
+			hr.Mesh().NotifyLocalBeacon(targetCallsign, code)
+		}
 		return
 	}
-	target.AssignedBeaconCode.Store(code)
+	if _, ok := s.registry.(*HybridRegistry); !ok {
+		return
+	}
+	s.meshHomeRPC(client, targetCallsign, cluster.HomeOpAssignBeacon, []byte(code),
+		nil,
+		func(err error) {
+			s.logger.Warn("remote AssignBeacon failed", "callsign", targetCallsign, "err", err)
+			if client != nil {
+				client.SendError(NoSuchCallsignError, "No such callsign")
+			}
+		},
+	)
 }
 
 // isValidBeaconCode accepts 1–4 octal digits (standard Mode A / SSR).
@@ -254,26 +300,56 @@ func (s *Server) handleClientQueryFlightplanRequest(client *session.Session, pac
 
 	targetCallsign := string(getField(packet, 3))
 	targetClient, err := s.registry.Find(targetCallsign)
-	if err != nil {
+	if err == nil {
+		s.sendFlightplanReply(client, targetCallsign, targetClient.FlightPlan.Load(), targetClient.AssignedBeaconCode.Load())
+		return
+	}
+	hr, ok := s.registry.(*HybridRegistry)
+	if !ok || hr.Mesh() == nil {
 		client.SendError(NoSuchCallsignError, "No such callsign: "+targetCallsign)
 		return
 	}
+	// Directory cache first (no HomeRPC).
+	if _, meta, ok := hr.LookupRemote(targetCallsign); ok && meta.FPLInfo != "" {
+		s.sendFlightplanReply(client, targetCallsign, meta.FPLInfo, meta.AssignedBeacon)
+		return
+	}
+	if _, _, ok := hr.LookupRemote(targetCallsign); !ok {
+		client.SendError(NoSuchCallsignError, "No such callsign: "+targetCallsign)
+		return
+	}
+	// Async HomeRPC on miss (R3-3).
+	s.meshHomeRPC(client, targetCallsign, cluster.HomeOpQuerySessionMeta, nil,
+		func(resp []byte) {
+			meta, err := cluster.DecodeSessionMeta(resp)
+			if err != nil {
+				client.SendError(NoSuchCallsignError, "No such callsign: "+targetCallsign)
+				return
+			}
+			s.sendFlightplanReply(client, targetCallsign, meta.FPLInfo, meta.Beacon)
+		},
+		func(err error) {
+			client.SendError(NoSuchCallsignError, "No such callsign: "+targetCallsign)
+		},
+	)
+}
 
-	fplInfo := targetClient.FlightPlan.Load()
+func (s *Server) sendFlightplanReply(client *session.Session, targetCallsign, fplInfo, beaconCode string) {
 	if fplInfo == "" {
 		return
 	}
-
-	beaconCode := targetClient.AssignedBeaconCode.Load()
 	if beaconCode == "" {
 		beaconCode = "0"
 	}
+	client.Send(buildFileFlightplanPacket(targetCallsign, "*A", fplInfo))
+	client.Send(buildBeaconCodePacket("server", client.Callsign, targetCallsign, beaconCode))
+}
 
-	// Send flightplan packet
-	fplPacket := buildFileFlightplanPacket(targetCallsign, "*A", fplInfo)
-	client.Send(fplPacket)
-
-	// Send assigned beacon code
-	bcPacket := buildBeaconCodePacket("server", client.Callsign, targetCallsign, beaconCode)
-	client.Send(bcPacket)
+func indexByte(b []byte, c byte) int {
+	for i := range b {
+		if b[i] == c {
+			return i
+		}
+	}
+	return -1
 }

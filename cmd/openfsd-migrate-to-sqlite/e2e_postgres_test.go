@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	_ "embed"
 	"fmt"
@@ -170,10 +171,10 @@ func TestE2E_PostgresToSQLite(t *testing.T) {
 	// Production repositories accept the migrated file (login + config paths).
 	repos, err := db.NewRepositories(sqliteDB)
 	require.NoError(t, err)
-	u, err := repos.UserRepo.GetUserByCID(1)
+	u, err := repos.UserRepo.GetUserByCID(context.Background(), 1)
 	require.NoError(t, err)
 	require.True(t, repos.UserRepo.VerifyPasswordHash(plainPassword, u.Password))
-	msg, err := repos.ConfigRepo.Get("WELCOME_MESSAGE")
+	msg, err := repos.ConfigRepo.Get(context.Background(), "WELCOME_MESSAGE")
 	require.NoError(t, err)
 	require.Equal(t, "Connected to openfsd", msg)
 

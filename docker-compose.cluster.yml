@@ -1,0 +1,89 @@
+# Example multi-node openfsd + rqlite topology (PR-10).
+# Default production path remains docker-compose.yml (single node + SQLite).
+#
+# SECURITY:
+# - rqlite ports are NOT published to the host (private docker network only).
+# - Set CLUSTER_MESH_PSK to a strong secret (do not use the placeholder).
+# - Sticky geo routing is mandatory before multi-region claims.
+
+services:
+  rqlite-1:
+    image: rqlite/rqlite:8
+    command: -http-addr 0.0.0.0:4001 -raft-addr 0.0.0.0:4002
+    # No ports: — keep Raft/HTTP private to the compose network.
+    networks: [cluster_net]
+
+  rqlite-2:
+    image: rqlite/rqlite:8
+    command: -http-addr 0.0.0.0:4001 -raft-addr 0.0.0.0:4002 -join http://rqlite-1:4001
+    depends_on: [rqlite-1]
+    networks: [cluster_net]
+
+  rqlite-3:
+    image: rqlite/rqlite:8
+    command: -http-addr 0.0.0.0:4001 -raft-addr 0.0.0.0:4002 -join http://rqlite-1:4001
+    depends_on: [rqlite-1]
+    networks: [cluster_net]
+
+  fsd-us:
+    build: .
+    command: ["-fsd"]
+    environment:
+      DATABASE_DRIVER: rqlite
+      DATABASE_SOURCE_NAME: http://rqlite-1:4001
+      DATABASE_AUTO_MIGRATE: "true"
+      DATABASE_MIGRATE_LEADER: "true"
+      AUTH_READ_LEVEL: weak
+      CLUSTER_ENABLED: "true"
+      CLUSTER_NODE_ID: us-east-1
+      CLUSTER_LISTEN: 0.0.0.0:7600
+      CLUSTER_PEERS: "us-east-1=fsd-us:7600,eu-west-1=fsd-eu:7600"
+      # REQUIRED: replace in real deploys
+      CLUSTER_MESH_PSK: "${CLUSTER_MESH_PSK:?set CLUSTER_MESH_PSK}"
+      FSD_LISTEN_ADDRS: ":6809"
+      SERVICE_HTTP_LISTEN_ADDR: "0.0.0.0:13618"
+    ports:
+      - "6809:6809"
+      - "13618:13618"
+    depends_on: [rqlite-1]
+    networks: [cluster_net]
+
+  fsd-eu:
+    build: .
+    command: ["-fsd"]
+    environment:
+      DATABASE_DRIVER: rqlite
+      DATABASE_SOURCE_NAME: http://rqlite-1:4001
+      DATABASE_AUTO_MIGRATE: "false"
+      CLUSTER_ENABLED: "true"
+      CLUSTER_NODE_ID: eu-west-1
+      CLUSTER_LISTEN: 0.0.0.0:7600
+      CLUSTER_PEERS: "us-east-1=fsd-us:7600,eu-west-1=fsd-eu:7600"
+      CLUSTER_MESH_PSK: "${CLUSTER_MESH_PSK:?set CLUSTER_MESH_PSK}"
+      FSD_LISTEN_ADDRS: ":6809"
+      SERVICE_HTTP_LISTEN_ADDR: "0.0.0.0:13618"
+    ports:
+      - "6810:6809"
+      - "13619:13618"
+    depends_on: [rqlite-1, fsd-us]
+    networks: [cluster_net]
+
+  web:
+    build: .
+    command: ["-web"]
+    environment:
+      DATABASE_DRIVER: rqlite
+      DATABASE_SOURCE_NAME: http://rqlite-1:4001
+      DATABASE_AUTO_MIGRATE: "false"
+      FSD_HTTP_SERVICE_ADDRESS: http://fsd-us:13618
+      # node_id=url mapping for kick routing
+      FSD_HTTP_SERVICE_ADDRESSES: "us-east-1=http://fsd-us:13618,eu-west-1=http://fsd-eu:13618"
+      LISTEN_ADDR: ":8000"
+    ports:
+      - "8000:8000"
+    depends_on: [fsd-us, fsd-eu]
+    networks: [cluster_net]
+
+networks:
+  cluster_net:
+    driver: bridge

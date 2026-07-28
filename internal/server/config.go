@@ -18,16 +18,29 @@ type Config struct {
 	// TCP plane. 0 (default) means GOMAXPROCS.
 	FsdNumEventLoop int `env:"FSD_NUM_EVENT_LOOP, default=0"`
 
-	// DatabaseDriver is accepted for backward compatibility only.
-	// openfsd is SQLite-only; any non-empty value other than "sqlite" is rejected at startup.
+	// DatabaseDriver selects sqlite (default) or rqlite.
 	DatabaseDriver string `env:"DATABASE_DRIVER, default=sqlite"`
-	// DatabaseSourceName is the SQLite DSN. Default is a local file with WAL so
-	// colocated FSD+web share one database. Bare ":memory:" is private per
-	// sql.Open — cmd/openfsd rewrites it to a shared in-memory DSN when both
-	// services run. See db.DefaultSQLiteDSN / db.SharedMemorySQLiteDSN.
+	// DatabaseSourceName is the SQLite DSN or rqlite HTTP base URL.
+	// Bare ":memory:" is private per sql.Open — cmd/openfsd rewrites it to a
+	// shared in-memory DSN when both services run. See db.DefaultSQLiteDSN.
 	DatabaseSourceName  string `env:"DATABASE_SOURCE_NAME, default=openfsd.db?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"`
 	DatabaseAutoMigrate bool   `env:"DATABASE_AUTO_MIGRATE, default=true"` // Whether to automatically run database migrations on startup
-	DatabaseMaxConns    int    `env:"DATABASE_MAX_CONNS, default=1"`       // Max number of database connections
+	// DatabaseMigrateLeader, when true with AutoMigrate, allows this process to
+	// apply migrations (required for rqlite; default false on replicas).
+	DatabaseMigrateLeader bool `env:"DATABASE_MIGRATE_LEADER, default=false"`
+	DatabaseMaxConns      int  `env:"DATABASE_MAX_CONNS, default=1"` // Max number of database connections (sqlite)
+
+	// AuthReadLevel is rqlite read consistency for login GetUserByCID (weak|strong|none).
+	AuthReadLevel string `env:"AUTH_READ_LEVEL, default=weak"`
+
+	// Cluster (optional multi-node FSD mesh). Default disabled.
+	ClusterEnabled        bool          `env:"CLUSTER_ENABLED, default=false"`
+	ClusterNodeID         string        `env:"CLUSTER_NODE_ID"`
+	ClusterListen         string        `env:"CLUSTER_LISTEN"` // host:port
+	ClusterPeers          string        `env:"CLUSTER_PEERS"`  // id=host:port,...
+	ClusterPSK            string        `env:"CLUSTER_MESH_PSK"`
+	ClusterClaimTimeout   time.Duration `env:"CLUSTER_CLAIM_TIMEOUT, default=400ms"`
+	ClusterPeerDeathGrace time.Duration `env:"CLUSTER_PEER_DEATH_GRACE, default=15s"`
 
 	NumMetarWorkers int `env:"NUM_METAR_WORKERS, default=4"` // Number of METAR fetch workers to run
 

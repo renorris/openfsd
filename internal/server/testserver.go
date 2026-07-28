@@ -184,7 +184,7 @@ func StartTestServerOpts(t testing.TB, opts TestServerOptions) *TestServer {
 		FirstName:     strPtr("E2E Pilot"),
 		NetworkRating: int(protocol.NetworkRatingObserver),
 	}
-	if err = repos.UserRepo.CreateUser(pilot); err != nil {
+	if err = repos.UserRepo.CreateUser(context.Background(), pilot); err != nil {
 		_ = sqlDB.Close()
 		cancel()
 		t.Fatalf("seed pilot: %v", err)
@@ -195,7 +195,7 @@ func StartTestServerOpts(t testing.TB, opts TestServerOptions) *TestServer {
 		FirstName:     strPtr("E2E Pilot Two"),
 		NetworkRating: int(protocol.NetworkRatingObserver),
 	}
-	if err = repos.UserRepo.CreateUser(pilot2); err != nil {
+	if err = repos.UserRepo.CreateUser(context.Background(), pilot2); err != nil {
 		_ = sqlDB.Close()
 		cancel()
 		t.Fatalf("seed pilot2: %v", err)
@@ -206,7 +206,7 @@ func StartTestServerOpts(t testing.TB, opts TestServerOptions) *TestServer {
 		FirstName:     strPtr("E2E ATC"),
 		NetworkRating: int(protocol.NetworkRatingController1),
 	}
-	if err = repos.UserRepo.CreateUser(atc); err != nil {
+	if err = repos.UserRepo.CreateUser(context.Background(), atc); err != nil {
 		_ = sqlDB.Close()
 		cancel()
 		t.Fatalf("seed atc: %v", err)
@@ -217,19 +217,19 @@ func StartTestServerOpts(t testing.TB, opts TestServerOptions) *TestServer {
 		FirstName:     strPtr("E2E Supervisor"),
 		NetworkRating: int(protocol.NetworkRatingSupervisor),
 	}
-	if err = repos.UserRepo.CreateUser(sup); err != nil {
+	if err = repos.UserRepo.CreateUser(context.Background(), sup); err != nil {
 		_ = sqlDB.Close()
 		cancel()
 		t.Fatalf("seed sup: %v", err)
 	}
 
-	if err = db.InitDefaultConfig(repos.ConfigRepo); err != nil {
+	if err = db.InitDefaultConfig(context.Background(), repos.ConfigRepo); err != nil {
 		_ = sqlDB.Close()
 		cancel()
 		t.Fatalf("InitDefaultConfig: %v", err)
 	}
 	// Overwrite random secret with fixed test secret.
-	if err = repos.ConfigRepo.Set(db.ConfigJwtSecretKey, TestJWTSecret); err != nil {
+	if err = repos.ConfigRepo.Set(context.Background(), db.ConfigJwtSecretKey, TestJWTSecret); err != nil {
 		_ = sqlDB.Close()
 		cancel()
 		t.Fatalf("set JWT secret: %v", err)

@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -28,7 +29,7 @@ func (s *Server) handleFrontendDashboard(c *gin.Context) {
 	// Pilot rating from DB (session claims lack pilot_rating).
 	if user := getDBUser(c); user != nil {
 		page.PilotRatingLabel = pilotRatingLabel(user.PilotRating)
-	} else if u, err := s.dbRepo.UserRepo.GetUserByCID(claims.CID); err == nil {
+	} else if u, err := s.dbRepo.UserRepo.GetUserByCID(context.Background(), claims.CID); err == nil {
 		page.PilotRatingLabel = pilotRatingLabel(u.PilotRating)
 	}
 
@@ -66,11 +67,19 @@ func (s *Server) handleFrontendDashboard(c *gin.Context) {
 	s.writeTemplate(c, "dashboard", page)
 }
 
-// fetchOnlineUsers queries the FSD HTTP service for the live connection list.
-// Used by the dashboard HTML summary and by the datafeed cache worker.
+// fetchOnlineUsers queries the FSD HTTP service(s) for the live connection list.
+// Multi-FSD: aggregates FSD_HTTP_SERVICE_ADDRESSES. Used by dashboard + datafeed.
 func (s *Server) fetchOnlineUsers() (*serviceapi.OnlineUsersResponseData, error) {
-	client := http.Client{Timeout: 3 * time.Second}
+	client := http.Client{Timeout: 5 * time.Second}
 	defer client.CloseIdleConnections()
+
+	if len(s.fsdServiceURLs()) > 1 {
+		data, err := s.aggregateOnlineUsers(&client, nil)
+		if err != nil {
+			return nil, err
+		}
+		return &data, nil
+	}
 
 	req, err := s.makeFsdHttpServiceHttpRequest(http.MethodGet, "/online_users", nil)
 	if err != nil {

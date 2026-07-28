@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -148,7 +149,7 @@ func TestNoJSUserUpdate(t *testing.T) {
 	}
 
 	// Persist check
-	u, err := ts.dbRepo.UserRepo.GetUserByCID(target.CID)
+	u, err := ts.dbRepo.UserRepo.GetUserByCID(context.Background(), target.CID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +234,7 @@ func TestNoJSConfigUpdateCookieCSRFNoAuthHeader(t *testing.T) {
 	}
 
 	// No Authorization header was used — verify via formPOST implementation + success.
-	val, err := ts.dbRepo.ConfigRepo.Get(db.ConfigWelcomeMessage)
+	val, err := ts.dbRepo.ConfigRepo.Get(context.Background(), db.ConfigWelcomeMessage)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -325,7 +326,7 @@ func TestXSSUserNameEscapedInEditor(t *testing.T) {
 		LastName:      &xssLast,
 		NetworkRating: int(protocol.NetworkRatingObserver),
 	}
-	if err := ts.dbRepo.UserRepo.CreateUser(u); err != nil {
+	if err := ts.dbRepo.UserRepo.CreateUser(context.Background(), u); err != nil {
 		t.Fatal(err)
 	}
 
@@ -359,7 +360,7 @@ func TestXSSConfigValueEscapedInEditor(t *testing.T) {
 	ts := newTestServer(t)
 	admin := createTestUser(t, ts, "pw", int(protocol.NetworkRatingAdministator))
 	payload := `"><script>alert("xss")</script>`
-	if err := ts.dbRepo.ConfigRepo.Set(db.ConfigWelcomeMessage, payload); err != nil {
+	if err := ts.dbRepo.ConfigRepo.Set(context.Background(), db.ConfigWelcomeMessage, payload); err != nil {
 		t.Fatal(err)
 	}
 
@@ -458,7 +459,7 @@ func TestAPIUpdateUserCannotElevateRatingAboveActor(t *testing.T) {
 	}
 
 	// DB must be unchanged
-	u, err := ts.dbRepo.UserRepo.GetUserByCID(target.CID)
+	u, err := ts.dbRepo.UserRepo.GetUserByCID(context.Background(), target.CID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -493,7 +494,7 @@ func TestAPIUpdateUserCannotElevateViaCookieSession(t *testing.T) {
 		t.Fatalf("cookie elevate status %d want 403, body %s", w.Code, w.Body.String())
 	}
 
-	u, err := ts.dbRepo.UserRepo.GetUserByCID(target.CID)
+	u, err := ts.dbRepo.UserRepo.GetUserByCID(context.Background(), target.CID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -562,7 +563,7 @@ func TestSupervisorCannotPromoteToAdminViaForm(t *testing.T) {
 		t.Fatalf("expected ceiling error, body=%s", clip(w.Body.String(), 500))
 	}
 
-	u, err := ts.dbRepo.UserRepo.GetUserByCID(target.CID)
+	u, err := ts.dbRepo.UserRepo.GetUserByCID(context.Background(), target.CID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -578,7 +579,7 @@ func TestSupervisorCannotUpdateHigherRatedUserViaForm(t *testing.T) {
 	// Preserve a distinct first name so we can detect profile mutation.
 	admin.FirstName = strPtr("Original")
 	admin.Password = ""
-	if err := ts.dbRepo.UserRepo.UpdateUser(admin); err != nil {
+	if err := ts.dbRepo.UserRepo.UpdateUser(context.Background(), admin); err != nil {
 		t.Fatal(err)
 	}
 	sup := createTestUser(t, ts, "sup-pass", int(protocol.NetworkRatingSupervisor))
@@ -629,7 +630,7 @@ func TestSupervisorCannotUpdateHigherRatedUserViaForm(t *testing.T) {
 		t.Fatalf("rating-only update status %d body %s", w.Code, w.Body.String())
 	}
 
-	u, err := ts.dbRepo.UserRepo.GetUserByCID(admin.CID)
+	u, err := ts.dbRepo.UserRepo.GetUserByCID(context.Background(), admin.CID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -679,7 +680,7 @@ func TestSupervisorUserEditorPilotRatingFullScale(t *testing.T) {
 	if sup.PilotRating != 0 {
 		sup.PilotRating = 0
 		sup.Password = ""
-		if err := ts.dbRepo.UserRepo.UpdateUser(sup); err != nil {
+		if err := ts.dbRepo.UserRepo.UpdateUser(context.Background(), sup); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -714,7 +715,7 @@ func TestSupervisorUserEditorPilotRatingFullScale(t *testing.T) {
 		t.Fatal(err)
 	}
 	cid, _ := strconv.Atoi(u.Query().Get("cid"))
-	created, err := ts.dbRepo.UserRepo.GetUserByCID(cid)
+	created, err := ts.dbRepo.UserRepo.GetUserByCID(context.Background(), cid)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -779,7 +780,7 @@ func TestNoJSUserDirectoryListsUsers(t *testing.T) {
 		LastName:      &last,
 		NetworkRating: int(protocol.NetworkRatingObserver),
 	}
-	if err := ts.dbRepo.UserRepo.CreateUser(u); err != nil {
+	if err := ts.dbRepo.UserRepo.CreateUser(context.Background(), u); err != nil {
 		t.Fatal(err)
 	}
 	cookies := formLogin(t, ts, sup.CID, "sup-pass")
@@ -818,10 +819,10 @@ func TestNoJSUserDirectorySearch(t *testing.T) {
 	bobFirst, bobLast := "Bob", "Jones"
 	alice := &db.User{Password: "password99", FirstName: &aliceFirst, LastName: &aliceLast, NetworkRating: 1}
 	bob := &db.User{Password: "password99", FirstName: &bobFirst, LastName: &bobLast, NetworkRating: 1}
-	if err := ts.dbRepo.UserRepo.CreateUser(alice); err != nil {
+	if err := ts.dbRepo.UserRepo.CreateUser(context.Background(), alice); err != nil {
 		t.Fatal(err)
 	}
-	if err := ts.dbRepo.UserRepo.CreateUser(bob); err != nil {
+	if err := ts.dbRepo.UserRepo.CreateUser(context.Background(), bob); err != nil {
 		t.Fatal(err)
 	}
 	cookies := formLogin(t, ts, sup.CID, "sup-pass")
@@ -849,7 +850,7 @@ func TestNoJSUserDirectoryRatingFilter(t *testing.T) {
 	// S1 student
 	s1First := "Stu"
 	s1 := &db.User{Password: "password99", FirstName: &s1First, NetworkRating: 2}
-	if err := ts.dbRepo.UserRepo.CreateUser(s1); err != nil {
+	if err := ts.dbRepo.UserRepo.CreateUser(context.Background(), s1); err != nil {
 		t.Fatal(err)
 	}
 	cookies := formLogin(t, ts, sup.CID, "sup-pass")
@@ -920,7 +921,7 @@ func TestNoJSUserSelectPreservesFilters(t *testing.T) {
 	sup := createTestUser(t, ts, "sup-pass", int(protocol.NetworkRatingSupervisor))
 	first, last := "Filter", "Keep"
 	target := &db.User{Password: "password99", FirstName: &first, LastName: &last, NetworkRating: 1}
-	if err := ts.dbRepo.UserRepo.CreateUser(target); err != nil {
+	if err := ts.dbRepo.UserRepo.CreateUser(context.Background(), target); err != nil {
 		t.Fatal(err)
 	}
 	cookies := formLogin(t, ts, sup.CID, "sup-pass")

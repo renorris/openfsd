@@ -164,14 +164,15 @@ check_no_imports "internal/session" "${MODULE}/internal/session/..." \
 # internal/geo — stdlib only
 check_stdlib_only "internal/geo" "${MODULE}/internal/geo/..."
 
-# internal/web — must not import session, postoffice, metar, sweatbox, server
+# internal/web — must not import session, postoffice, metar, sweatbox, server, cluster
 # (service-HTTP DTOs live in internal/serviceapi; web talks to FSD over HTTP only)
 check_no_imports "internal/web" "${MODULE}/internal/web/..." \
   "${MODULE}/internal/session" \
   "${MODULE}/internal/postoffice" \
   "${MODULE}/internal/metar" \
   "${MODULE}/internal/sweatbox" \
-  "${MODULE}/internal/server"
+  "${MODULE}/internal/server" \
+  "${MODULE}/internal/cluster"
 
 # internal/serviceapi — pure DTOs: no orchestration packages
 check_no_imports "internal/serviceapi" "${MODULE}/internal/serviceapi/..." \
@@ -182,14 +183,22 @@ check_no_imports "internal/serviceapi" "${MODULE}/internal/serviceapi/..." \
   "${MODULE}/internal/sweatbox" \
   "${MODULE}/internal/metar" \
   "${MODULE}/internal/db" \
-  "${MODULE}/internal/auth"
+  "${MODULE}/internal/auth" \
+  "${MODULE}/internal/cluster"
 
-# internal/db — must not import server, session, web, fsdclient
+# internal/db — must not import server, session, web, fsdclient, cluster
 check_no_imports "internal/db" "${MODULE}/internal/db/..." \
   "${MODULE}/internal/server" \
   "${MODULE}/internal/session" \
   "${MODULE}/internal/web" \
-  "${MODULE}/pkg/fsdclient"
+  "${MODULE}/pkg/fsdclient" \
+  "${MODULE}/internal/cluster"
+
+# internal/cluster — mesh fabric: stdlib + internal/geo + google/uuid only
+# FORBID: server, web, db, postoffice, sweatbox, metar, serviceapi, session
+check_imports_allowlist "internal/cluster" "${MODULE}/internal/cluster/..." \
+  "${MODULE}/internal/geo" \
+  "github.com/google/uuid"
 
 # internal/auth — must not import server, session, web
 check_no_imports "internal/auth" "${MODULE}/internal/auth/..." \

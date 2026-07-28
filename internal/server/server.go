@@ -10,8 +10,11 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"strings"
+	"sync"
 	"time"
 
+	"github.com/renorris/openfsd/internal/cluster"
 	"github.com/renorris/openfsd/internal/db"
 	"github.com/renorris/openfsd/internal/metar"
 	"github.com/renorris/openfsd/internal/postoffice"
@@ -45,6 +48,14 @@ type Server struct {
 	limits *connLimits
 	// authFails rate-limits failed password/JWT logons per IP.
 	authFails *authFailLimiter
+
+	// mesh is optional cluster fabric (nil when CLUSTER_ENABLED=false).
+	mesh cluster.Mesh
+	// authPool runs login auth + ClaimReserve + HomeRPC off the gnet loop.
+	authPool   chan func()
+	authPoolWG sync.WaitGroup
+	// nodeID for online_users / datafeed (empty when single-node).
+	nodeID string
 }
 
 // New constructs a Server from injected Deps.
@@ -74,11 +85,18 @@ func New(d Deps) (*Server, error) {
 		logger = slog.Default()
 	}
 
+	reg := d.Registry
+	if d.Mesh != nil {
+		if _, ok := reg.(*HybridRegistry); !ok {
+			reg = NewHybridRegistry(reg, d.Mesh)
+		}
+	}
+
 	s := &Server{
 		cfg:        d.Config,
 		users:      d.Users,
 		configKV:   d.ConfigKV,
-		registry:   d.Registry,
+		registry:   reg,
 		metar:      d.Metar,
 		clock:      clock,
 		logger:     logger,
@@ -87,6 +105,24 @@ func New(d Deps) (*Server, error) {
 		httpDone:   make(chan struct{}),
 		limits:     newConnLimits(),
 		authFails:  newAuthFailLimiter(d.Config.AuthFailMax, d.Config.AuthFailWindow),
+		mesh:       d.Mesh,
+		authPool:   make(chan func(), 256),
+		nodeID:     d.Config.ClusterNodeID,
+	}
+	// Auth/HomeRPC worker pool (off gnet loop). Closed in shutdownCluster.
+	s.authPoolWG.Add(4)
+	for i := 0; i < 4; i++ {
+		go func() {
+			defer s.authPoolWG.Done()
+			for fn := range s.authPool {
+				if fn != nil {
+					fn()
+				}
+			}
+		}()
+	}
+	if d.Mesh != nil {
+		s.wireMeshHandlers()
 	}
 	// Two-phase: Server exists so SweatboxHost can hold a back-ref for
 	// unexported broadcast helpers, registry, clock, and logger.
@@ -103,46 +139,41 @@ func NewDefault(ctx context.Context) (*Server, error) {
 		return nil, err
 	}
 
-	if err := db.RequireSQLiteDriver(config.DatabaseDriver); err != nil {
+	if err := db.RequireDatabaseDriver(config.DatabaseDriver); err != nil {
 		return nil, err
 	}
 
-	slog.Info("using sqlite")
+	driver := config.DatabaseDriver
+	if driver == "" {
+		driver = "sqlite"
+	}
+	slog.Info("using database driver", "driver", driver)
 
-	slog.Debug("connecting to SQL")
-	sqlDb, err := sql.Open("sqlite", config.DatabaseSourceName)
+	readLevel, err := db.ParseReadLevel(config.AuthReadLevel)
 	if err != nil {
 		return nil, err
 	}
-	slog.Debug("SQL opened")
 
-	if err = sqlDb.PingContext(ctx); err != nil {
-		return nil, err
-	}
-
-	sqlDb.SetMaxOpenConns(config.DatabaseMaxConns)
-
+	// Migrate before opening cached repos when leader.
 	if config.DatabaseAutoMigrate {
-		slog.Debug("automatically migrating database")
-		if err = db.Migrate(sqlDb); err != nil {
+		if err := migrateDatabase(ctx, config); err != nil {
 			return nil, err
 		}
-		slog.Debug("migrate OK")
 	}
 
-	dbRepo, err := db.NewRepositories(sqlDb)
+	dbRepo, err := db.OpenRepositories(ctx, driver, config.DatabaseSourceName, readLevel, true)
 	if err != nil {
 		return nil, err
 	}
 
 	// Generate a default admin user if CID 1 isn't taken
-	if _, err = dbRepo.UserRepo.GetUserByCID(1); err != nil {
+	if _, err = dbRepo.UserRepo.GetUserByCID(ctx, 1); err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
 			return nil, err
 		}
 
 		slog.Debug("no user with CID = 1 found, creating default admin user")
-		user, genErr := generateDefaultAdminUser(dbRepo)
+		user, genErr := generateDefaultAdminUser(ctx, dbRepo)
 		if genErr != nil {
 			return nil, genErr
 		}
@@ -161,13 +192,24 @@ func NewDefault(ctx context.Context) (*Server, error) {
 
 	// Ensure default configuration is written to persistent storage
 	slog.Debug("initializing default config")
-	if err = db.InitDefaultConfig(dbRepo.ConfigRepo); err != nil {
+	if err = db.InitDefaultConfig(ctx, dbRepo.ConfigRepo); err != nil {
 		return nil, err
 	}
 	slog.Debug("config OK")
 
 	metarSvc := metar.New(config.NumMetarWorkers, nil)
 	po := postoffice.New()
+
+	var mesh cluster.Mesh
+	if config.ClusterEnabled {
+		mesh, err = buildClusterMesh(config)
+		if err != nil {
+			return nil, err
+		}
+		if err = mesh.Start(ctx); err != nil {
+			return nil, fmt.Errorf("cluster mesh start: %w", err)
+		}
+	}
 
 	return New(Deps{
 		Config:          config,
@@ -176,10 +218,84 @@ func NewDefault(ctx context.Context) (*Server, error) {
 		Registry:        po,
 		Metar:           metarSvc,
 		SweatboxEnabled: config.SweatboxEnabled,
+		Mesh:            mesh,
 	})
 }
 
-func generateDefaultAdminUser(dbRepo *db.Repositories) (user *db.User, err error) {
+func migrateDatabase(ctx context.Context, config *Config) error {
+	driver := config.DatabaseDriver
+	if driver == "" {
+		driver = "sqlite"
+	}
+	switch driver {
+	case "sqlite":
+		slog.Debug("automatically migrating database")
+		sqlDb, err := sql.Open("sqlite", config.DatabaseSourceName)
+		if err != nil {
+			return err
+		}
+		defer sqlDb.Close()
+		if err = sqlDb.PingContext(ctx); err != nil {
+			return err
+		}
+		if err = db.Migrate(sqlDb); err != nil {
+			return err
+		}
+		slog.Debug("migrate OK")
+		return nil
+	case "rqlite":
+		if !config.DatabaseMigrateLeader {
+			slog.Debug("skipping rqlite migrate (not migrate leader)")
+			return nil
+		}
+		client := db.NewRqliteClient(config.DatabaseSourceName, db.RqliteClientOptions{})
+		if err := db.MigrateRqlite(ctx, client); err != nil {
+			return err
+		}
+		slog.Debug("rqlite migrate OK")
+		return nil
+	default:
+		return fmt.Errorf("unknown driver %q", driver)
+	}
+}
+
+func buildClusterMesh(config *Config) (cluster.Mesh, error) {
+	if config.ClusterNodeID == "" {
+		return nil, errors.New("CLUSTER_NODE_ID required when CLUSTER_ENABLED")
+	}
+	if config.ClusterListen == "" {
+		return nil, errors.New("CLUSTER_LISTEN required when CLUSTER_ENABLED")
+	}
+	peers, err := cluster.ParseClusterPeers(config.ClusterPeers)
+	if err != nil {
+		return nil, err
+	}
+	// Ensure self is in peer list for ring
+	hasSelf := false
+	for _, p := range peers {
+		if p.NodeID == config.ClusterNodeID {
+			hasSelf = true
+			break
+		}
+	}
+	if !hasSelf {
+		peers = append(peers, cluster.PeerAddr{NodeID: config.ClusterNodeID, Addr: config.ClusterListen})
+	}
+	if strings.TrimSpace(config.ClusterPSK) == "" {
+		return nil, errors.New("CLUSTER_MESH_PSK required when CLUSTER_ENABLED")
+	}
+	return cluster.NewTCPMesh(cluster.TCPMeshConfig{
+		NodeID:         config.ClusterNodeID,
+		ListenAddr:     config.ClusterListen,
+		Peers:          peers,
+		ClaimTimeout:   config.ClusterClaimTimeout,
+		PeerDeathGrace: config.ClusterPeerDeathGrace,
+		PSK:            config.ClusterPSK,
+		Logger:         slog.Default(),
+	})
+}
+
+func generateDefaultAdminUser(ctx context.Context, dbRepo *db.Repositories) (user *db.User, err error) {
 	passwordBuf := make([]byte, 8)
 	if _, err = io.ReadFull(rand.Reader, passwordBuf); err != nil {
 		return
@@ -192,7 +308,7 @@ func generateDefaultAdminUser(dbRepo *db.Repositories) (user *db.User, err error
 		NetworkRating: int(protocol.NetworkRatingAdministator),
 	}
 
-	if err = dbRepo.UserRepo.CreateUser(user); err != nil {
+	if err = dbRepo.UserRepo.CreateUser(ctx, user); err != nil {
 		return
 	}
 
@@ -215,6 +331,9 @@ func (s *Server) Run(ctx context.Context) (err error) {
 
 	err = s.runGnetFSD(ctx)
 
+	// Graceful mesh + interest publisher shutdown (issue 20).
+	s.shutdownCluster()
+
 	// Join service HTTP so callers (and tests) can close shared resources safely.
 	select {
 	case <-s.httpDone:
@@ -222,6 +341,21 @@ func (s *Server) Run(ctx context.Context) (err error) {
 	}
 
 	return err
+}
+
+// shutdownCluster stops mesh, interest publisher, and auth/HomeRPC workers (R2-14).
+func (s *Server) shutdownCluster() {
+	if hr, ok := s.registry.(*HybridRegistry); ok {
+		hr.StopInterest()
+	}
+	if s.mesh != nil {
+		_ = s.mesh.Stop()
+	}
+	if s.authPool != nil {
+		close(s.authPool)
+		s.authPoolWG.Wait()
+		s.authPool = nil
+	}
 }
 
 // runGnetFSD runs the production FSD plane: fixed gnet event loops + coalesced

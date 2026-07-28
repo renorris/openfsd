@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"log/slog"
@@ -30,7 +31,7 @@ func (s *Server) getAccessRefreshTokens(c *gin.Context) {
 
 	unauthRes := newAPIV1Failure("Bad CID and/or password")
 
-	user, err := s.dbRepo.UserRepo.GetUserByCID(reqBody.CID)
+	user, err := s.dbRepo.UserRepo.GetUserByCID(context.Background(), reqBody.CID)
 	if err != nil {
 		writeAPIV1Response(c, http.StatusUnauthorized, &unauthRes)
 		return
@@ -80,7 +81,7 @@ func (s *Server) refreshAccessToken(c *gin.Context) {
 
 	badTokenRes := newAPIV1Failure("bad token")
 
-	jwtSecret, err := s.dbRepo.ConfigRepo.Get(db.ConfigJwtSecretKey)
+	jwtSecret, err := s.dbRepo.ConfigRepo.Get(context.Background(), db.ConfigJwtSecretKey)
 	if err != nil {
 		writeAPIV1Response(c, http.StatusInternalServerError, &genericAPIV1InternalServerError)
 		return
@@ -99,7 +100,7 @@ func (s *Server) refreshAccessToken(c *gin.Context) {
 		return
 	}
 
-	user, err := s.dbRepo.UserRepo.GetUserByCID(claims.CID)
+	user, err := s.dbRepo.UserRepo.GetUserByCID(context.Background(), claims.CID)
 	if err != nil {
 		writeAPIV1Response(c, http.StatusUnauthorized, &badTokenRes)
 		return
@@ -156,7 +157,7 @@ func (s *Server) getFsdJwt(c *gin.Context) {
 		return
 	}
 
-	user, err := s.dbRepo.UserRepo.GetUserByCID(cid)
+	user, err := s.dbRepo.UserRepo.GetUserByCID(context.Background(), cid)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			c.JSON(http.StatusUnauthorized, &ResponseBody{ErrorMsg: "Invalid CID and/or password"})
@@ -197,7 +198,7 @@ func (s *Server) getFsdJwt(c *gin.Context) {
 		return
 	}
 
-	jwtSecret, err := s.dbRepo.ConfigRepo.Get(db.ConfigJwtSecretKey)
+	jwtSecret, err := s.dbRepo.ConfigRepo.Get(context.Background(), db.ConfigJwtSecretKey)
 	if err != nil {
 		writeAPIV1Response(c, http.StatusInternalServerError, &genericAPIV1InternalServerError)
 		return
@@ -252,7 +253,7 @@ func (s *Server) tryBearerAuth(c *gin.Context) bool {
 		return false
 	}
 
-	jwtSecret, err := s.dbRepo.ConfigRepo.Get(db.ConfigJwtSecretKey)
+	jwtSecret, err := s.dbRepo.ConfigRepo.Get(context.Background(), db.ConfigJwtSecretKey)
 	if err != nil {
 		return false
 	}
@@ -301,7 +302,7 @@ const dbUserContextKey = "db_user"
 // because this overlay is mandatory after session cookie parse.
 // Also used by revalidateBearerActor for dual-accept Bearer resource requests (KD-18).
 func (s *Server) revalidateSessionFromDB(claims *auth.CustomClaims) (*auth.CustomClaims, *db.User, error) {
-	user, err := s.dbRepo.UserRepo.GetUserByCID(claims.CID)
+	user, err := s.dbRepo.UserRepo.GetUserByCID(context.Background(), claims.CID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil, errSessionUserMissing
@@ -466,7 +467,7 @@ func requireJwtContext(c *gin.Context) (*auth.CustomClaims, bool) {
 }
 
 func (s *Server) makeAccessRefreshTokens(user *db.User, rememberMe bool) (access string, refresh string, err error) {
-	jwtSecret, err := s.dbRepo.ConfigRepo.Get(db.ConfigJwtSecretKey)
+	jwtSecret, err := s.dbRepo.ConfigRepo.Get(context.Background(), db.ConfigJwtSecretKey)
 	if err != nil {
 		return
 	}

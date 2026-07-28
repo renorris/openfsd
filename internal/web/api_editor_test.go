@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -71,7 +72,7 @@ func TestAPIValidateAPTAllowedForInstructor(t *testing.T) {
 		LastName:      strPtr("One"),
 		NetworkRating: int(protocol.NetworkRatingInstructor1),
 	}
-	require.NoError(t, env.server.dbRepo.UserRepo.CreateUser(i1))
+	require.NoError(t, env.server.dbRepo.UserRepo.CreateUser(context.Background(), i1))
 
 	access, _ := env.login(t, i1.CID, i1Pass)
 	w := env.doJSON(t, http.MethodPost, "/api/v1/editor/validate-apt", map[string]any{

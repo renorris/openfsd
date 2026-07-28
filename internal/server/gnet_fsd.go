@@ -24,6 +24,7 @@ import (
 
 	"github.com/panjf2000/gnet/v2"
 	"github.com/renorris/openfsd/internal/auth"
+	"github.com/renorris/openfsd/internal/cluster"
 	"github.com/renorris/openfsd/internal/session"
 	"github.com/renorris/openfsd/pkg/protocol"
 	"golang.org/x/sys/unix"
@@ -33,8 +34,23 @@ const (
 	fsdMaxLine   = 4096
 	fsdPhaseOpen = iota
 	fsdPhaseIdent
+	fsdPhaseAuthPending    // worker: auth + ClaimReserve
+	fsdPhaseClaimFinishing // loop: CID → Register → ClaimCommit
 	fsdPhaseActive
 )
+
+// authJobResult is delivered conn-affine via gnet Wake after authPending work.
+type authJobResult struct {
+	err     error
+	errCode int
+	errMsg  string
+	fence   string // claim fence (empty if cluster disabled)
+	// commitDone set after ClaimCommit worker completes
+	commitOK  bool
+	commitErr error
+	// kind: "auth" | "commit"
+	kind string
+}
 
 // fsdConnCtx is per-connection state hung off gnet.Conn.Context.
 type fsdConnCtx struct {
@@ -52,6 +68,19 @@ type fsdConnCtx struct {
 	cidHeld    bool // limits.tryAcquireCID succeeded
 	openedAt   time.Time
 	lastActive time.Time
+
+	// claim fence held between Reserve and Commit/Abort (set as soon as Reserve ACK).
+	claimFence string
+	// claimCommitted true after successful ClaimCommit (active hold).
+	claimCommitted bool
+	// claimInFlight set while Commit worker is running; OnClose aborts when set.
+	claimInFlight bool
+	// closed is set by OnClose so late Wakes no-op (abort matrix).
+	closed bool
+	// pending Wake result (single slot)
+	authResult *authJobResult
+	// mu protects claimFence/authResult across worker + loop
+	mu sync.Mutex
 }
 
 // fsdEngine is the gnet EventHandler for the FSD TCP plane.
@@ -156,18 +185,67 @@ func (e *fsdEngine) OnOpen(c gnet.Conn) (out []byte, action gnet.Action) {
 	return packet, gnet.None
 }
 
+// releaseClaimOnDisconnect is the KD-4 / R2-3 mesh claim teardown used by OnClose.
+// After any Reserve, if the session is not both committed and registered
+// (HybridRegistry.Release owns ClaimRelease via StoreFence in that case),
+// always ClaimRelease(fence) then ClaimAbort so pending or active matching fence clears.
+// No-op when mesh is nil, fence is empty, or callsign is empty.
+func releaseClaimOnDisconnect(mesh cluster.Mesh, callsign, fence string, committed, registered bool) {
+	if mesh == nil || fence == "" || callsign == "" {
+		return
+	}
+	if committed && registered {
+		// HybridRegistry.Release will ClaimRelease when fence is stored.
+		return
+	}
+	// Not yet committed, or registered without StoreFence: release/abort via fence.
+	mesh.ClaimRelease(callsign, fence)
+	mesh.ClaimAbort(callsign, fence) // no-op if already released
+}
+
 func (e *fsdEngine) OnClose(c gnet.Conn, _ error) (action gnet.Action) {
 	cc, _ := c.Context().(*fsdConnCtx)
 	if cc == nil {
 		return gnet.None
 	}
+	cc.mu.Lock()
+	cc.closed = true
+	fence := cc.claimFence
+	committed := cc.claimCommitted
+	registered := cc.registered
+	cs := cc.clientCallsign()
+	// Also pull fence from pending auth result (Reserve ACK not yet applied on loop).
+	if fence == "" && cc.authResult != nil && cc.authResult.fence != "" {
+		fence = cc.authResult.fence
+	}
+	cc.claimInFlight = false
+	cc.mu.Unlock()
+
+	// KD-4 / R2-3 abort matrix (shared with unit tests via releaseClaimOnDisconnect).
+	if e.srv.mesh != nil && fence != "" && cs != "" {
+		releaseClaimOnDisconnect(e.srv.mesh, cs, fence, committed, registered)
+		cc.mu.Lock()
+		cc.claimFence = ""
+		cc.mu.Unlock()
+	}
 	if cc.client != nil {
 		if o := cc.client.Outbound(); o != nil {
 			_ = o.Close()
 		}
-		if cc.registered {
-			e.srv.broadcastDisconnectPacket(cc.client)
-			e.srv.registry.Release(cc.client)
+		if registered {
+			// Only flood leave if we had completed login (active) — not mid-commit.
+			if committed || cc.phase == fsdPhaseActive {
+				e.srv.broadcastDisconnectPacket(cc.client)
+				if e.srv.mesh != nil {
+					e.srv.mesh.BroadcastJoinLeave(e.srv.disconnectWire(cc.client))
+				}
+			}
+			// If registered but not committed, Release must not ClaimRelease (fence not in HybridRegistry).
+			if hr, ok := e.srv.registry.(*HybridRegistry); ok && !committed {
+				hr.Local().Release(cc.client)
+			} else {
+				e.srv.registry.Release(cc.client)
+			}
 			cc.registered = false
 		}
 		if cc.cidHeld {
@@ -183,6 +261,13 @@ func (e *fsdEngine) OnClose(c gnet.Conn, _ error) (action gnet.Action) {
 	return gnet.None
 }
 
+func (cc *fsdConnCtx) clientCallsign() string {
+	if cc.client != nil {
+		return cc.client.Callsign
+	}
+	return ""
+}
+
 func (e *fsdEngine) OnTraffic(c gnet.Conn) (action gnet.Action) {
 	cc, _ := c.Context().(*fsdConnCtx)
 	if cc == nil {
@@ -190,8 +275,9 @@ func (e *fsdEngine) OnTraffic(c gnet.Conn) (action gnet.Action) {
 	}
 
 	now := e.srv.clock.Now()
-	// Login-phase timeout.
-	if cc.phase == fsdPhaseIdent && e.srv.cfg.FsdLoginTimeout > 0 {
+	// Login-phase timeout (ident / authPending / claimFinishing).
+	if (cc.phase == fsdPhaseIdent || cc.phase == fsdPhaseAuthPending || cc.phase == fsdPhaseClaimFinishing) &&
+		e.srv.cfg.FsdLoginTimeout > 0 {
 		if now.Sub(cc.openedAt) > e.srv.cfg.FsdLoginTimeout {
 			return gnet.Close
 		}
@@ -251,7 +337,11 @@ func (e *fsdEngine) handleLine(c gnet.Conn, cc *fsdConnCtx, line []byte) gnet.Ac
 		}
 		// Second login line: add packet.
 		addPacket := line
-		return e.finishLogin(c, cc, cc.idPacket, addPacket)
+		return e.beginLogin(c, cc, cc.idPacket, addPacket)
+
+	case fsdPhaseAuthPending, fsdPhaseClaimFinishing:
+		// Ignore further login lines (reject double-add); only Wake completes.
+		return gnet.None
 
 	case fsdPhaseActive:
 		return e.dispatchActive(cc, line)
@@ -261,7 +351,8 @@ func (e *fsdEngine) handleLine(c gnet.Conn, cc *fsdConnCtx, line []byte) gnet.Ac
 	}
 }
 
-func (e *fsdEngine) finishLogin(c gnet.Conn, cc *fsdConnCtx, idPacket, addPacket []byte) gnet.Action {
+// beginLogin parses add packet, wires outbound, enqueues auth+Reserve worker (KD-7).
+func (e *fsdEngine) beginLogin(c gnet.Conn, cc *fsdConnCtx, idPacket, addPacket []byte) gnet.Action {
 	data, token, errCode, errMsg, err := parseLoginPackets(idPacket, addPacket, e.srv.clock.Now())
 	if err != nil {
 		_ = writeLoginError(c, errCode, errMsg)
@@ -286,7 +377,6 @@ func (e *fsdEngine) finishLogin(c gnet.Conn, cc *fsdConnCtx, idPacket, addPacket
 	}
 	client.LastInboundNs.Store(e.srv.clock.Now().UnixNano())
 
-	// Wire coalescing AsyncWrite outbound (no SenderWorker).
 	gc := c
 	out, outErr := session.NewCoalesceOutbound(
 		func(p []byte) error {
@@ -298,44 +388,298 @@ func (e *fsdEngine) finishLogin(c gnet.Conn, cc *fsdConnCtx, idPacket, addPacket
 		session.CoalesceOutboundConfig{},
 	)
 	if outErr != nil {
-		// Defensive: writeAsync is non-nil above; should never fire in production.
 		e.srv.logger.Error("coalesce outbound", "err", outErr)
 		return gnet.Close
 	}
 	client.SetOutbound(out)
 	cc.client = client
+	cc.phase = fsdPhaseAuthPending
 
-	// attemptAuthentication uses client.Conn for login-phase errors; Conn is nil
-	// on gnet path — use a one-shot writer adapter via writeLoginError on failure.
-	if err = e.attemptAuthGnet(c, client, token); err != nil {
-		_ = out.Close()
+	// Offload auth + ClaimReserve (PHASE A).
+	srv := e.srv
+	select {
+	case srv.authPool <- func() {
+		res := e.runAuthReserve(c, cc, client, token)
+		cc.mu.Lock()
+		if cc.closed {
+			fence := cc.claimFence
+			if fence == "" && res != nil {
+				fence = res.fence
+			}
+			cs := client.Callsign
+			cc.mu.Unlock()
+			if e.srv.mesh != nil && fence != "" {
+				e.srv.mesh.ClaimAbort(cs, fence)
+			}
+			return
+		}
+		cc.authResult = res
+		if res != nil && res.fence != "" {
+			cc.claimFence = res.fence
+		}
+		cc.mu.Unlock()
+		_ = c.Wake(func(gc gnet.Conn, _ error) error {
+			e.onAuthWake(gc)
+			return nil
+		})
+	}:
+	default:
+		// Pool full — run inline (still better than hanging forever).
+		res := e.runAuthReserve(c, cc, client, token)
+		cc.mu.Lock()
+		cc.authResult = res
+		if res != nil && res.fence != "" {
+			cc.claimFence = res.fence
+		}
+		cc.mu.Unlock()
+		return e.finishAuthPending(c, cc)
+	}
+	return gnet.None
+}
+
+func (e *fsdEngine) runAuthReserve(c gnet.Conn, cc *fsdConnCtx, client *session.Session, token string) *authJobResult {
+	// Auth (uses temporary conn adapter for login errors).
+	if err := e.attemptAuthGnet(c, client, token); err != nil {
+		return &authJobResult{kind: "auth", err: err, errCode: InvalidLogonError, errMsg: "Invalid CID/password"}
+	}
+	// Local pre-check
+	if _, err := e.srv.registry.Find(client.Callsign); err == nil {
+		return &authJobResult{kind: "auth", err: ErrCallsignInUse, errCode: CallsignInUseError, errMsg: "Callsign already in use"}
+	}
+	// ClaimReserve when clustered
+	if e.srv.mesh != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), e.srv.mesh.ClaimTimeout())
+		defer cancel()
+		fence, err := e.srv.mesh.ClaimReserve(ctx, client.Callsign, cluster.ClaimMeta{
+			NodeID: e.srv.mesh.NodeID(),
+			CID:    client.CID,
+			IsATC:  client.IsAtc,
+		})
+		if err != nil {
+			code := CallsignInUseError
+			msg := "Callsign already in use"
+			if errors.Is(err, cluster.ErrClaimTimeout) || errors.Is(err, cluster.ErrPeerDown) {
+				code = CallsignInUseError
+				msg = "Callsign claim unavailable; try later"
+			}
+			return &authJobResult{kind: "auth", err: err, errCode: code, errMsg: msg}
+		}
+		// Store fence immediately so OnClose can Abort if Wake races with disconnect.
+		cc.mu.Lock()
+		if cc.closed {
+			cc.mu.Unlock()
+			e.srv.mesh.ClaimAbort(client.Callsign, fence)
+			return &authJobResult{kind: "auth", err: errors.New("closed"), errCode: InvalidLogonError, errMsg: "disconnected"}
+		}
+		cc.claimFence = fence
+		cc.mu.Unlock()
+		return &authJobResult{kind: "auth", fence: fence}
+	}
+	return &authJobResult{kind: "auth"}
+}
+
+func (e *fsdEngine) onAuthWake(c gnet.Conn) {
+	cc, _ := c.Context().(*fsdConnCtx)
+	if cc == nil {
+		return
+	}
+	cc.mu.Lock()
+	closed := cc.closed
+	cc.mu.Unlock()
+	if closed {
+		// Late Wake after OnClose — ensure abort matrix already ran.
+		return
+	}
+	_ = e.finishAuthPending(c, cc)
+}
+
+// finishAuthPending runs PHASE B: CID → Register → Commit (worker for Commit IO).
+func (e *fsdEngine) finishAuthPending(c gnet.Conn, cc *fsdConnCtx) gnet.Action {
+	cc.mu.Lock()
+	if cc.closed {
+		cc.mu.Unlock()
 		return gnet.Close
 	}
+	res := cc.authResult
+	cc.authResult = nil
+	cc.mu.Unlock()
+	if res == nil {
+		return gnet.Close
+	}
+	if res.kind == "commit" {
+		return e.finishCommit(c, cc, res)
+	}
+	// auth result
+	if res.err != nil {
+		if e.srv.mesh != nil {
+			cc.mu.Lock()
+			fence := cc.claimFence
+			cs := cc.clientCallsign()
+			cc.claimFence = ""
+			cc.mu.Unlock()
+			if fence != "" && cs != "" {
+				e.srv.mesh.ClaimRelease(cs, fence)
+				e.srv.mesh.ClaimAbort(cs, fence)
+			}
+		}
+		if cc.client != nil {
+			if o := cc.client.Outbound(); o != nil {
+				_ = o.Close()
+			}
+		}
+		_ = writeLoginError(c, res.errCode, res.errMsg)
+		return gnet.Close
+	}
+	client := cc.client
+	if client == nil {
+		return gnet.Close
+	}
+	cc.mu.Lock()
+	if res.fence != "" {
+		cc.claimFence = res.fence
+	}
+	cc.phase = fsdPhaseClaimFinishing
+	fence := cc.claimFence
+	cc.mu.Unlock()
 
 	if !e.srv.limits.tryAcquireCID(client.CID, e.srv.cfg.FsdMaxSessionsPerCID) {
+		if e.srv.mesh != nil && fence != "" {
+			e.srv.mesh.ClaimRelease(client.Callsign, fence)
+			e.srv.mesh.ClaimAbort(client.Callsign, fence)
+			cc.mu.Lock()
+			cc.claimFence = ""
+			cc.mu.Unlock()
+		}
 		_ = writeLoginError(c, ServerFullError, "Too many sessions for this CID")
-		_ = out.Close()
+		if o := client.Outbound(); o != nil {
+			_ = o.Close()
+		}
 		return gnet.Close
 	}
 	cc.cidHeld = true
 
-	if err = e.srv.registry.Register(client); err != nil {
+	if err := e.srv.registry.Register(client); err != nil {
+		if e.srv.mesh != nil && fence != "" {
+			e.srv.mesh.ClaimRelease(client.Callsign, fence)
+			e.srv.mesh.ClaimAbort(client.Callsign, fence)
+			cc.mu.Lock()
+			cc.claimFence = ""
+			cc.mu.Unlock()
+		}
 		if errors.Is(err, ErrCallsignInUse) {
 			_ = writeLoginError(c, CallsignInUseError, "Callsign already in use")
 		}
 		e.srv.limits.releaseCID(client.CID)
 		cc.cidHeld = false
-		_ = out.Close()
+		if o := client.Outbound(); o != nil {
+			_ = o.Close()
+		}
 		return gnet.Close
 	}
-	cc.registered = true
+	cc.registered = true // local only until Commit; join flood after Commit
 
-	if err = e.srv.sendMotd(client); err != nil {
+	// ClaimCommit (may need worker for mesh IO)
+	if e.srv.mesh != nil && fence != "" {
+		cs := client.Callsign
+		cc.mu.Lock()
+		cc.claimInFlight = true
+		cc.mu.Unlock()
+		select {
+		case e.srv.authPool <- func() {
+			ctx, cancel := context.WithTimeout(context.Background(), e.srv.mesh.ClaimTimeout())
+			defer cancel()
+			err := e.srv.mesh.ClaimCommit(ctx, cs, fence)
+			cc.mu.Lock()
+			closed := cc.closed
+			cc.claimInFlight = false
+			if closed {
+				// Disconnect during Commit: always ClaimRelease(fence) clears active|pending.
+				cc.mu.Unlock()
+				e.srv.mesh.ClaimRelease(cs, fence)
+				if err != nil {
+					e.srv.mesh.ClaimAbort(cs, fence)
+				}
+				return
+			}
+			cc.authResult = &authJobResult{kind: "commit", commitOK: err == nil, commitErr: err}
+			cc.mu.Unlock()
+			_ = c.Wake(func(gc gnet.Conn, _ error) error {
+				e.onAuthWake(gc)
+				return nil
+			})
+		}:
+			return gnet.None
+		default:
+			ctx, cancel := context.WithTimeout(context.Background(), e.srv.mesh.ClaimTimeout())
+			err := e.srv.mesh.ClaimCommit(ctx, cs, fence)
+			cancel()
+			cc.mu.Lock()
+			cc.claimInFlight = false
+			cc.mu.Unlock()
+			return e.finishCommit(c, cc, &authJobResult{kind: "commit", commitOK: err == nil, commitErr: err})
+		}
+	}
+
+	// Single-node: skip commit
+	return e.activateSession(c, cc)
+}
+
+func (e *fsdEngine) finishCommit(c gnet.Conn, cc *fsdConnCtx, res *authJobResult) gnet.Action {
+	cc.mu.Lock()
+	if cc.closed {
+		cc.mu.Unlock()
+		return gnet.Close
+	}
+	cc.mu.Unlock()
+	if res == nil || !res.commitOK {
+		// Abort + Release
+		client := cc.client
+		cc.mu.Lock()
+		fence := cc.claimFence
+		cc.claimFence = ""
+		cc.mu.Unlock()
+		if e.srv.mesh != nil && fence != "" {
+			e.srv.mesh.ClaimRelease(client.Callsign, fence)
+			e.srv.mesh.ClaimAbort(client.Callsign, fence)
+		}
+		if cc.registered {
+			if hr, ok := e.srv.registry.(*HybridRegistry); ok {
+				hr.Local().Release(client)
+			} else {
+				e.srv.registry.Release(client)
+			}
+			cc.registered = false
+		}
+		if cc.cidHeld {
+			e.srv.limits.releaseCID(client.CID)
+			cc.cidHeld = false
+		}
+		_ = writeLoginError(c, CallsignInUseError, "Callsign claim failed")
+		if o := client.Outbound(); o != nil {
+			_ = o.Close()
+		}
+		return gnet.Close
+	}
+	cc.mu.Lock()
+	cc.claimCommitted = true
+	fence := cc.claimFence
+	cc.mu.Unlock()
+	if hr, ok := e.srv.registry.(*HybridRegistry); ok && fence != "" {
+		hr.StoreFence(cc.client.Callsign, fence)
+	}
+	return e.activateSession(c, cc)
+}
+
+func (e *fsdEngine) activateSession(c gnet.Conn, cc *fsdConnCtx) gnet.Action {
+	client := cc.client
+	if err := e.srv.sendMotd(client); err != nil {
 		client.Disconnect()
 		return gnet.Close
 	}
-
 	e.srv.broadcastAddPacket(client)
+	if e.srv.mesh != nil {
+		e.srv.mesh.BroadcastJoinLeave([]byte(e.srv.addWire(client)))
+	}
 	cc.phase = fsdPhaseActive
 	cc.idPacket = nil
 	cc.lastActive = e.srv.clock.Now()

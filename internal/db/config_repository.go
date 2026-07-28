@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -10,15 +11,15 @@ import (
 
 type ConfigRepository interface {
 	// Set sets a value for a given key
-	Set(key string, value string) (err error)
+	Set(ctx context.Context, key string, value string) (err error)
 
 	// SetIfNotExists sets a value for a given key if it does not already exist
-	SetIfNotExists(key string, value string) (err error)
+	SetIfNotExists(ctx context.Context, key string, value string) (err error)
 
 	// Get gets a value for a given key.
 	//
 	// Returns ErrConfigKeyNotFound if no key/value pair is found.
-	Get(key string) (value string, err error)
+	Get(ctx context.Context, key string) (value string, err error)
 }
 
 const (
@@ -54,8 +55,8 @@ func GenerateJwtSecretKey() (key string, err error) {
 
 // GetWelcomeMessage returns any configured welcome message.
 // Returns an empty string if no message is found.
-func GetWelcomeMessage(r ConfigRepository) (msg string) {
-	msg, _ = r.Get(ConfigWelcomeMessage)
+func GetWelcomeMessage(ctx context.Context, r ConfigRepository) (msg string) {
+	msg, _ = r.Get(ctx, ConfigWelcomeMessage)
 	return
 }
 
@@ -72,15 +73,15 @@ func ParseBoolConfig(v string) bool {
 
 // RequirePilotPPL reports whether pilot connections require pilot_rating ≥ PPL.
 // Missing key or parse failure → false (disabled by default).
-func RequirePilotPPL(r ConfigRepository) bool {
-	v, err := r.Get(ConfigRequirePilotPPL)
+func RequirePilotPPL(ctx context.Context, r ConfigRepository) bool {
+	v, err := r.Get(ctx, ConfigRequirePilotPPL)
 	if err != nil {
 		return false
 	}
 	return ParseBoolConfig(v)
 }
 
-func InitDefaultConfig(r ConfigRepository) (err error) {
+func InitDefaultConfig(ctx context.Context, r ConfigRepository) (err error) {
 	secretKey, err := GenerateJwtSecretKey()
 	if err != nil {
 		return
@@ -97,7 +98,7 @@ func InitDefaultConfig(r ConfigRepository) (err error) {
 	}
 
 	for k, v := range defaultConfig {
-		if err = r.SetIfNotExists(k, v); err != nil {
+		if err = r.SetIfNotExists(ctx, k, v); err != nil {
 			return
 		}
 	}

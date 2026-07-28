@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"strings"
@@ -76,7 +77,7 @@ func (s *Server) handleFrontendLoginPost(c *gin.Context) {
 		return
 	}
 
-	user, err := s.dbRepo.UserRepo.GetUserByCID(cid)
+	user, err := s.dbRepo.UserRepo.GetUserByCID(context.Background(), cid)
 	if err != nil || !s.dbRepo.UserRepo.VerifyPasswordHash(password, user.Password) {
 		page.Error = "Bad CID and/or password"
 		s.writeTemplate(c, "login", page)

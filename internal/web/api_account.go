@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 
@@ -40,7 +41,7 @@ func (s *Server) handleAPIAccountPassword(c *gin.Context) {
 		return
 	}
 
-	user, err := s.dbRepo.UserRepo.GetUserByCID(claims.CID)
+	user, err := s.dbRepo.UserRepo.GetUserByCID(context.Background(), claims.CID)
 	if err != nil {
 		// Actor was valid at middleware; treat as unauthorized if gone mid-request.
 		res := newAPIV1Failure("unauthorized")
@@ -76,7 +77,7 @@ func (s *Server) handleAPIAccountPassword(c *gin.Context) {
 	}
 
 	user.Password = reqBody.NewPassword
-	if err := s.dbRepo.UserRepo.UpdateUser(user); err != nil {
+	if err := s.dbRepo.UserRepo.UpdateUser(context.Background(), user); err != nil {
 		slog.Error("api account password update failed", "cid", claims.CID, "err", err)
 		writeAPIV1Response(c, http.StatusInternalServerError, &genericAPIV1InternalServerError)
 		return
@@ -122,7 +123,7 @@ func (s *Server) handleAPIAccountDelete(c *gin.Context) {
 		return
 	}
 
-	user, err := s.dbRepo.UserRepo.GetUserByCID(claims.CID)
+	user, err := s.dbRepo.UserRepo.GetUserByCID(context.Background(), claims.CID)
 	if err != nil {
 		res := newAPIV1Failure("unauthorized")
 		writeAPIV1Response(c, http.StatusUnauthorized, &res)
@@ -157,7 +158,7 @@ func (s *Server) handleAPIAccountDelete(c *gin.Context) {
 
 	status := "soft_deleted"
 	if reqBody.Permanent && allowHard {
-		if err := s.dbRepo.UserRepo.DeleteUser(user.CID); err != nil {
+		if err := s.dbRepo.UserRepo.DeleteUser(context.Background(), user.CID); err != nil {
 			slog.Error("api account hard-delete failed", "cid", claims.CID, "err", err)
 			writeAPIV1Response(c, http.StatusInternalServerError, &genericAPIV1InternalServerError)
 			return
@@ -173,7 +174,7 @@ func (s *Server) handleAPIAccountDelete(c *gin.Context) {
 		// Soft-delete: Inactive rating; empty Password keeps existing hash (UpdateUser).
 		user.NetworkRating = int(protocol.NetworkRatingInactive)
 		user.Password = ""
-		if err := s.dbRepo.UserRepo.UpdateUser(user); err != nil {
+		if err := s.dbRepo.UserRepo.UpdateUser(context.Background(), user); err != nil {
 			slog.Error("api account soft-delete failed", "cid", claims.CID, "err", err)
 			writeAPIV1Response(c, http.StatusInternalServerError, &genericAPIV1InternalServerError)
 			return

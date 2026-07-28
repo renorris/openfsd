@@ -84,7 +84,7 @@ go build -o openfsd ./cmd/openfsd
 | Variable | Default | Notes |
 |----------|---------|-------|
 | `DATABASE_SOURCE_NAME` | `openfsd.db?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)` | SQLite path (preferred) or `:memory:`; must be shared by both services. Bare `:memory:` is rewritten to a process-shared DSN when FSD+web run together. |
-| `DATABASE_DRIVER` | `sqlite` | Compatibility only; must be `sqlite` or unset (Postgres removed) |
+| `DATABASE_DRIVER` | `sqlite` | `sqlite` (default) or `rqlite`; Postgres removed (use migrate tools) |
 | `DATABASE_AUTO_MIGRATE` | `true` | FSD and web apply migrations on startup (idempotent) |
 | `FSD_LISTEN_ADDRS` | `:6809` | FSD TCP listen address(es) |
 | `SERVICE_HTTP_LISTEN_ADDR` | `:13618` | Internal FSD admin HTTP |
@@ -101,7 +101,7 @@ Preferred for operators. See the [Deployment Wiki](https://github.com/renorris/o
 
 Images: **`ghcr.io/renorris/openfsd`** (`:latest`, `:dev`, `sha-*`) published by CI on every push to `main` and `dev`.
 
-**Upgrading from PostgreSQL?** openfsd is SQLite-only. Use [`openfsd-migrate-to-sqlite`](cmd/openfsd-migrate-to-sqlite) and follow [Migrating from PostgreSQL](wiki/Migrating-from-PostgreSQL.md).
+**Upgrading from PostgreSQL?** Use [`openfsd-migrate-to-sqlite`](cmd/openfsd-migrate-to-sqlite) and [Migrating from PostgreSQL](wiki/Migrating-from-PostgreSQL.md). Optional multi-node: rqlite + mesh (`CLUSTER_ENABLED`, see [wiki/Deployment](wiki/Deployment.md) and `docs/design/distributed-openfsd.md`).
 
 ```bash
 git clone https://github.com/renorris/openfsd.git

@@ -1,17 +1,19 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"errors"
-	"golang.org/x/crypto/bcrypt"
 	"strings"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 type SQLiteUserRepository struct {
 	db *sql.DB
 }
 
-func (r *SQLiteUserRepository) CreateUser(user *User) (err error) {
+func (r *SQLiteUserRepository) CreateUser(ctx context.Context, user *User) (err error) {
 	// Password must not contain colon characters
 	if strings.Contains(user.Password, ":") {
 		err = errors.New("password cannot contain colon `:` characters")
@@ -24,7 +26,7 @@ func (r *SQLiteUserRepository) CreateUser(user *User) (err error) {
 		return
 	}
 
-	row := r.db.QueryRow(`
+	row := r.db.QueryRowContext(ctx, `
 		INSERT INTO users
 		(password, first_name, last_name, network_rating, pilot_rating)
 		VALUES 
@@ -43,8 +45,8 @@ func (r *SQLiteUserRepository) CreateUser(user *User) (err error) {
 	return
 }
 
-func (r *SQLiteUserRepository) GetUserByCID(cid int) (user *User, err error) {
-	row := r.db.QueryRow(`
+func (r *SQLiteUserRepository) GetUserByCID(ctx context.Context, cid int) (user *User, err error) {
+	row := r.db.QueryRowContext(ctx, `
 		SELECT 
 		cid, password, first_name, 
 		last_name, network_rating, pilot_rating
@@ -71,7 +73,7 @@ func (r *SQLiteUserRepository) GetUserByCID(cid int) (user *User, err error) {
 	return
 }
 
-func (r *SQLiteUserRepository) UpdateUser(user *User) (err error) {
+func (r *SQLiteUserRepository) UpdateUser(ctx context.Context, user *User) (err error) {
 	// Prepare query and arguments based on whether password is provided
 	var query string
 	var args []interface{}
@@ -104,7 +106,7 @@ func (r *SQLiteUserRepository) UpdateUser(user *User) (err error) {
 	}
 
 	// Execute the UPDATE statement
-	result, err := r.db.Exec(query, args...)
+	result, err := r.db.ExecContext(ctx, query, args...)
 	if err != nil {
 		return err
 	}
@@ -127,8 +129,8 @@ func (r *SQLiteUserRepository) VerifyPasswordHash(plaintext string, hash string)
 
 // DeleteUser permanently removes the user row by CID.
 // Returns sql.ErrNoRows if no row was deleted.
-func (r *SQLiteUserRepository) DeleteUser(cid int) error {
-	result, err := r.db.Exec(`DELETE FROM users WHERE cid = ?`, cid)
+func (r *SQLiteUserRepository) DeleteUser(ctx context.Context, cid int) error {
+	result, err := r.db.ExecContext(ctx, `DELETE FROM users WHERE cid = ?`, cid)
 	if err != nil {
 		return err
 	}
@@ -208,7 +210,7 @@ func userListOrderBy(f UserListFilter) string {
 	}
 }
 
-func (r *SQLiteUserRepository) ListUsers(filter UserListFilter) ([]*User, error) {
+func (r *SQLiteUserRepository) ListUsers(ctx context.Context, filter UserListFilter) ([]*User, error) {
 	where, args := userListWhere(filter)
 	limit, offset := normalizeListLimitOffset(filter)
 	orderBy := userListOrderBy(filter)
@@ -221,7 +223,7 @@ func (r *SQLiteUserRepository) ListUsers(filter UserListFilter) ([]*User, error)
 		LIMIT ? OFFSET ?`
 	args = append(args, limit, offset)
 
-	rows, err := r.db.Query(query, args...)
+	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -244,11 +246,11 @@ func (r *SQLiteUserRepository) ListUsers(filter UserListFilter) ([]*User, error)
 	return users, nil
 }
 
-func (r *SQLiteUserRepository) CountUsers(filter UserListFilter) (int, error) {
+func (r *SQLiteUserRepository) CountUsers(ctx context.Context, filter UserListFilter) (int, error) {
 	where, args := userListWhere(filter)
 	query := `SELECT COUNT(*) FROM users ` + where
 	var n int
-	if err := r.db.QueryRow(query, args...).Scan(&n); err != nil {
+	if err := r.db.QueryRowContext(ctx, query, args...).Scan(&n); err != nil {
 		return 0, err
 	}
 	return n, nil

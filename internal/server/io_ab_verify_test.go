@@ -345,13 +345,13 @@ func startABServer(t *testing.T, m int) *abServer {
 		cancel()
 		t.Fatal(err)
 	}
-	if err = db.InitDefaultConfig(repos.ConfigRepo); err != nil {
+	if err = db.InitDefaultConfig(context.Background(), repos.ConfigRepo); err != nil {
 		_ = sqlDB.Close()
 		cancel()
 		t.Fatal(err)
 	}
 	const secret = server.TestJWTSecret
-	if err = repos.ConfigRepo.Set(db.ConfigJwtSecretKey, secret); err != nil {
+	if err = repos.ConfigRepo.Set(context.Background(), db.ConfigJwtSecretKey, secret); err != nil {
 		_ = sqlDB.Close()
 		cancel()
 		t.Fatal(err)
@@ -365,7 +365,7 @@ func startABServer(t *testing.T, m int) *abServer {
 			FirstName:     &name,
 			NetworkRating: int(protocol.NetworkRatingObserver),
 		}
-		if err = repos.UserRepo.CreateUser(u); err != nil {
+		if err = repos.UserRepo.CreateUser(context.Background(), u); err != nil {
 			_ = sqlDB.Close()
 			cancel()
 			t.Fatal(err)

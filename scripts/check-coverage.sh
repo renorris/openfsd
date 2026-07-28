@@ -57,6 +57,7 @@ hard = {
     "internal/auth": 95.0,
     "internal/postoffice": 90.0,
     "internal/sweatbox": 95.0,
+    "internal/cluster": 90.0,
 }
 soft = {
     "internal/web": 80.0,  # aspirational PE-era floor; report only

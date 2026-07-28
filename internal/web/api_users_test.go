@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -25,7 +26,7 @@ func TestAPIListUsers_Authz(t *testing.T) {
 		LastName:      strPtr("One"),
 		NetworkRating: int(protocol.NetworkRatingInstructor1),
 	}
-	require.NoError(t, env.server.dbRepo.UserRepo.CreateUser(i1))
+	require.NoError(t, env.server.dbRepo.UserRepo.CreateUser(context.Background(), i1))
 	i1Access, _ := env.login(t, i1.CID, i1Pass)
 
 	supPass := "suppass123"
@@ -35,7 +36,7 @@ func TestAPIListUsers_Authz(t *testing.T) {
 		LastName:      strPtr("Visor"),
 		NetworkRating: int(protocol.NetworkRatingSupervisor),
 	}
-	require.NoError(t, env.server.dbRepo.UserRepo.CreateUser(sup))
+	require.NoError(t, env.server.dbRepo.UserRepo.CreateUser(context.Background(), sup))
 	supAccess, _ := env.login(t, sup.CID, supPass)
 
 	t.Run("unauthenticated", func(t *testing.T) {
@@ -113,7 +114,7 @@ func TestAPIListUsers_PaginationAndFilters(t *testing.T) {
 			NetworkRating: int(protocol.NetworkRatingObserver),
 			PilotRating:   0,
 		}
-		require.NoError(t, env.server.dbRepo.UserRepo.CreateUser(u))
+		require.NoError(t, env.server.dbRepo.UserRepo.CreateUser(context.Background(), u))
 	}
 
 	t.Run("page_size clamp and page clamp past end", func(t *testing.T) {
@@ -261,7 +262,7 @@ func TestAPIGetUser_AuthzAndShape(t *testing.T) {
 		LastName:      strPtr("One"),
 		NetworkRating: int(protocol.NetworkRatingInstructor1),
 	}
-	require.NoError(t, env.server.dbRepo.UserRepo.CreateUser(i1))
+	require.NoError(t, env.server.dbRepo.UserRepo.CreateUser(context.Background(), i1))
 	i1Access, _ := env.login(t, i1.CID, i1Pass)
 
 	supPass := "suppass123"
@@ -271,7 +272,7 @@ func TestAPIGetUser_AuthzAndShape(t *testing.T) {
 		LastName:      strPtr("Visor"),
 		NetworkRating: int(protocol.NetworkRatingSupervisor),
 	}
-	require.NoError(t, env.server.dbRepo.UserRepo.CreateUser(sup))
+	require.NoError(t, env.server.dbRepo.UserRepo.CreateUser(context.Background(), sup))
 	supAccess, _ := env.login(t, sup.CID, supPass)
 
 	t.Run("unauthenticated", func(t *testing.T) {

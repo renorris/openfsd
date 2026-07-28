@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -164,7 +165,7 @@ func TestChangePasswordWrongCurrent(t *testing.T) {
 		t.Fatalf("expected field error, body=%s", clip(w.Body.String(), 400))
 	}
 	// Password unchanged
-	u, err := ts.dbRepo.UserRepo.GetUserByCID(user.CID)
+	u, err := ts.dbRepo.UserRepo.GetUserByCID(context.Background(), user.CID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,7 +255,7 @@ func TestDeleteAccountCSRF(t *testing.T) {
 		t.Fatalf("status %d want 403", w.Code)
 	}
 	// Account must not be deleted
-	u, err := ts.dbRepo.UserRepo.GetUserByCID(user.CID)
+	u, err := ts.dbRepo.UserRepo.GetUserByCID(context.Background(), user.CID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -280,7 +281,7 @@ func TestDeleteAccountSoft(t *testing.T) {
 		t.Fatalf("Location=%q want account=deleted", loc)
 	}
 
-	u, err := ts.dbRepo.UserRepo.GetUserByCID(user.CID)
+	u, err := ts.dbRepo.UserRepo.GetUserByCID(context.Background(), user.CID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -319,7 +320,7 @@ func TestDeleteAccountWrongPassword(t *testing.T) {
 	if !strings.Contains(w.Body.String(), "Incorrect password") {
 		t.Fatalf("expected password error, body=%s", clip(w.Body.String(), 400))
 	}
-	u, err := ts.dbRepo.UserRepo.GetUserByCID(user.CID)
+	u, err := ts.dbRepo.UserRepo.GetUserByCID(context.Background(), user.CID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -343,7 +344,7 @@ func TestDeleteAccountConfirmCIDMismatch(t *testing.T) {
 	if !strings.Contains(w.Body.String(), "Confirm your CID") {
 		t.Fatalf("expected CID confirm error, body=%s", clip(w.Body.String(), 400))
 	}
-	u, err := ts.dbRepo.UserRepo.GetUserByCID(user.CID)
+	u, err := ts.dbRepo.UserRepo.GetUserByCID(context.Background(), user.CID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -372,7 +373,7 @@ func TestDeleteAccountHardWhenEnabled(t *testing.T) {
 	if w.Code != http.StatusSeeOther {
 		t.Fatalf("status %d body %s", w.Code, w.Body.String())
 	}
-	_, err := ts.dbRepo.UserRepo.GetUserByCID(user.CID)
+	_, err := ts.dbRepo.UserRepo.GetUserByCID(context.Background(), user.CID)
 	if err == nil {
 		t.Fatal("expected row gone after hard delete")
 	}
@@ -396,7 +397,7 @@ func TestDeleteAccountHardWhenDisabled(t *testing.T) {
 	if !strings.Contains(loc, "account=deleted") || !strings.Contains(loc, "permanent=disabled") {
 		t.Fatalf("Location=%q want deleted+permanent=disabled", loc)
 	}
-	u, err := ts.dbRepo.UserRepo.GetUserByCID(user.CID)
+	u, err := ts.dbRepo.UserRepo.GetUserByCID(context.Background(), user.CID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -411,13 +412,13 @@ func TestSessionRejectedAfterSoftDelete(t *testing.T) {
 	cookies := formLogin(t, ts, user.CID, "sess-del1")
 
 	// Soft-delete via repo (simulate admin/self delete while session still held)
-	u, err := ts.dbRepo.UserRepo.GetUserByCID(user.CID)
+	u, err := ts.dbRepo.UserRepo.GetUserByCID(context.Background(), user.CID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	u.NetworkRating = int(protocol.NetworkRatingInactive)
 	u.Password = ""
-	if err := ts.dbRepo.UserRepo.UpdateUser(u); err != nil {
+	if err := ts.dbRepo.UserRepo.UpdateUser(context.Background(), u); err != nil {
 		t.Fatal(err)
 	}
 
@@ -469,13 +470,13 @@ func TestAPISessionRejectedAfterSoftDelete(t *testing.T) {
 	user := createTestUser(t, ts, "api-del1", int(protocol.NetworkRatingSupervisor))
 	cookies := formLogin(t, ts, user.CID, "api-del1")
 
-	u, err := ts.dbRepo.UserRepo.GetUserByCID(user.CID)
+	u, err := ts.dbRepo.UserRepo.GetUserByCID(context.Background(), user.CID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	u.NetworkRating = int(protocol.NetworkRatingInactive)
 	u.Password = ""
-	if err := ts.dbRepo.UserRepo.UpdateUser(u); err != nil {
+	if err := ts.dbRepo.UserRepo.UpdateUser(context.Background(), u); err != nil {
 		t.Fatal(err)
 	}
 
@@ -501,13 +502,13 @@ func TestClaimsOverlayAfterDemotion(t *testing.T) {
 	cookies := formLogin(t, ts, admin.CID, "admin-pw1")
 
 	// Demote to SUP in DB
-	u, err := ts.dbRepo.UserRepo.GetUserByCID(admin.CID)
+	u, err := ts.dbRepo.UserRepo.GetUserByCID(context.Background(), admin.CID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	u.NetworkRating = int(protocol.NetworkRatingSupervisor)
 	u.Password = ""
-	if err := ts.dbRepo.UserRepo.UpdateUser(u); err != nil {
+	if err := ts.dbRepo.UserRepo.UpdateUser(context.Background(), u); err != nil {
 		t.Fatal(err)
 	}
 
@@ -584,13 +585,13 @@ func TestRefreshRejectsInactiveUser(t *testing.T) {
 	}
 
 	// Soft-delete
-	u, err := ts.dbRepo.UserRepo.GetUserByCID(user.CID)
+	u, err := ts.dbRepo.UserRepo.GetUserByCID(context.Background(), user.CID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	u.NetworkRating = int(protocol.NetworkRatingInactive)
 	u.Password = ""
-	if err := ts.dbRepo.UserRepo.UpdateUser(u); err != nil {
+	if err := ts.dbRepo.UserRepo.UpdateUser(context.Background(), u); err != nil {
 		t.Fatal(err)
 	}
 

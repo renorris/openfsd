@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"database/sql"
 	"io"
 	"net/http"
@@ -39,7 +40,7 @@ func newTestServer(t *testing.T) *testServer {
 	if err != nil {
 		t.Fatalf("repos: %v", err)
 	}
-	if err := db.InitDefaultConfig(repos.ConfigRepo); err != nil {
+	if err := db.InitDefaultConfig(context.Background(), repos.ConfigRepo); err != nil {
 		t.Fatalf("init config: %v", err)
 	}
 
@@ -69,7 +70,7 @@ func createTestUser(t *testing.T, ts *testServer, password string, rating int) *
 		LastName:      &last,
 		NetworkRating: rating,
 	}
-	if err := ts.dbRepo.UserRepo.CreateUser(u); err != nil {
+	if err := ts.dbRepo.UserRepo.CreateUser(context.Background(), u); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
 	return u

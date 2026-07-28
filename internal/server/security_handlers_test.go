@@ -313,7 +313,7 @@ type fakeUserStore struct {
 	lastHash    string
 }
 
-func (f *fakeUserStore) GetUserByCID(cid int) (*db.User, error) {
+func (f *fakeUserStore) GetUserByCID(ctx context.Context, cid int) (*db.User, error) {
 	u, ok := f.byCID[cid]
 	if !ok {
 		return nil, sql.ErrNoRows

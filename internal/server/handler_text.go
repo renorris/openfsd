@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 
+	"github.com/renorris/openfsd/internal/cluster"
 	"github.com/renorris/openfsd/internal/session"
 )
 
@@ -13,18 +14,25 @@ func (s *Server) handleTextMessage(client *session.Session, packet []byte) {
 
 	recipient := getField(packet, 1)
 
-	// ATC chat
+	// ATC chat (@49999)
+	// Design matrix: ATC-wide flood (BroadcastClass ATC), not interest-ranged.
+	// Intentional: all-ATC mesh delivery so controllers see chat regardless of geo
+	// interest boxes (R3-5). Local fan-out remains ranged ATC-only for density.
 	if string(recipient) == "@49999" {
 		if !client.IsAtc {
 			return
 		}
 		broadcastRangedAtcOnly(s.registry, client, packet)
+		if hr, ok := s.registry.(*HybridRegistry); ok && hr.Mesh() != nil {
+			hr.Mesh().BroadcastClass(packet, cluster.BroadcastATC)
+		}
 		return
 	}
 
 	// Frequency message
 	if bytes.HasPrefix(recipient, []byte("@")) {
 		broadcastRanged(s.registry, client, packet)
+		s.meshForwardRangedText(client, packet)
 		return
 	}
 
@@ -34,6 +42,9 @@ func (s *Server) handleTextMessage(client *session.Session, packet []byte) {
 			return
 		}
 		broadcastAllSupervisors(s.registry, client, packet)
+		if hr, ok := s.registry.(*HybridRegistry); ok && hr.Mesh() != nil {
+			hr.Mesh().BroadcastClass(packet, cluster.BroadcastSupervisor)
+		}
 		return
 	}
 
@@ -43,6 +54,9 @@ func (s *Server) handleTextMessage(client *session.Session, packet []byte) {
 			return
 		}
 		broadcastAll(s.registry, client, packet)
+		if hr, ok := s.registry.(*HybridRegistry); ok && hr.Mesh() != nil {
+			hr.Mesh().BroadcastClass(packet, cluster.BroadcastAll)
+		}
 		return
 	}
 
@@ -61,4 +75,14 @@ func (s *Server) handleTextMessage(client *session.Session, packet []byte) {
 
 	// Otherwise, treat as direct message
 	sendDirectOrErr(s.registry, client, recipient, packet)
+}
+
+// meshForwardRangedText uses reliable text frames (not PositionBatch coalesce) — R2-5.
+func (s *Server) meshForwardRangedText(client *session.Session, packet []byte) {
+	hr, ok := s.registry.(*HybridRegistry)
+	if !ok || hr.Mesh() == nil {
+		return
+	}
+	boxes := sessionSenderBoxes(client)
+	hr.Mesh().ForwardTextRanged(packet, boxes)
 }

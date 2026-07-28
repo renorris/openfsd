@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"golang.org/x/crypto/bcrypt"
 	_ "modernc.org/sqlite"
@@ -42,7 +43,7 @@ func TestCreateUser(t *testing.T) {
 		LastName:      ptr("Smith"),
 		NetworkRating: 100,
 	}
-	err := repo.CreateUser(user)
+	err := repo.CreateUser(context.Background(), user)
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
 	}
@@ -54,7 +55,7 @@ func TestCreateUser(t *testing.T) {
 	}
 
 	// Retrieve and verify the user
-	retrievedUser, err := repo.GetUserByCID(user.CID)
+	retrievedUser, err := repo.GetUserByCID(context.Background(), user.CID)
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
 	}
@@ -97,7 +98,7 @@ func TestCreateUser(t *testing.T) {
 		LastName:      nil,
 		NetworkRating: 200,
 	}
-	err = repo.CreateUser(user)
+	err = repo.CreateUser(context.Background(), user)
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
 	}
@@ -105,7 +106,7 @@ func TestCreateUser(t *testing.T) {
 		t.Errorf("expected cid > 0, got %d", user.CID)
 	}
 
-	retrievedUser, err = repo.GetUserByCID(user.CID)
+	retrievedUser, err = repo.GetUserByCID(context.Background(), user.CID)
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
 	}
@@ -121,13 +122,13 @@ func TestCreateUser(t *testing.T) {
 
 	// Test CID auto-increment
 	user1 := &User{Password: "pass1", NetworkRating: 1}
-	err = repo.CreateUser(user1)
+	err = repo.CreateUser(context.Background(), user1)
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
 	}
 
 	user2 := &User{Password: "pass2", NetworkRating: 2}
-	err = repo.CreateUser(user2)
+	err = repo.CreateUser(context.Background(), user2)
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
 	}
@@ -149,13 +150,13 @@ func TestGetUserByCID(t *testing.T) {
 		LastName:      ptr("Brown"),
 		NetworkRating: 150,
 	}
-	err := repo.CreateUser(user)
+	err := repo.CreateUser(context.Background(), user)
 	if err != nil {
 		t.Fatalf("failed to create test user: %v", err)
 	}
 
 	// Retrieve the user
-	retrievedUser, err := repo.GetUserByCID(user.CID)
+	retrievedUser, err := repo.GetUserByCID(context.Background(), user.CID)
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
 	}
@@ -176,7 +177,7 @@ func TestGetUserByCID(t *testing.T) {
 	}
 
 	// Test with non-existing CID
-	_, err = repo.GetUserByCID(9999)
+	_, err = repo.GetUserByCID(context.Background(), 9999)
 	if err == nil {
 		t.Errorf("expected error, got nil")
 	} else if err != sql.ErrNoRows {
@@ -184,7 +185,7 @@ func TestGetUserByCID(t *testing.T) {
 	}
 
 	// Test with CID = 0
-	_, err = repo.GetUserByCID(0)
+	_, err = repo.GetUserByCID(context.Background(), 0)
 	if err == nil {
 		t.Errorf("expected error, got nil")
 	} else if err != sql.ErrNoRows {
@@ -250,7 +251,7 @@ func TestUpdateUser(t *testing.T) {
 			LastName:      ptr("Doe"),
 			NetworkRating: 100,
 		}
-		err := repo.CreateUser(user)
+		err := repo.CreateUser(context.Background(), user)
 		if err != nil {
 			t.Fatalf("failed to create test user: %v", err)
 		}
@@ -262,12 +263,12 @@ func TestUpdateUser(t *testing.T) {
 			LastName:      ptr("Doe"),
 			NetworkRating: 200,
 		}
-		err = repo.UpdateUser(updateUser)
+		err = repo.UpdateUser(context.Background(), updateUser)
 		if err != nil {
 			t.Errorf("expected no error, got %v", err)
 		}
 
-		retrievedUser, err := repo.GetUserByCID(user.CID)
+		retrievedUser, err := repo.GetUserByCID(context.Background(), user.CID)
 		if err != nil {
 			t.Errorf("expected no error, got %v", err)
 		}
@@ -293,7 +294,7 @@ func TestUpdateUser(t *testing.T) {
 			LastName:      ptr("Doe"),
 			NetworkRating: 100,
 		}
-		err := repo.CreateUser(user)
+		err := repo.CreateUser(context.Background(), user)
 		if err != nil {
 			t.Fatalf("failed to create test user: %v", err)
 		}
@@ -305,12 +306,12 @@ func TestUpdateUser(t *testing.T) {
 			LastName:      ptr("Smith"),
 			NetworkRating: 300,
 		}
-		err = repo.UpdateUser(updateUser)
+		err = repo.UpdateUser(context.Background(), updateUser)
 		if err != nil {
 			t.Errorf("expected no error, got %v", err)
 		}
 
-		retrievedUser, err := repo.GetUserByCID(user.CID)
+		retrievedUser, err := repo.GetUserByCID(context.Background(), user.CID)
 		if err != nil {
 			t.Errorf("expected no error, got %v", err)
 		}
@@ -340,7 +341,7 @@ func TestUpdateUser(t *testing.T) {
 			LastName:      ptr("Doe"),
 			NetworkRating: 100,
 		}
-		err := repo.CreateUser(user)
+		err := repo.CreateUser(context.Background(), user)
 		if err != nil {
 			t.Fatalf("failed to create test user: %v", err)
 		}
@@ -352,7 +353,7 @@ func TestUpdateUser(t *testing.T) {
 			LastName:      ptr("Password"),
 			NetworkRating: 400,
 		}
-		err = repo.UpdateUser(updateUser)
+		err = repo.UpdateUser(context.Background(), updateUser)
 		if err == nil {
 			t.Errorf("expected error due to colon in password, got nil")
 		} else if !strings.Contains(err.Error(), "colon") {
@@ -360,7 +361,7 @@ func TestUpdateUser(t *testing.T) {
 		}
 
 		// Check that user was not updated
-		retrievedUser, err := repo.GetUserByCID(user.CID)
+		retrievedUser, err := repo.GetUserByCID(context.Background(), user.CID)
 		if err != nil {
 			t.Errorf("expected no error, got %v", err)
 		}
@@ -387,7 +388,7 @@ func TestUpdateUser(t *testing.T) {
 			LastName:      ptr("User"),
 			NetworkRating: 0,
 		}
-		err := repo.UpdateUser(nonExistentUser)
+		err := repo.UpdateUser(context.Background(), nonExistentUser)
 		if err == nil {
 			t.Errorf("expected error, got nil")
 		} else if err != sql.ErrNoRows {
@@ -402,7 +403,7 @@ func TestUpdateUser(t *testing.T) {
 			LastName:      ptr("Doe"),
 			NetworkRating: 100,
 		}
-		err := repo.CreateUser(user)
+		err := repo.CreateUser(context.Background(), user)
 		if err != nil {
 			t.Fatalf("failed to create test user: %v", err)
 		}
@@ -414,12 +415,12 @@ func TestUpdateUser(t *testing.T) {
 			LastName:      ptr("Doe"),
 			NetworkRating: 200,
 		}
-		err = repo.UpdateUser(updateUser)
+		err = repo.UpdateUser(context.Background(), updateUser)
 		if err != nil {
 			t.Errorf("expected no error, got %v", err)
 		}
 
-		retrievedUser, err := repo.GetUserByCID(user.CID)
+		retrievedUser, err := repo.GetUserByCID(context.Background(), user.CID)
 		if err != nil {
 			t.Errorf("expected no error, got %v", err)
 		}
@@ -441,7 +442,7 @@ func TestUpdateUser(t *testing.T) {
 			LastName:      ptr("Doe"),
 			NetworkRating: 100,
 		}
-		err := repo.CreateUser(user)
+		err := repo.CreateUser(context.Background(), user)
 		if err != nil {
 			t.Fatalf("failed to create test user: %v", err)
 		}
@@ -453,12 +454,12 @@ func TestUpdateUser(t *testing.T) {
 			LastName:      ptr("Doe"),
 			NetworkRating: 200,
 		}
-		err = repo.UpdateUser(updateUser)
+		err = repo.UpdateUser(context.Background(), updateUser)
 		if err != nil {
 			t.Errorf("expected no error, got %v", err)
 		}
 
-		retrievedUser, err := repo.GetUserByCID(user.CID)
+		retrievedUser, err := repo.GetUserByCID(context.Background(), user.CID)
 		if err != nil {
 			t.Errorf("expected no error, got %v", err)
 		}
@@ -497,13 +498,13 @@ func TestListUsersAndCount(t *testing.T) {
 			LastName:      ptr(s.last),
 			NetworkRating: s.rating,
 		}
-		if err := repo.CreateUser(u); err != nil {
+		if err := repo.CreateUser(context.Background(), u); err != nil {
 			t.Fatalf("CreateUser: %v", err)
 		}
 	}
 
 	t.Run("list all ordered by cid", func(t *testing.T) {
-		users, err := repo.ListUsers(UserListFilter{Sort: "cid", Limit: 100})
+		users, err := repo.ListUsers(context.Background(), UserListFilter{Sort: "cid", Limit: 100})
 		if err != nil {
 			t.Fatalf("ListUsers: %v", err)
 		}
@@ -518,7 +519,7 @@ func TestListUsersAndCount(t *testing.T) {
 	})
 
 	t.Run("count all", func(t *testing.T) {
-		n, err := repo.CountUsers(UserListFilter{})
+		n, err := repo.CountUsers(context.Background(), UserListFilter{})
 		if err != nil {
 			t.Fatalf("CountUsers: %v", err)
 		}
@@ -528,7 +529,7 @@ func TestListUsersAndCount(t *testing.T) {
 	})
 
 	t.Run("count with query", func(t *testing.T) {
-		n, err := repo.CountUsers(UserListFilter{Query: "smith"})
+		n, err := repo.CountUsers(context.Background(), UserListFilter{Query: "smith"})
 		if err != nil {
 			t.Fatalf("CountUsers: %v", err)
 		}
@@ -538,14 +539,14 @@ func TestListUsersAndCount(t *testing.T) {
 	})
 
 	t.Run("count ignores limit and offset", func(t *testing.T) {
-		n, err := repo.CountUsers(UserListFilter{Limit: 1, Offset: 100})
+		n, err := repo.CountUsers(context.Background(), UserListFilter{Limit: 1, Offset: 100})
 		if err != nil {
 			t.Fatalf("CountUsers: %v", err)
 		}
 		if n != 4 {
 			t.Fatalf("count with Limit/Offset=%d want 4 (full total)", n)
 		}
-		n, err = repo.CountUsers(UserListFilter{Query: "smith", Limit: 1, Offset: 50})
+		n, err = repo.CountUsers(context.Background(), UserListFilter{Query: "smith", Limit: 1, Offset: 50})
 		if err != nil {
 			t.Fatalf("CountUsers: %v", err)
 		}
@@ -556,14 +557,14 @@ func TestListUsersAndCount(t *testing.T) {
 
 	t.Run("filter by rating", func(t *testing.T) {
 		r := 1
-		users, err := repo.ListUsers(UserListFilter{Rating: &r, Sort: "cid"})
+		users, err := repo.ListUsers(context.Background(), UserListFilter{Rating: &r, Sort: "cid"})
 		if err != nil {
 			t.Fatalf("ListUsers: %v", err)
 		}
 		if len(users) != 2 {
 			t.Fatalf("got %d, want 2 rating=1 users", len(users))
 		}
-		n, err := repo.CountUsers(UserListFilter{Rating: &r})
+		n, err := repo.CountUsers(context.Background(), UserListFilter{Rating: &r})
 		if err != nil {
 			t.Fatalf("CountUsers: %v", err)
 		}
@@ -573,7 +574,7 @@ func TestListUsersAndCount(t *testing.T) {
 	})
 
 	t.Run("search by last name", func(t *testing.T) {
-		users, err := repo.ListUsers(UserListFilter{Query: "smith", Sort: "name"})
+		users, err := repo.ListUsers(context.Background(), UserListFilter{Query: "smith", Sort: "name"})
 		if err != nil {
 			t.Fatalf("ListUsers: %v", err)
 		}
@@ -583,7 +584,7 @@ func TestListUsersAndCount(t *testing.T) {
 	})
 
 	t.Run("search by full name", func(t *testing.T) {
-		users, err := repo.ListUsers(UserListFilter{Query: "alice smith"})
+		users, err := repo.ListUsers(context.Background(), UserListFilter{Query: "alice smith"})
 		if err != nil {
 			t.Fatalf("ListUsers: %v", err)
 		}
@@ -597,7 +598,7 @@ func TestListUsersAndCount(t *testing.T) {
 
 	t.Run("search by cid substring", func(t *testing.T) {
 		// First created user typically has cid=1
-		users, err := repo.ListUsers(UserListFilter{Query: "1", Sort: "cid"})
+		users, err := repo.ListUsers(context.Background(), UserListFilter{Query: "1", Sort: "cid"})
 		if err != nil {
 			t.Fatalf("ListUsers: %v", err)
 		}
@@ -607,7 +608,7 @@ func TestListUsersAndCount(t *testing.T) {
 	})
 
 	t.Run("sort by rating desc", func(t *testing.T) {
-		users, err := repo.ListUsers(UserListFilter{Sort: "rating", Desc: true, Limit: 10})
+		users, err := repo.ListUsers(context.Background(), UserListFilter{Sort: "rating", Desc: true, Limit: 10})
 		if err != nil {
 			t.Fatalf("ListUsers: %v", err)
 		}
@@ -620,11 +621,11 @@ func TestListUsersAndCount(t *testing.T) {
 	})
 
 	t.Run("pagination", func(t *testing.T) {
-		page1, err := repo.ListUsers(UserListFilter{Sort: "cid", Limit: 2, Offset: 0})
+		page1, err := repo.ListUsers(context.Background(), UserListFilter{Sort: "cid", Limit: 2, Offset: 0})
 		if err != nil {
 			t.Fatalf("page1: %v", err)
 		}
-		page2, err := repo.ListUsers(UserListFilter{Sort: "cid", Limit: 2, Offset: 2})
+		page2, err := repo.ListUsers(context.Background(), UserListFilter{Sort: "cid", Limit: 2, Offset: 2})
 		if err != nil {
 			t.Fatalf("page2: %v", err)
 		}
@@ -639,7 +640,7 @@ func TestListUsersAndCount(t *testing.T) {
 	t.Run("like metacharacters escaped", func(t *testing.T) {
 		// Literal metacharacters must not act as wildcards against existing names
 		for _, q := range []string{"%", "_", `\`} {
-			users, err := repo.ListUsers(UserListFilter{Query: q})
+			users, err := repo.ListUsers(context.Background(), UserListFilter{Query: q})
 			if err != nil {
 				t.Fatalf("ListUsers Query=%q: %v", q, err)
 			}
@@ -650,7 +651,7 @@ func TestListUsersAndCount(t *testing.T) {
 	})
 
 	t.Run("password empty on list results", func(t *testing.T) {
-		users, err := repo.ListUsers(UserListFilter{Sort: "cid", Limit: 100})
+		users, err := repo.ListUsers(context.Background(), UserListFilter{Sort: "cid", Limit: 100})
 		if err != nil {
 			t.Fatalf("ListUsers: %v", err)
 		}
@@ -666,14 +667,14 @@ func TestListUsersAndCount(t *testing.T) {
 
 	t.Run("limit default when <=0", func(t *testing.T) {
 		// Zero-value Limit → default 50; with only 4 users we still get all 4
-		users, err := repo.ListUsers(UserListFilter{Limit: 0})
+		users, err := repo.ListUsers(context.Background(), UserListFilter{Limit: 0})
 		if err != nil {
 			t.Fatalf("ListUsers: %v", err)
 		}
 		if len(users) != 4 {
 			t.Fatalf("got %d, want 4 (default limit 50 still returns all)", len(users))
 		}
-		users, err = repo.ListUsers(UserListFilter{Limit: -5})
+		users, err = repo.ListUsers(context.Background(), UserListFilter{Limit: -5})
 		if err != nil {
 			t.Fatalf("ListUsers: %v", err)
 		}
@@ -684,7 +685,7 @@ func TestListUsersAndCount(t *testing.T) {
 
 	t.Run("limit hard cap 200", func(t *testing.T) {
 		// Cap is applied; with only 4 users result size is still 4
-		users, err := repo.ListUsers(UserListFilter{Limit: 1000})
+		users, err := repo.ListUsers(context.Background(), UserListFilter{Limit: 1000})
 		if err != nil {
 			t.Fatalf("ListUsers: %v", err)
 		}
@@ -694,7 +695,7 @@ func TestListUsersAndCount(t *testing.T) {
 	})
 
 	t.Run("offset negative clamps to 0", func(t *testing.T) {
-		users, err := repo.ListUsers(UserListFilter{Sort: "cid", Limit: 2, Offset: -10})
+		users, err := repo.ListUsers(context.Background(), UserListFilter{Sort: "cid", Limit: 2, Offset: -10})
 		if err != nil {
 			t.Fatalf("ListUsers: %v", err)
 		}
@@ -702,7 +703,7 @@ func TestListUsersAndCount(t *testing.T) {
 			t.Fatalf("got %d, want 2", len(users))
 		}
 		// Should match offset 0 page
-		page0, err := repo.ListUsers(UserListFilter{Sort: "cid", Limit: 2, Offset: 0})
+		page0, err := repo.ListUsers(context.Background(), UserListFilter{Sort: "cid", Limit: 2, Offset: 0})
 		if err != nil {
 			t.Fatalf("ListUsers: %v", err)
 		}
@@ -712,7 +713,7 @@ func TestListUsersAndCount(t *testing.T) {
 	})
 
 	t.Run("invalid sort falls back to cid", func(t *testing.T) {
-		users, err := repo.ListUsers(UserListFilter{Sort: "nope", Limit: 100})
+		users, err := repo.ListUsers(context.Background(), UserListFilter{Sort: "nope", Limit: 100})
 		if err != nil {
 			t.Fatalf("ListUsers: %v", err)
 		}
@@ -728,14 +729,14 @@ func TestListUsersAndCount(t *testing.T) {
 
 	t.Run("rating filter zero and negative", func(t *testing.T) {
 		// Seed suspended (0) and inactive (-1)
-		if err := repo.CreateUser(&User{Password: "password1", FirstName: ptr("Eve"), LastName: ptr("Suspended"), NetworkRating: 0}); err != nil {
+		if err := repo.CreateUser(context.Background(), &User{Password: "password1", FirstName: ptr("Eve"), LastName: ptr("Suspended"), NetworkRating: 0}); err != nil {
 			t.Fatalf("CreateUser: %v", err)
 		}
-		if err := repo.CreateUser(&User{Password: "password1", FirstName: ptr("Frank"), LastName: ptr("Inactive"), NetworkRating: -1}); err != nil {
+		if err := repo.CreateUser(context.Background(), &User{Password: "password1", FirstName: ptr("Frank"), LastName: ptr("Inactive"), NetworkRating: -1}); err != nil {
 			t.Fatalf("CreateUser: %v", err)
 		}
 		r0 := 0
-		users, err := repo.ListUsers(UserListFilter{Rating: &r0})
+		users, err := repo.ListUsers(context.Background(), UserListFilter{Rating: &r0})
 		if err != nil {
 			t.Fatalf("ListUsers: %v", err)
 		}
@@ -743,7 +744,7 @@ func TestListUsersAndCount(t *testing.T) {
 			t.Fatalf("rating=0: got %d users", len(users))
 		}
 		rm1 := -1
-		users, err = repo.ListUsers(UserListFilter{Rating: &rm1})
+		users, err = repo.ListUsers(context.Background(), UserListFilter{Rating: &rm1})
 		if err != nil {
 			t.Fatalf("ListUsers: %v", err)
 		}
@@ -751,7 +752,7 @@ func TestListUsersAndCount(t *testing.T) {
 			t.Fatalf("rating=-1: got %d users", len(users))
 		}
 		// nil rating still means all
-		n, err := repo.CountUsers(UserListFilter{})
+		n, err := repo.CountUsers(context.Background(), UserListFilter{})
 		if err != nil {
 			t.Fatalf("CountUsers: %v", err)
 		}
@@ -791,30 +792,30 @@ func TestListUsersLikeLiteralMetacharacters(t *testing.T) {
 		{"Alice", "Smith"},
 		{"Bob", "Jones"},
 	} {
-		if err := repo.CreateUser(&User{
+		if err := repo.CreateUser(context.Background(), &User{
 			Password: "password1", FirstName: ptr(s.first), LastName: ptr(s.last), NetworkRating: 1,
 		}); err != nil {
 			t.Fatalf("CreateUser decoy: %v", err)
 		}
 	}
 
-	if err := repo.CreateUser(&User{
+	if err := repo.CreateUser(context.Background(), &User{
 		Password: "password1", FirstName: ptr("Pat"), LastName: ptr("100%"), NetworkRating: 1,
 	}); err != nil {
 		t.Fatalf("CreateUser %%: %v", err)
 	}
-	if err := repo.CreateUser(&User{
+	if err := repo.CreateUser(context.Background(), &User{
 		Password: "password1", FirstName: ptr("Und"), LastName: ptr("a_b"), NetworkRating: 1,
 	}); err != nil {
 		t.Fatalf("CreateUser _: %v", err)
 	}
-	if err := repo.CreateUser(&User{
+	if err := repo.CreateUser(context.Background(), &User{
 		Password: "password1", FirstName: ptr("Back"), LastName: ptr(`x\y`), NetworkRating: 1,
 	}); err != nil {
 		t.Fatalf("CreateUser \\: %v", err)
 	}
 
-	users, err := repo.ListUsers(UserListFilter{Query: "100%"})
+	users, err := repo.ListUsers(context.Background(), UserListFilter{Query: "100%"})
 	if err != nil {
 		t.Fatalf("ListUsers: %v", err)
 	}
@@ -822,7 +823,7 @@ func TestListUsersLikeLiteralMetacharacters(t *testing.T) {
 		t.Fatalf("literal 100%%: got %d users", len(users))
 	}
 
-	users, err = repo.ListUsers(UserListFilter{Query: "a_b"})
+	users, err = repo.ListUsers(context.Background(), UserListFilter{Query: "a_b"})
 	if err != nil {
 		t.Fatalf("ListUsers: %v", err)
 	}
@@ -831,7 +832,7 @@ func TestListUsersLikeLiteralMetacharacters(t *testing.T) {
 	}
 
 	// Bare "_" must not widen to every single-char-gap match of other names
-	users, err = repo.ListUsers(UserListFilter{Query: "_"})
+	users, err = repo.ListUsers(context.Background(), UserListFilter{Query: "_"})
 	if err != nil {
 		t.Fatalf("ListUsers: %v", err)
 	}
@@ -839,7 +840,7 @@ func TestListUsersLikeLiteralMetacharacters(t *testing.T) {
 		t.Fatalf("literal _: want only a_b row, got %d", len(users))
 	}
 
-	users, err = repo.ListUsers(UserListFilter{Query: `x\y`})
+	users, err = repo.ListUsers(context.Background(), UserListFilter{Query: `x\y`})
 	if err != nil {
 		t.Fatalf("ListUsers: %v", err)
 	}
@@ -848,7 +849,7 @@ func TestListUsersLikeLiteralMetacharacters(t *testing.T) {
 	}
 
 	// Bare "%" still matches only names that contain a percent sign
-	users, err = repo.ListUsers(UserListFilter{Query: "%"})
+	users, err = repo.ListUsers(context.Background(), UserListFilter{Query: "%"})
 	if err != nil {
 		t.Fatalf("ListUsers: %v", err)
 	}
@@ -861,14 +862,14 @@ func TestListUsersEmptyDB(t *testing.T) {
 	db, repo := setupTestDB(t)
 	defer db.Close()
 
-	users, err := repo.ListUsers(UserListFilter{})
+	users, err := repo.ListUsers(context.Background(), UserListFilter{})
 	if err != nil {
 		t.Fatalf("ListUsers: %v", err)
 	}
 	if len(users) != 0 {
 		t.Fatalf("got %d, want 0", len(users))
 	}
-	n, err := repo.CountUsers(UserListFilter{})
+	n, err := repo.CountUsers(context.Background(), UserListFilter{})
 	if err != nil {
 		t.Fatalf("CountUsers: %v", err)
 	}
@@ -897,7 +898,7 @@ func TestListUsersLimitDefaultWithManyRows(t *testing.T) {
 	}
 
 	// Default limit 50
-	users, err := repo.ListUsers(UserListFilter{Limit: 0})
+	users, err := repo.ListUsers(context.Background(), UserListFilter{Limit: 0})
 	if err != nil {
 		t.Fatalf("ListUsers: %v", err)
 	}
@@ -906,7 +907,7 @@ func TestListUsersLimitDefaultWithManyRows(t *testing.T) {
 	}
 
 	// Negative limit also defaults to 50
-	users, err = repo.ListUsers(UserListFilter{Limit: -1})
+	users, err = repo.ListUsers(context.Background(), UserListFilter{Limit: -1})
 	if err != nil {
 		t.Fatalf("ListUsers: %v", err)
 	}
@@ -915,7 +916,7 @@ func TestListUsersLimitDefaultWithManyRows(t *testing.T) {
 	}
 
 	// Hard cap 200
-	users, err = repo.ListUsers(UserListFilter{Limit: 1000})
+	users, err = repo.ListUsers(context.Background(), UserListFilter{Limit: 1000})
 	if err != nil {
 		t.Fatalf("ListUsers: %v", err)
 	}
@@ -923,7 +924,7 @@ func TestListUsersLimitDefaultWithManyRows(t *testing.T) {
 		t.Fatalf("hard cap: got %d, want 200", len(users))
 	}
 
-	n, err := repo.CountUsers(UserListFilter{})
+	n, err := repo.CountUsers(context.Background(), UserListFilter{})
 	if err != nil {
 		t.Fatalf("CountUsers: %v", err)
 	}
@@ -942,15 +943,15 @@ func TestDeleteUser(t *testing.T) {
 		LastName:      ptr("Me"),
 		NetworkRating: 1,
 	}
-	if err := repo.CreateUser(user); err != nil {
+	if err := repo.CreateUser(context.Background(), user); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
 	cid := user.CID
 
-	if err := repo.DeleteUser(cid); err != nil {
+	if err := repo.DeleteUser(context.Background(), cid); err != nil {
 		t.Fatalf("DeleteUser: %v", err)
 	}
-	_, err := repo.GetUserByCID(cid)
+	_, err := repo.GetUserByCID(context.Background(), cid)
 	if err == nil {
 		t.Fatal("expected ErrNoRows after delete")
 	}
@@ -959,7 +960,7 @@ func TestDeleteUser(t *testing.T) {
 	}
 
 	// Missing CID
-	err = repo.DeleteUser(999999)
+	err = repo.DeleteUser(context.Background(), 999999)
 	if err == nil {
 		t.Fatal("expected ErrNoRows for missing CID")
 	}
