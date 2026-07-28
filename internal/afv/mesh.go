@@ -1,6 +1,6 @@
 package afv
 
-// AFV multi-node mesh (PR-10 / KD-17).
+// AFV multi-node mesh (PR-10 / PR-10b / KD-17).
 //
 // Ops: sticky LB required — each node mints unique ChannelTag + AEAD keys and
 // advertises its own AFV_UDP_ADVERTISE_IPV4. Clients must use the same node for
@@ -8,14 +8,15 @@ package afv
 // replace sticky affinity. AEAD keys never leave the home node; cross-node
 // audio is re-encrypted at the listener's home with local ClientRxKey only.
 //
-// Production: AFV_CLUSTER_ENABLED=true without TCP mesh in this binary fails
-// closed at startup (MemoryMesh is tests-only via SetMesh).
+// Production: HybridMesh (TCP control + UDP voice) when AFV_CLUSTER_ENABLED=true
+// with valid VOICE_LISTEN + peers. MemoryMesh is tests-only via SetMesh.
 
 import (
 	"context"
 	"fmt"
 	"log/slog"
 	"net"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,7 +25,7 @@ import (
 )
 
 // Mesh is the AFV inter-node fabric. Implementations: MemoryMesh (tests);
-// TCPMesh is PR-10b / optional.
+// HybridMesh (production: TCP control + UDP AudioRelay).
 //
 // All publish methods must be non-blocking w.r.t. the UDP hot path (enqueue or
 // drop). Callers must not hold registry locks across Publish*/Enqueue*.
@@ -103,7 +104,7 @@ type RelayTxRadio struct {
 	HeightM float64
 }
 
-// MeshConfig is shared construction config for MemoryMesh / future TCPMesh.
+// MeshConfig is shared construction config for MemoryMesh.
 type MeshConfig struct {
 	NodeID  string
 	PSK     string
@@ -115,17 +116,19 @@ type MeshConfig struct {
 const (
 	interestMinInterval   = 500 * time.Millisecond // ≤ 2 Hz
 	defaultPeerDeathGrace = 15 * time.Second
+	defaultMeshHeartbeat  = 2 * time.Second
 )
 
 // interestMaxEntries is the Interest set cap (M-5). Var so tests can lower it.
 var interestMaxEntries = 4096
 
-// --- Cluster config validation (M-11) ---
+// --- Cluster config validation (M-11 / H-20) ---
 
-// ClusterPeer is one static remote peer (id + host:port).
+// ClusterPeer is one static remote peer (TCP control + UDP voice).
 type ClusterPeer struct {
-	ID   string
-	Addr string
+	ID        string
+	Addr      string // TCP host:port (control) — SplitHostPort-valid
+	VoiceAddr string // UDP host:port (voice) — derived or explicit
 }
 
 // ValidateCluster fails closed when cluster is enabled with incomplete config.
@@ -140,9 +143,32 @@ func (c *Config) ValidateCluster() error {
 	if listen == "" {
 		return fmt.Errorf("AFV_CLUSTER_LISTEN required when AFV_CLUSTER_ENABLED=true")
 	}
-	if _, _, err := net.SplitHostPort(listen); err != nil {
+	tcpHost, tcpPortStr, err := net.SplitHostPort(listen)
+	if err != nil {
 		return fmt.Errorf("AFV_CLUSTER_LISTEN: want host:port: %w", err)
 	}
+	tcpPort, err := parseUint16Port(tcpPortStr)
+	if err != nil || tcpPort == 0 {
+		return fmt.Errorf("AFV_CLUSTER_LISTEN: invalid port")
+	}
+	_ = tcpHost
+
+	voiceListen := strings.TrimSpace(c.ClusterVoiceListen)
+	if voiceListen == "" {
+		return fmt.Errorf("AFV_CLUSTER_VOICE_LISTEN required when AFV_CLUSTER_ENABLED=true")
+	}
+	voiceHost, voicePortStr, err := net.SplitHostPort(voiceListen)
+	if err != nil {
+		return fmt.Errorf("AFV_CLUSTER_VOICE_LISTEN: want host:port: %w", err)
+	}
+	voicePort, err := parseUint16Port(voicePortStr)
+	if err != nil || voicePort == 0 {
+		return fmt.Errorf("AFV_CLUSTER_VOICE_LISTEN: invalid port (port 0 rejected)")
+	}
+	if voicePortStr == tcpPortStr {
+		return fmt.Errorf("AFV_CLUSTER_VOICE_LISTEN: must differ from AFV_CLUSTER_LISTEN port")
+	}
+
 	if strings.TrimSpace(c.ClusterPSK) == "" {
 		return fmt.Errorf("AFV_CLUSTER_PSK required when AFV_CLUSTER_ENABLED=true")
 	}
@@ -157,7 +183,11 @@ func (c *Config) ValidateCluster() error {
 		return fmt.Errorf("AFV_CLUSTER_PEERS: max 4 remote peers, got %d", len(peers))
 	}
 	self := strings.TrimSpace(c.ClusterNodeID)
-	seen := make(map[string]struct{}, len(peers))
+	seenID := make(map[string]struct{}, len(peers))
+	seenVoice := make(map[string]struct{}, len(peers))
+	localVoiceNorm := net.JoinHostPort(voiceHost, voicePortStr)
+	localTCPNorm := net.JoinHostPort(tcpHost, tcpPortStr)
+
 	for _, p := range peers {
 		if p.ID == self {
 			return fmt.Errorf("AFV_CLUSTER_PEERS: must not include self node id %q", self)
@@ -168,15 +198,97 @@ func (c *Config) ValidateCluster() error {
 		if _, _, err := net.SplitHostPort(p.Addr); err != nil {
 			return fmt.Errorf("AFV_CLUSTER_PEERS: peer %q addr want host:port: %w", p.ID, err)
 		}
-		if _, ok := seen[p.ID]; ok {
+		if _, ok := seenID[p.ID]; ok {
 			return fmt.Errorf("AFV_CLUSTER_PEERS: duplicate peer id %q", p.ID)
 		}
-		seen[p.ID] = struct{}{}
+		seenID[p.ID] = struct{}{}
+		if _, ok := seenVoice[p.VoiceAddr]; ok {
+			return fmt.Errorf("AFV_CLUSTER_PEERS: duplicate peer VoiceAddr %q", p.VoiceAddr)
+		}
+		seenVoice[p.VoiceAddr] = struct{}{}
+		// H-20: full host:port equality only for local voice vs peer voice.
+		if p.VoiceAddr == localVoiceNorm {
+			return fmt.Errorf("AFV_CLUSTER_VOICE_LISTEN equals peer %q VoiceAddr %q", p.ID, p.VoiceAddr)
+		}
+		// Optional same-host loopback tightening.
+		if sameLoopbackOrWildcardVoiceCollision(voiceHost, voicePortStr, p.VoiceAddr) {
+			return fmt.Errorf("AFV_CLUSTER_VOICE_LISTEN collides with peer %q loopback VoiceAddr %q", p.ID, p.VoiceAddr)
+		}
+		if p.Addr == localTCPNorm {
+			return fmt.Errorf("AFV_CLUSTER_LISTEN equals peer %q Addr %q", p.ID, p.Addr)
+		}
+	}
+
+	// H-20: ClusterVoiceListen ≠ UDPListen (client CryptoDTO socket).
+	if err := rejectSameSocket(c.ClusterVoiceListen, c.UDPListen, "AFV_CLUSTER_VOICE_LISTEN", "AFV_UDP_LISTEN"); err != nil {
+		return err
 	}
 	return nil
 }
 
-// parseClusterPeers parses "id=host:port,id2=host:port2".
+// sameLoopbackOrWildcardVoiceCollision catches localhost multi-process when local
+// binds loopback/wildcard and peer is loopback with the same voice port.
+func sameLoopbackOrWildcardVoiceCollision(localHost, localPort, peerVoice string) bool {
+	ph, pp, err := net.SplitHostPort(peerVoice)
+	if err != nil || pp != localPort {
+		return false
+	}
+	if !isLoopbackHost(ph) {
+		return false
+	}
+	return isLoopbackHost(localHost) || isWildcardHost(localHost)
+}
+
+func isLoopbackHost(h string) bool {
+	h = strings.TrimSpace(h)
+	if h == "localhost" || h == "127.0.0.1" || h == "::1" {
+		return true
+	}
+	ip := net.ParseIP(h)
+	return ip != nil && ip.IsLoopback()
+}
+
+func isWildcardHost(h string) bool {
+	h = strings.TrimSpace(h)
+	return h == "" || h == "0.0.0.0" || h == "::" || h == "*"
+}
+
+// rejectSameSocket fails if two listen specs collide (wildcard-equal hosts if ports equal).
+func rejectSameSocket(a, b, nameA, nameB string) error {
+	a = strings.TrimSpace(a)
+	b = strings.TrimSpace(b)
+	if a == "" || b == "" {
+		return nil
+	}
+	ah, ap, errA := net.SplitHostPort(a)
+	bh, bp, errB := net.SplitHostPort(b)
+	if errA != nil || errB != nil {
+		return nil // other validators handle format
+	}
+	if ap != bp {
+		return nil
+	}
+	if ah == bh || isWildcardHost(ah) || isWildcardHost(bh) {
+		return fmt.Errorf("%s must differ from %s (same host:port / wildcard port collision)", nameA, nameB)
+	}
+	// concrete equal already covered by ah==bh
+	return nil
+}
+
+func parseUint16Port(s string) (uint16, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, fmt.Errorf("empty port")
+	}
+	n, err := strconv.ParseUint(s, 10, 16)
+	if err != nil {
+		return 0, err
+	}
+	return uint16(n), nil
+}
+
+// parseClusterPeers parses AFV_CLUSTER_PEERS with optional /voicePort (H-4).
+// Grammar: id=host:tcpPort[/voicePort],... — strip /voice before SplitHostPort.
 func parseClusterPeers(s string) ([]ClusterPeer, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -194,18 +306,64 @@ func parseClusterPeers(s string) ([]ClusterPeer, error) {
 			return nil, fmt.Errorf("AFV_CLUSTER_PEERS: invalid entry %q (want id=host:port)", p)
 		}
 		id := strings.TrimSpace(p[:eq])
-		addr := strings.TrimSpace(p[eq+1:])
-		if id == "" || addr == "" {
+		rest := strings.TrimSpace(p[eq+1:])
+		if id == "" || rest == "" {
 			return nil, fmt.Errorf("AFV_CLUSTER_PEERS: invalid entry %q", p)
 		}
-		out = append(out, ClusterPeer{ID: id, Addr: addr})
+
+		hostPort := rest
+		var voicePort uint16
+		voiceSet := false
+		if slash := strings.LastIndexByte(rest, '/'); slash >= 0 {
+			// Extra '/' in the hostPort side is rejected by SplitHostPort or empty checks.
+			if strings.Count(rest, "/") > 1 {
+				return nil, fmt.Errorf("AFV_CLUSTER_PEERS: invalid entry %q (extra /)", p)
+			}
+			hostPort = strings.TrimSpace(rest[:slash])
+			voicePortStr := strings.TrimSpace(rest[slash+1:])
+			if hostPort == "" || voicePortStr == "" {
+				return nil, fmt.Errorf("AFV_CLUSTER_PEERS: empty voice port in %q", p)
+			}
+			vp, err := parseUint16Port(voicePortStr)
+			if err != nil {
+				return nil, fmt.Errorf("AFV_CLUSTER_PEERS: non-numeric voice port in %q", p)
+			}
+			if vp == 0 {
+				return nil, fmt.Errorf("AFV_CLUSTER_PEERS: port 0 rejected in %q", p)
+			}
+			voicePort = vp
+			voiceSet = true
+		}
+
+		host, tcpPortStr, err := net.SplitHostPort(hostPort)
+		if err != nil {
+			return nil, fmt.Errorf("AFV_CLUSTER_PEERS: peer %q addr want host:port: %w", id, err)
+		}
+		if strings.TrimSpace(host) == "" {
+			return nil, fmt.Errorf("AFV_CLUSTER_PEERS: peer %q empty host", id)
+		}
+		tcpPort, err := parseUint16Port(tcpPortStr)
+		if err != nil {
+			return nil, fmt.Errorf("AFV_CLUSTER_PEERS: peer %q non-numeric tcp port", id)
+		}
+		if tcpPort == 0 {
+			return nil, fmt.Errorf("AFV_CLUSTER_PEERS: port 0 rejected for peer %q", id)
+		}
+		if !voiceSet {
+			if tcpPort == 65535 {
+				return nil, fmt.Errorf("AFV_CLUSTER_PEERS: voice port overflow for peer %q", id)
+			}
+			voicePort = tcpPort + 1
+		}
+		if voicePort == 0 {
+			return nil, fmt.Errorf("AFV_CLUSTER_PEERS: port 0 rejected for peer %q voice", id)
+		}
+		voiceAddr := net.JoinHostPort(host, strconv.Itoa(int(voicePort)))
+		// Preserve SplitHostPort-valid form of hostPort (brackets for IPv6).
+		out = append(out, ClusterPeer{ID: id, Addr: hostPort, VoiceAddr: voiceAddr})
 	}
 	return out, nil
 }
-
-// errClusterTCPNotBuilt is returned when ENABLED=true but TCP mesh is not available.
-var errClusterTCPNotBuilt = fmt.Errorf(
-	"AFV_CLUSTER_ENABLED=true but AFV mesh TCP is not built in this binary (use tests with SetMesh(MemoryMesh) or enable PR-10b TCP)")
 
 // --- Server mesh hooks ---
 

@@ -77,13 +77,23 @@ func NewDefault(ctx context.Context) (*Server, error) {
 	if err := cfg.ValidateCluster(); err != nil {
 		return nil, err
 	}
-	// M-11: ENABLED=true without TCP mesh in this binary fails closed.
-	// Never wire production NewDefault to MemoryMesh.
+
+	s := New(cfg, repos.UserRepo, repos.ConfigRepo, jwtSecret)
+
+	// Production hybrid mesh (PR-10b): TCP control + UDP voice. Never MemoryMesh.
 	if cfg.ClusterEnabled {
-		return nil, errClusterTCPNotBuilt
+		hmCfg, err := hybridConfigFrom(cfg)
+		if err != nil {
+			return nil, fmt.Errorf("afv hybrid mesh: %w", err)
+		}
+		hm, err := NewHybridMesh(hmCfg)
+		if err != nil {
+			return nil, fmt.Errorf("afv hybrid mesh failed to construct: %w", err)
+		}
+		s.SetMesh(hm)
 	}
 
-	return New(cfg, repos.UserRepo, repos.ConfigRepo, jwtSecret), nil
+	return s, nil
 }
 
 func resolveJWTSecret(ctx context.Context, cfg *Config, kv db.ConfigRepository) ([]byte, error) {

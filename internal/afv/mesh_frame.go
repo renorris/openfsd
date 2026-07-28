@@ -1,16 +1,15 @@
 package afv
 
-// AFV multi-node mesh framing (PR-10 / KD-17).
+// AFV multi-node mesh framing (PR-10 / PR-10b / KD-17).
 //
 // Hello auth (M-3): constant-time compare of shared PSK. Trust root and payload
 // shape match FSD mesh Hello (nodeID + PSK strings); comparison is CT-upgraded
 // vs FSD's non-constant-time !=. Do not log PSK contents on failure.
 //
-// Hello first-frame rule (TCP only, PR-10b / M-11): on a TCP mesh connection the
-// first frame must be type Hello; any other type closes the conn. MemoryMesh has
-// no wire Hello — auth is constructor PSK verify on Start. When mesh_tcp.go
-// lands, enforce first-frame type == MeshTypeHello on accept/dial before any
-// Snapshot/Interest/AudioRelay.
+// Hello first-frame rule (TCP control plane, HybridMesh): on a TCP mesh
+// connection the first frame must be type Hello; any other type closes the conn.
+// MemoryMesh has no wire Hello — auth is constructor PSK verify on Start.
+// AudioRelay (type 20) is forbidden on TCP (H-2); production voice is UDP only.
 //
 // Local length-prefix framing — do not import internal/cluster.
 
@@ -99,6 +98,46 @@ func DecodeMeshFrame(r io.Reader) (MeshFrame, error) {
 		if _, err := io.ReadFull(r, payload); err != nil {
 			return MeshFrame{}, err
 		}
+	}
+	return MeshFrame{Type: typ, Payload: payload}, nil
+}
+
+// EncodeMeshFrameBytes returns the full length-prefixed mesh frame as a byte slice.
+func EncodeMeshFrameBytes(typ byte, payload []byte) ([]byte, error) {
+	if len(payload) > MaxMeshPayload {
+		return nil, errMeshFrameTooLarge
+	}
+	n := uint32(1 + len(payload))
+	out := make([]byte, 5+len(payload))
+	binary.BigEndian.PutUint32(out[0:4], n)
+	out[4] = typ
+	copy(out[5:], payload)
+	return out, nil
+}
+
+// DecodeMeshFrameExact decodes exactly one frame from b with zero trailing bytes
+// (H-3: decoded frame length == len(b)). Used for UDP voice datagrams.
+func DecodeMeshFrameExact(b []byte) (MeshFrame, error) {
+	if len(b) < 5 {
+		return MeshFrame{}, errMeshShortFrame
+	}
+	n := binary.BigEndian.Uint32(b[0:4])
+	if n == 0 {
+		return MeshFrame{}, errMeshShortFrame
+	}
+	if n > maxMeshFrameTotal {
+		return MeshFrame{}, errMeshFrameTooLarge
+	}
+	// 4-byte length prefix + n body bytes must consume the whole datagram.
+	if 4+int(n) != len(b) {
+		return MeshFrame{}, errMeshBadPayload
+	}
+	typ := b[4]
+	payLen := int(n) - 1
+	var payload []byte
+	if payLen > 0 {
+		payload = make([]byte, payLen)
+		copy(payload, b[5:5+payLen])
 	}
 	return MeshFrame{Type: typ, Payload: payload}, nil
 }

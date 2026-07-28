@@ -5,7 +5,7 @@
 | **Document** | AFV (Audio for VATSIM) server — full feature design |
 | **Author** | _(design author / implementer)_ |
 | **Date** | 2026-07-28 |
-| **Status** | **P0 Implemented** (single-node REST + UDP on `dev`; design history retained). Mesh: MemoryMesh path landed (PR-10); production TCP = PR-10b. |
+| **Status** | **P0 Implemented** (single-node REST + UDP on `dev`; design history retained). Mesh: MemoryMesh path landed (PR-10); production hybrid mesh = PR-10b (`docs/design/afv-mesh-pr10b.md`). |
 | **Project** | openfsd |
 | **Target land path** | `docs/design/afv-server.md` |
 | **Related** | `Agents.md`, `docs/design/distributed-openfsd.md`, `internal/auth`, `internal/geo`, `internal/cluster`, `internal/db`, `cmd/openfsd/main.go`, [AFV-Native](https://github.com/xsquawkbox/AFV-Native) (BSD-3) |
@@ -20,8 +20,8 @@
 |-------|--------|
 | P0 single-node (`pkg/afvprotocol`, `internal/afv`, `-afv`) | **Landed** — REST auth/callsign/transceivers; UDP H/HA + AT→AR; range model; reaper; empty stations route |
 | PR-10 mesh (MemoryMesh + framing + Interest + AudioRelay) | **Landed** (in-process / test mesh; e2e Cases A–F) |
-| PR-10b production TCP mesh | **Not landed** — `AFV_CLUSTER_ENABLED=true` fails closed without TCP in binary |
-| Operator docs | Wiki Configuration/Deployment AFV sections; root README |
+| PR-10b production hybrid mesh | **Landed** — TCP control + UDP AudioRelay (`HybridMesh`); see `docs/design/afv-mesh-pr10b.md` |
+| Operator docs | Wiki Configuration/Deployment AFV sections (incl. multi-node hybrid mesh); root README |
 
 Design body below is the engineering record (decisions, protocol, PR plan). Prefer wiki + `internal/afv` for day-to-day ops.
 
@@ -891,26 +891,27 @@ Why separate from `internal/cluster`: import allowlist, rate, interest model.
 
 **Goals:** in-process / localhost **memory mesh** or TCP between two nodes; directory sync; AT relay; e2e two clients on different nodes hear each other in range.
 
-##### Normative mesh framing (KD-17) — first cut
+##### Normative mesh framing (KD-17) — production transport (PR-10b)
 
 | Item | Spec |
 |------|------|
-| Transport | TCP between static peers (`AFV_CLUSTER_PEERS=id=host:port,...`) |
-| Frame | `[u32 BE length][u8 type][payload]` where length = 1+len(payload); max payload **1 MiB** |
-| Auth | First message must be Hello with HMAC-SHA256(PSK, nodeID\|\|nonce) or simple constant-time compare of shared `AFV_CLUSTER_PSK` on Hello (document chosen scheme in PR); reject peers failing auth |
-| Types | `1=Hello`, `2=Heartbeat`, `10=TrxSnapshot`, `11=TrxDelta`, `12=SessionLeave`, `20=AudioRelay`, `30=Interest` |
-| Heartbeat | every 2s; peer-death after 15s → drop remote directory entries for that node; local sessions unaffected |
+| **Control transport** | **TCP** between static peers (`AFV_CLUSTER_LISTEN`, `AFV_CLUSTER_PEERS=id=host:tcpPort[/voicePort],...`) |
+| **AudioRelay (type 20)** | **UDP mesh voice only** (`AFV_CLUSTER_VOICE_LISTEN` + peer voice addrs); **never on TCP** |
+| Frame | `[u32 BE length][u8 type][payload]` where length = 1+len(payload); TCP max payload **1 MiB**; UDP voice max **16 KiB** datagram |
+| Auth | First **TCP** frame must be Hello; constant-time compare of shared `AFV_CLUSTER_PSK`; reject peers failing auth |
+| Types | `1=Hello`, `2=Heartbeat`, `10=TrxSnapshot`, `11=TrxDelta`, `12=SessionLeave`, `20=AudioRelay` (**UDP only**), `30=Interest` |
+| Heartbeat | every 2s on TCP; peer-death after 15s (or TCP read/write error) → drop remote directory entries for that node; local sessions unaffected |
 | Interest | each node advertises set of `(freqHz, cellKey)` for local RX; rate ≤ 2 Hz; cap **4096** entries (drop coarsest cells if over) |
-| AudioRelay payload | msgpack/json binary: originNode, callsign, seq, audio, last, isXC, []{freq, lat, lon, alt, txID} — **never client AEAD keys** |
-| Relay queues | per-peer outbound channel depth **256**; **drop oldest AudioRelay** under pressure; never block UDP hot path on full mesh queue |
-| Deadlock | never hold registry lock while sending on mesh TCP |
-| Max peers first cut | **≤ 4** (document; like FSD mesh caution) |
-| Sticky LB | required: REST sticky by CID or per-node API only advertises local UDP |
-| Dual-login | per-region uniqueness only in first cut; no cluster-wide claim |
+| AudioRelay payload | originNode, callsign, seq, audio, last, isATC, isXC, []{freq, lat, lon, alt, txID} — **never client AEAD keys** |
+| Relay queues | voice depth **256** drop-oldest (UDP); control depth **64** drop-oldest (TCP); never block client UDP hot path |
+| Deadlock | never hold registry lock while sending on mesh TCP/UDP |
+| Max peers | **≤ 4** remote |
+| Sticky LB | required: REST sticky by CID or per-node API only advertises local client UDP (`AFV_UDP_ADVERTISE_IPV4`) |
+| Dual-login | per-region uniqueness only; no cluster-wide claim |
 
 Keys never leave the home node. Local node re-runs range model for **local** RX only and encrypts AR with local keys.
 
-**PR plan:** PR-10 is **framing + memory mesh two-node e2e only**. Production TCP polish / interest caps / ops docs may split to PR-10b after a short design addendum if scope grows. Full FSD-mesh-scale work is **out of band** relative to P0.
+**Normative production design:** `docs/design/afv-mesh-pr10b.md` (hybrid TCP control + UDP voice). MemoryMesh remains tests-only.
 
 ---
 

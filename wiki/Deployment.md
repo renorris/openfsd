@@ -182,6 +182,29 @@ AFV is **opt-in** (`-afv`). It is not started by the default Docker CMD.
 
 Share the same `DATABASE_*` as FSD so AFV authenticates against the same certificates. Optional `AFV_REQUIRE_FSD_ONLINE=true` gates voice sessions on the FSD online_users service.
 
-Multi-node AFV mesh (`AFV_CLUSTER_*`) directory + AT relay is implemented for in-process/MemoryMesh testing; **production TCP mesh is not enabled** in the binary yet (`AFV_CLUSTER_ENABLED=true` fails closed until PR-10b). See `docs/design/afv-server.md` and `docs/design/afv-mesh-pr10.md`.
+### Multi-node AFV (hybrid mesh)
 
-Full env list: [Configuration](Configuration.md#afv-voice-optional).
+Production multi-node voice uses a **hybrid mesh** (PR-10b): **TCP control** (Hello, Heartbeat, directory, Interest) + **UDP AudioRelay** between AFV processes. Clients remain sticky to one home node; mesh is inter-node only. AEAD keys never leave the home node.
+
+| Plane | Env | Notes |
+|-------|-----|--------|
+| Control TCP | `AFV_CLUSTER_LISTEN` | Hello first-frame + PSK; dial if peer id > self |
+| Voice UDP | `AFV_CLUSTER_VOICE_LISTEN` | Type-20 AudioRelay only; allowlist of peer voice addrs |
+| Peers | `AFV_CLUSTER_PEERS` | `id=host:tcpPort[/voicePort]` (default voice = TCP+1); max 4 remote |
+| PSK | `AFV_CLUSTER_PSK` | Shared secret; required when enabled |
+
+**Firewall / security groups:** open **both** control TCP and mesh voice UDP between nodes. Client CryptoDTO UDP (`AFV_UDP_LISTEN`, often 50000) is **independent** of mesh voice (often N+1).
+
+**Sticky LB:** REST must stay on the node that minted channel keys; advertise per-node `AFV_UDP_ADVERTISE_IPV4`. Mesh does not replace client affinity.
+
+**Ops checklist:**
+
+1. Both nodes log control TCP listen + voice UDP listen at Start
+2. Hello success both directions
+3. Interest non-empty after clients bind
+4. Cross-node AR heard (in-range clients on different homes)
+5. Kill one process → peer death warn; survivors keep local A2A
+6. Wrong PSK → auth fail; no voice
+7. If Interest is non-empty but cross-node mute: check UDP firewall / path MTU (large clamps can IP-fragment on hostile paths)
+
+Full env list + two-node example: [Configuration](Configuration.md#afv-voice-optional). Design: `docs/design/afv-mesh-pr10b.md`.

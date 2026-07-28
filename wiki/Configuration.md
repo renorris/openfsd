@@ -99,13 +99,20 @@ Enabled only when the process is started with **`-afv`**. Shares `DATABASE_*` wi
 | `AFV_RANGE_EDGE_RATIO` | Range edge ratio for volume falloff | `0.1` |
 | `AFV_STATIONS_FILE` | Optional station alias file (empty → `[]` aliases) | *(empty)* |
 | `AFV_CROSS_COUPLE` | Multi-freq ATC cross-coupling | `true` |
-| `AFV_CLUSTER_ENABLED` | AFV multi-node mesh | `false` |
+| `AFV_CLUSTER_ENABLED` | AFV multi-node mesh (hybrid TCP control + UDP voice) | `false` |
 | `AFV_CLUSTER_NODE_ID` | AFV mesh node id | *(required when enabled)* |
-| `AFV_CLUSTER_LISTEN` | AFV mesh listen | *(required when enabled)* |
-| `AFV_CLUSTER_PEERS` | `id=host:port,...` (max 4 remote) | *(required when enabled)* |
-| `AFV_CLUSTER_PSK` | AFV mesh shared secret | *(required when enabled)* |
+| `AFV_CLUSTER_LISTEN` | **TCP control** listen `host:port` | *(required when enabled)* |
+| `AFV_CLUSTER_VOICE_LISTEN` | **UDP mesh voice** listen `host:port` (separate from client `AFV_UDP_LISTEN`) | *(required when enabled)* |
+| `AFV_CLUSTER_PEERS` | Remote peers: `id=host:tcpPort[/voicePort],...` (max 4). Default voice port = TCP+1 | *(required when enabled)* |
+| `AFV_CLUSTER_PSK` | Shared Hello secret (constant-time compare) | *(required when enabled)* |
 
-**Note:** `AFV_CLUSTER_ENABLED=true` currently **fails closed** without production TCP mesh in the binary (MemoryMesh is tests-only). See [Deployment](Deployment.md#optional-afv-voice).
+**Multi-node notes:**
+
+- Mesh is **inter-node only**. Clients stay sticky to one home node for REST + client UDP (`AFV_UDP_ADVERTISE_IPV4`).
+- Open **both** control TCP and voice UDP between node security groups.
+- Peer grammar examples: `n2=10.0.0.2:17000` (voice `10.0.0.2:17001`), `n2=10.0.0.2:17000/17100`, `n2=[2001:db8::1]:17000`.
+- `AFV_CLUSTER_VOICE_LISTEN` must differ from `AFV_UDP_LISTEN` and from local control port. Recommended multi-host: every node `LISTEN=0.0.0.0:N`, `VOICE_LISTEN=0.0.0.0:N+1`, peers `id=otherHost:N`.
+- Design: `docs/design/afv-mesh-pr10b.md`. Ops: [Deployment](Deployment.md#optional-afv-voice).
 
 Minimal single-node AFV example:
 
@@ -115,6 +122,32 @@ AFV_API_PUBLIC_BASE_URL=https://voice.example.com
 AFV_UDP_LISTEN=0.0.0.0:50000
 AFV_UDP_ADVERTISE_IPV4=voice.example.com:50000
 DATABASE_SOURCE_NAME=/db/openfsd.db?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)
+```
+
+Two-node localhost hybrid mesh example:
+
+```text
+# Node n1
+AFV_CLUSTER_ENABLED=true
+AFV_CLUSTER_NODE_ID=n1
+AFV_CLUSTER_LISTEN=127.0.0.1:17000
+AFV_CLUSTER_VOICE_LISTEN=127.0.0.1:17001
+AFV_CLUSTER_PEERS=n2=127.0.0.1:17010/17011
+AFV_CLUSTER_PSK=dev-shared-secret
+AFV_UDP_LISTEN=127.0.0.1:50000
+AFV_UDP_ADVERTISE_IPV4=127.0.0.1:50000
+AFV_API_LISTEN=127.0.0.1:8080
+
+# Node n2
+AFV_CLUSTER_ENABLED=true
+AFV_CLUSTER_NODE_ID=n2
+AFV_CLUSTER_LISTEN=127.0.0.1:17010
+AFV_CLUSTER_VOICE_LISTEN=127.0.0.1:17011
+AFV_CLUSTER_PEERS=n1=127.0.0.1:17000/17001
+AFV_CLUSTER_PSK=dev-shared-secret
+AFV_UDP_LISTEN=127.0.0.1:50001
+AFV_UDP_ADVERTISE_IPV4=127.0.0.1:50001
+AFV_API_LISTEN=127.0.0.1:8081
 ```
 
 ### Logging

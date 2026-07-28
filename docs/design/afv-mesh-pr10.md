@@ -5,9 +5,10 @@
 | **Title** | AFV multi-node mesh — directory sync + AT frame relay |
 | **Author** | openfsd design (implementer-ready) |
 | **Date** | 2026-07-28 |
-| **Status** | **Memory path Implemented** (PR-10 on `dev`: framing, Interest, AudioRelay, MemoryMesh e2e Cases A–F, fail-closed `ENABLED` without TCP). **TCP mesh = PR-10b** (not in production binary). |
+| **Status** | **Memory path Implemented** (PR-10: framing, Interest, AudioRelay, MemoryMesh e2e Cases A–F). **Production mesh = PR-10b hybrid TCP control + UDP voice** (see `docs/design/afv-mesh-pr10b.md`; TCP-only voice **superseded**). |
 | **Parent** | `docs/design/afv-server.md` (Clustering, KD-8/9/16/17, PR-10) |
 | **Contract** | `docs/design/afv-mesh-implementer-prompt.md` |
+| **Production transport** | `docs/design/afv-mesh-pr10b.md` |
 
 ---
 
@@ -16,9 +17,11 @@
 | Item | State |
 |------|--------|
 | Framing, Interest, remote directory, AudioRelay, MemoryMesh e2e | **Landed** (`internal/afv/mesh_*.go`, Cases A–F) |
-| Fail-closed `AFV_CLUSTER_ENABLED` without TCP | **Landed** |
-| Production `TCPMesh` | **PR-10b** — not in binary; enable fails with clear error |
-| Operator wiki for multi-node AFV | Single-node ops documented; multi-host voice deferred until TCP |
+| Fail-closed incomplete `AFV_CLUSTER_*` | **Landed** |
+| Production mesh transport | **PR-10b hybrid TCP control + UDP voice** (TCP-only voice **superseded**) |
+| Operator wiki multi-node AFV | Deliverable of PR-10b stack (Configuration + Deployment) |
+
+> **Callout (PR-10b):** Production **AudioRelay (type 20) is UDP only**. Dual TCP voice+control queues apply to **MemoryMesh** tests only for production semantics. See `afv-mesh-pr10b.md`.
 
 ## Overview
 

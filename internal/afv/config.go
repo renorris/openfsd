@@ -37,6 +37,7 @@ type Config struct {
 	ClusterEnabled        bool          `env:"AFV_CLUSTER_ENABLED, default=false"`
 	ClusterNodeID         string        `env:"AFV_CLUSTER_NODE_ID"`
 	ClusterListen         string        `env:"AFV_CLUSTER_LISTEN"`
+	ClusterVoiceListen    string        `env:"AFV_CLUSTER_VOICE_LISTEN"`
 	ClusterPeers          string        `env:"AFV_CLUSTER_PEERS"`
 	ClusterPSK            string        `env:"AFV_CLUSTER_PSK"`
 
