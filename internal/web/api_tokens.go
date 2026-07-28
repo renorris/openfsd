@@ -70,10 +70,18 @@ func (s *Server) handleCreateNewAPIToken(c *gin.Context) {
 	}
 
 	type ResponseBody struct {
-		Token string `json:"token"`
+		Token                 string `json:"token"`
+		RecommendedAPIVersion string `json:"recommended_api_version"`
+		APIVersionMin         string `json:"api_version_min"`
+		APIVersionMax         string `json:"api_version_max"`
 	}
 
-	resBody := ResponseBody{Token: accessTokenStr}
+	resBody := ResponseBody{
+		Token:                 accessTokenStr,
+		RecommendedAPIVersion: apiMicroMax,
+		APIVersionMin:         apiMicroMin,
+		APIVersionMax:         apiMicroMax,
+	}
 	res := newAPIV1Success(&resBody)
 	writeAPIV1Response(c, http.StatusCreated, &res)
 }

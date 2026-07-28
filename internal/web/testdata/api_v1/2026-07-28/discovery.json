@@ -1,0 +1,13 @@
+{
+  "version": "v1",
+  "err": null,
+  "data": {
+    "major": "v1",
+    "min_version": "2026-07-28",
+    "max_version": "2026-07-28",
+    "versions": ["2026-07-28"],
+    "header": "OpenFSD-API-Version",
+    "default": "max",
+    "openapi": "/api/v1/openapi.json"
+  }
+}

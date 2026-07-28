@@ -4,7 +4,9 @@
 
 Part of the single `openfsd` binary (`cmd/openfsd -web`; default runs FSD + web). Shares `internal/db` with the FSD server; live connection state comes from the FSD service HTTP API (`FSD_HTTP_SERVICE_ADDRESS`, default `http://127.0.0.1:13618`).
 
-JSON under `/api/v1` for external tools and map polling. First-party UI is a progressive-enhancement MPA: form login sets a signed **HttpOnly session cookie**; `/api/v1` dual-accepts that cookie **or** a Bearer access token. External tools should use Bearer API tokens.
+JSON under `/api/v1` for **operator automation** and map polling. First-party UI is a progressive-enhancement MPA: form login sets a signed **HttpOnly session cookie**; `/api/v1` dual-accepts that cookie **or** a Bearer access token. Operators automating the same workflows as the UI should use **Bearer API tokens** (not browser session cookies).
+
+**Blast radius:** Admin-minted API tokens currently carry an **Administrator-equivalent** network rating claim and full config/token power. Treat them as operator credentials with admin blast radius until fine-grained scopes exist—not as multi-tenant “third-party app” keys.
 
 ### First-party HTML pages (no-JS primary path)
 | Page | Routes | Authz |
@@ -22,7 +24,7 @@ JSON under `/api/v1` remains for external consumers and map polling. Session dua
 ### Airport editor validation
 
 - **Live client:** JS `parseAPT` / `parseAIR` + soft cross-file warnings (dep ICAO, aircraft far from field) on the Validate tab.
-- **Confirm with server (optional):** `POST /api/v1/editor/validate-apt` and `POST /api/v1/editor/validate-air` with JSON `{"text":"…"}` (Admin, dual-accept Bearer | cookie; CSRF when cookie). Response is standard `APIV1Response` with `data.errors`, plus `icao` / `surface_count` or `aircraft_count`. Transient request body only — never written to disk/DB.
+- **Confirm with server (optional):** `POST /api/v1/editor/validate-apt` and `POST /api/v1/editor/validate-air` with JSON `{"text":"…"}` (**Instructor1+**, dual-accept Bearer | cookie; CSRF when cookie). Response is standard `APIV1Response` with `data.errors`, plus `icao` / `surface_count` or `aircraft_count`. Transient request body only — never written to disk/DB.
 - **Handoff:** download `.apt`/`.air`, then load on `/sweatbox` (no automatic push from editor → live session).
 - Design: `docs/design/apt-air-editor.md`. JS unit tests: `webjs/` + `bash scripts/check-webjs.sh`.
 
@@ -60,9 +62,48 @@ Most endpoints accept a valid JWT access token:
 ```
 Authorization: Bearer <access_token>
 ```
-- **API tokens** can be created via `/api/v1/config/createtoken` with a custom expiry date. See the **Server Configuration** menu in the frontend UI to generate one.
+- **API tokens** can be created via `/api/v1/config/createtoken` (Administrator) with a custom expiry date (max **90 days**). See the **Server Configuration** menu in the frontend UI to generate one.
+- `createtoken` responses include additive `recommended_api_version`, `api_version_min`, and `api_version_max` so clients can pin the microversion header.
 - Bearer-authenticated clients do **not** need CSRF (CSRF applies only when the request is authenticated via the session cookie).
 - Dual-accept: a **valid** Bearer token wins over a session cookie; a garbage Bearer header does **not** disable CSRF if the session cookie is what authenticates the request.
+- **Operator automation:** prefer minted API tokens over `/auth/login` or `/auth/refresh`. Tokens are admin-equivalent until scopes exist—store as secrets; rotate on compromise via secret reset.
+
+---
+
+## API versioning
+
+openfsd keeps a durable URL major **`/api/v1`**. Rare **breaking** changes on **Stable** enveloped routes introduce a date **microversion** selected with the request header:
+
+```http
+OpenFSD-API-Version: 2026-07-28
+```
+
+| Rule | Detail |
+|------|--------|
+| Canonical form | `YYYY-MM-DD` after normalize; also accept `1.YYYYMMDD` and `latest` (→ max) |
+| Default when omitted | **`max_version` (current)**; response sets `OpenFSD-API-Version-Defaulted: true` |
+| Production clients | **MUST** send `OpenFSD-API-Version` with a supported pin |
+| Additive changes | Free (new fields/endpoints); clients must ignore unknown JSON keys |
+| Breaking changes (Stable) | Bump microversion; keep old pins for the support window |
+| Envelope body `version` | Always major `"v1"`; microversion is **header-only** |
+| Response headers | `OpenFSD-API-Version` (effective), `OpenFSD-API-Min-Version`, `OpenFSD-API-Max-Version`, optional `OpenFSD-API-Version-Defaulted`, `Vary: OpenFSD-API-Version` |
+
+**Discovery (public, version-agnostic — never 400 on a bad pin):**
+
+| Method | Path | Notes |
+|--------|------|-------|
+| GET | `/api/v1` | Same discovery payload as `/versions` |
+| GET | `/api/v1/versions` | `min_version`, `max_version`, `versions[]`, `openapi` |
+| GET | `/api/v1/openapi.json` | OpenAPI 3 from embedded YAML |
+| GET | `/api/v1/openapi.yaml` | Canonical embed source |
+
+Canonical OpenAPI file: `internal/web/openapi/openapi.v1.yaml` (`//go:embed`). No mirrored copy under `docs/`.
+
+**Outside microversion reject:** `/api/v1/data/*`, `/api/v1/fsd-jwt`, auth login/refresh, discovery, OpenAPI. Resource groups (`/user`, `/config`, `/fsdconn`, `/sweatbox`, `/editor`) reject unknown/invalid pins with **400** envelope.
+
+**Stability tiers:** existing enveloped user/config/fsdconn/editor routes are **Stable** (goldens under `testdata/api_v1/<pin>/`). New expansion routes may ship **Provisional** (shape may change without a microversion bump while Provisional). Design: `docs/design/rest-api-versioning.md`.
+
+Baseline pin (first supported): **`2026-07-28`**.
 
 ---
 
@@ -99,6 +140,29 @@ Common HTTP status codes:
 ---
 
 ## Endpoints
+
+### Discovery & OpenAPI
+
+#### GET /api/v1 and GET /api/v1/versions
+Public discovery of supported microversions (same payload on both paths). **Version-agnostic:** a bad `OpenFSD-API-Version` does not cause 400.
+
+**Response (200 OK)** `data`:
+```json
+{
+  "major": "v1",
+  "min_version": "2026-07-28",
+  "max_version": "2026-07-28",
+  "versions": ["2026-07-28"],
+  "header": "OpenFSD-API-Version",
+  "default": "max",
+  "openapi": "/api/v1/openapi.json"
+}
+```
+
+#### GET /api/v1/openapi.json and GET /api/v1/openapi.yaml
+Public OpenAPI 3 document (embedded). Version-agnostic.
+
+---
 
 ### Authentication
 
@@ -410,7 +474,9 @@ Upon successfully calling this endpoint, this effectively invalidates *all* prev
 ---
 
 #### POST /api/v1/config/createtoken
-Create a new API access token with a specified expiry.
+Create a new API access token with a specified expiry (max 90 days).
+
+**Blast radius:** minted token claims **Administrator** network rating. Treat as a full operator credential.
 
 **Request Body**:
 ```json
@@ -425,13 +491,16 @@ Create a new API access token with a specified expiry.
   "version": "v1",
   "err": null,
   "data": {
-    "token": string // JWT access token
+    "token": string, // JWT access token
+    "recommended_api_version": string, // pin production clients should send
+    "api_version_min": string,
+    "api_version_max": string
   }
 }
 ```
 
 **Errors**:
-- **400 Bad Request**: Invalid JSON body or expiry date in the past.
+- **400 Bad Request**: Invalid JSON body, expiry in the past, or expiry more than 90 days out.
 - **401 Unauthorized**: Invalid bearer token.
 - **403 Forbidden**: Insufficient permissions (Administrator rating required).
 - **500 Internal Server Error**: Error generating or signing token.

@@ -36,7 +36,7 @@ type editorValidateAIRData struct {
 // Authz is inline I1+ → 403 JSON (never HTML redirect).
 func (s *Server) setupEditorAPIRoutes(parent *gin.RouterGroup) {
 	g := parent.Group("/editor")
-	g.Use(s.jwtBearerMiddleware, s.csrfIfCookieSession)
+	s.useAPIV1Protected(g)
 	g.POST("/validate-apt", s.handleAPIValidateAPT)
 	g.POST("/validate-air", s.handleAPIValidateAIR)
 }

@@ -1,0 +1,5 @@
+{
+  "version": "v1",
+  "err": "unsupported OpenFSD-API-Version \"2020-01-01\"; min=2026-07-28 max=2026-07-28",
+  "data": null
+}

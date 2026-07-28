@@ -1,0 +1,523 @@
+openapi: 3.0.3
+info:
+  title: openfsd Operator REST API
+  description: |
+    JSON control surface for **operator automation** against an openfsd deployment.
+
+    **Blast radius:** Admin-minted API tokens currently carry Administrator-equivalent
+    network rating claims. Treat tokens as full operator credentials until fine-grained
+    scopes exist. Prefer short TTLs (max 90 days) and rotate via secret reset when needed.
+
+    **Versioning:** URL major is `/api/v1`. Rare breaking changes use the
+    `OpenFSD-API-Version` date microversion header (`YYYY-MM-DD`). Production clients
+    MUST send a supported pin. When omitted, the server defaults to `max_version` and
+    sets `OpenFSD-API-Version-Defaulted: true`. Discovery (`GET /api/v1` and
+    `GET /api/v1/versions`) and OpenAPI are version-agnostic (never reject on pin).
+
+    Envelope for JSON resources: `{ "version": "v1", "err": string|null, "data": … }`.
+    Body `version` is the major only; microversion appears only in response headers.
+  version: "1.0.0"
+  x-openfsd-api-micro-min: "2026-07-28"
+  x-openfsd-api-micro-max: "2026-07-28"
+
+servers:
+  - url: /api/v1
+    description: Relative to the openfsd web listener
+
+tags:
+  - name: Discovery
+    description: Version-agnostic discovery and machine-readable schema
+  - name: Auth
+    description: Password login / refresh (discouraged for automation; mint API tokens instead)
+  - name: User
+    description: User load/create/update (Stable)
+  - name: Config
+    description: Server configuration and API tokens (Stable; admin)
+  - name: FSDConn
+    description: Active FSD connection control (Stable)
+  - name: Editor
+    description: APT/AIR validate (Stable; Instructor1+)
+  - name: Sweatbox
+    description: Read-only PE proxies (raw; outside envelope goldens)
+  - name: Data
+    description: Public data feeds (outside microversion reject)
+
+paths:
+  /:
+    get:
+      tags: [Discovery]
+      summary: API discovery
+      operationId: getDiscovery
+      x-openfsd-stability: stable
+      security: []
+      responses:
+        "200":
+          description: Discovery payload (same as /versions)
+          headers:
+            OpenFSD-API-Version:
+              schema: { type: string }
+            OpenFSD-API-Min-Version:
+              schema: { type: string }
+            OpenFSD-API-Max-Version:
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1EnvelopeDiscovery"
+
+  /versions:
+    get:
+      tags: [Discovery]
+      summary: Supported microversions (same payload as GET /)
+      operationId: getVersions
+      x-openfsd-stability: stable
+      security: []
+      responses:
+        "200":
+          description: Discovery payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1EnvelopeDiscovery"
+
+  /openapi.json:
+    get:
+      tags: [Discovery]
+      summary: OpenAPI 3 document (JSON)
+      operationId: getOpenAPIJSON
+      x-openfsd-stability: stable
+      security: []
+      responses:
+        "200":
+          description: OpenAPI document
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /openapi.yaml:
+    get:
+      tags: [Discovery]
+      summary: OpenAPI 3 document (YAML source)
+      operationId: getOpenAPIYAML
+      x-openfsd-stability: stable
+      security: []
+      responses:
+        "200":
+          description: OpenAPI YAML
+          content:
+            application/yaml:
+              schema:
+                type: string
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Password login (not for production automation)
+      operationId: postAuthLogin
+      x-openfsd-stability: stable
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [cid, password]
+              properties:
+                cid: { type: integer, minimum: 1 }
+                password: { type: string }
+                remember_me: { type: boolean }
+      responses:
+        "200":
+          description: Access + refresh tokens
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Refresh access token (not for production automation)
+      operationId: postAuthRefresh
+      x-openfsd-stability: stable
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token: { type: string }
+      responses:
+        "200":
+          description: New access token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+
+  /fsd-jwt:
+    post:
+      tags: [Auth]
+      summary: FSD JWT (VATSIM-shaped; outside envelope / microversion reject)
+      operationId: postFsdJwt
+      x-openfsd-stability: stable
+      security: []
+      responses:
+        "200":
+          description: VATSIM-shaped success body
+
+  /user/load:
+    post:
+      tags: [User]
+      summary: Load user by CID
+      operationId: postUserLoad
+      x-openfsd-stability: stable
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OpenFSDAPIVersion"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [cid]
+              properties:
+                cid: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: User record
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+
+  /user/update:
+    patch:
+      tags: [User]
+      summary: Update user (Supervisor+)
+      operationId: patchUserUpdate
+      x-openfsd-stability: stable
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OpenFSDAPIVersion"
+      responses:
+        "200":
+          description: Updated user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+
+  /user/create:
+    post:
+      tags: [User]
+      summary: Create user (Supervisor+)
+      operationId: postUserCreate
+      x-openfsd-stability: stable
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OpenFSDAPIVersion"
+      responses:
+        "201":
+          description: Created user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+
+  /config/load:
+    get:
+      tags: [Config]
+      summary: Load editable config keys (Administrator)
+      operationId: getConfigLoad
+      x-openfsd-stability: stable
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OpenFSDAPIVersion"
+      responses:
+        "200":
+          description: Key/value pairs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+
+  /config/update:
+    post:
+      tags: [Config]
+      summary: Update config keys (Administrator)
+      operationId: postConfigUpdate
+      x-openfsd-stability: stable
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OpenFSDAPIVersion"
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+
+  /config/resetsecretkey:
+    post:
+      tags: [Config]
+      summary: Rotate JWT secret (invalidates all tokens)
+      operationId: postConfigResetSecretKey
+      x-openfsd-stability: stable
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OpenFSDAPIVersion"
+      responses:
+        "200":
+          description: Secret rotated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+
+  /config/createtoken:
+    post:
+      tags: [Config]
+      summary: Mint long-lived admin API access token (max 90 days)
+      description: |
+        Returns a Bearer access JWT with Administrator rating claim plus recommended
+        microversion fields. **Operator-automation blast radius:** treat as full admin
+        credential. Production clients should send `OpenFSD-API-Version` equal to
+        `recommended_api_version`.
+      operationId: postConfigCreateToken
+      x-openfsd-stability: stable
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OpenFSDAPIVersion"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expiry_date_time]
+              properties:
+                expiry_date_time:
+                  type: string
+                  format: date-time
+      responses:
+        "201":
+          description: Token minted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1EnvelopeCreateToken"
+
+  /fsdconn/kickuser:
+    post:
+      tags: [FSDConn]
+      summary: Kick active connection by callsign (Supervisor+)
+      operationId: postFsdconnKickuser
+      x-openfsd-stability: stable
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OpenFSDAPIVersion"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [callsign]
+              properties:
+                callsign: { type: string }
+      responses:
+        "200":
+          description: Kicked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+
+  /editor/validate-apt:
+    post:
+      tags: [Editor]
+      summary: Validate APT text (Instructor1+)
+      operationId: postEditorValidateApt
+      x-openfsd-stability: stable
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OpenFSDAPIVersion"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text: { type: string }
+      responses:
+        "200":
+          description: Soft validation result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+
+  /editor/validate-air:
+    post:
+      tags: [Editor]
+      summary: Validate AIR text (Instructor1+)
+      operationId: postEditorValidateAir
+      x-openfsd-stability: stable
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OpenFSDAPIVersion"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text: { type: string }
+      responses:
+        "200":
+          description: Soft validation result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+
+  /sweatbox/state:
+    get:
+      tags: [Sweatbox]
+      summary: Raw FSD sweatbox state (PE poll; non-envelope)
+      operationId: getSweatboxState
+      x-openfsd-stability: stable
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OpenFSDAPIVersion"
+      responses:
+        "200":
+          description: Raw FSD JSON body
+
+  /sweatbox/ops:
+    get:
+      tags: [Sweatbox]
+      summary: Raw FSD sweatbox ops (PE poll; non-envelope)
+      operationId: getSweatboxOps
+      x-openfsd-stability: stable
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OpenFSDAPIVersion"
+      responses:
+        "200":
+          description: Raw FSD JSON body
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Access JWT (API token or short-lived access). No CSRF required.
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: openfsd_session
+      description: First-party session cookie; mutations require CSRF synchronizer.
+
+  parameters:
+    OpenFSDAPIVersion:
+      name: OpenFSD-API-Version
+      in: header
+      required: false
+      description: |
+        Date microversion pin (`YYYY-MM-DD` or `1.YYYYMMDD` or `latest`).
+        Production clients MUST send a supported pin. Omitted → max + Defaulted header.
+      schema:
+        type: string
+        example: "2026-07-28"
+
+  schemas:
+    APIV1Envelope:
+      type: object
+      required: [version, err, data]
+      properties:
+        version:
+          type: string
+          enum: [v1]
+          description: URL major only; microversion is header-only
+        err:
+          type: string
+          nullable: true
+        data:
+          nullable: true
+
+    DiscoveryData:
+      type: object
+      required: [major, min_version, max_version, versions, header, default, openapi]
+      properties:
+        major: { type: string, example: v1 }
+        min_version: { type: string, example: "2026-07-28" }
+        max_version: { type: string, example: "2026-07-28" }
+        versions:
+          type: array
+          items: { type: string }
+        header: { type: string, example: OpenFSD-API-Version }
+        default: { type: string, example: max }
+        openapi: { type: string, example: /api/v1/openapi.json }
+
+    APIV1EnvelopeDiscovery:
+      allOf:
+        - $ref: "#/components/schemas/APIV1Envelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/DiscoveryData"
+
+    CreateTokenData:
+      type: object
+      required: [token, recommended_api_version, api_version_min, api_version_max]
+      properties:
+        token: { type: string }
+        recommended_api_version: { type: string, example: "2026-07-28" }
+        api_version_min: { type: string, example: "2026-07-28" }
+        api_version_max: { type: string, example: "2026-07-28" }
+
+    APIV1EnvelopeCreateToken:
+      allOf:
+        - $ref: "#/components/schemas/APIV1Envelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/CreateTokenData"

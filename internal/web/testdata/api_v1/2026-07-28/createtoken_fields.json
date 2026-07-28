@@ -1,0 +1,10 @@
+{
+  "version": "v1",
+  "err": null,
+  "data": {
+    "token": "<redacted>",
+    "recommended_api_version": "2026-07-28",
+    "api_version_min": "2026-07-28",
+    "api_version_max": "2026-07-28"
+  }
+}

@@ -47,6 +47,9 @@ func bindJSONOrAbort(c *gin.Context, reqBody any) (ok bool) {
 }
 
 func writeAPIV1Response(c *gin.Context, code int, res *APIV1Response) {
+	// Soft / hard version headers when context is set; safe defaults otherwise.
+	setAPIVersionHeaders(c)
+
 	resBody, err := json.Marshal(res)
 	if err != nil {
 		c.Writer.Header().Set("Content-Type", "text/plain")
