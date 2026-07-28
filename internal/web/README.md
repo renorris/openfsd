@@ -10,6 +10,31 @@ JSON under `/api/v1` for **operator automation** and map polling. First-party UI
 
 **Design contract:** [`docs/design/rest-api-versioning.md`](../../docs/design/rest-api-versioning.md) (**Accepted**). Canonical OpenAPI: `internal/web/openapi/openapi.v1.yaml` (embedded; no `docs/openapi/` mirror).
 
+### First-party HTML pages (no-JS primary path)
+| Page | Routes | Authz |
+|------|--------|-------|
+| Login | `GET/POST /login`, `POST /logout` | public / session |
+| Dashboard | `GET /dashboard` | any session (OBS+); **server-rendered connection summary** (table/counts from FSD service). Leaflet map is PE only (`credentials: 'same-origin'`) |
+| Account | `GET /account`, `POST /account/password`, `POST /account/delete` | any session; change password (current required) + soft-delete account (optional hard-delete via `ALLOW_PERMANENT_ACCOUNT_DELETE`, default false). CSRF; password step-up on delete |
+| Users (directory) | `GET /usereditor[?q&rating&sort&dir&page&cid&new&flash]`, `POST /usereditor/create`, `POST /usereditor/update` | **Supervisor+**; create + name/password + ratings (network ceiling ≤ actor; full pilot scale). CSRF; URL-owned filters; `dir_*` on POST for PRG |
+| Config editor | `GET/POST /configeditor`, `POST /configeditor/create-token`, `POST /configeditor/reset-secret` | Administrator; CSRF on mutations |
+| Sweatbox | `GET /sweatbox`, form POSTs under `/sweatbox/*` | **Instructor1+**; CSRF on mutations; proxies FSD service HTTP. Operator JSON: `/api/v1/sweatbox/*` (mutations + `/session`) |
+| Airport editor | `GET /airport-editor`, `POST /airport-editor/download-apt`, `POST /airport-editor/download-air` | **Instructor1+**; CSRF on download; **echo-only** (no disk/DB persistence of `.apt`/`.air`). Validate API: `POST /api/v1/editor/validate-*` also I1+ |
+
+JSON under `/api/v1` remains for external consumers and map polling. Session dual-accept mutations work with **cookie + CSRF only** (no `Authorization` header required).
+
+### Airport editor validation
+
+- **Live client:** JS `parseAPT` / `parseAIR` + soft cross-file warnings (dep ICAO, aircraft far from field) on the Validate tab.
+- **Confirm with server (optional):** `POST /api/v1/editor/validate-apt` and `POST /api/v1/editor/validate-air` with JSON `{"text":"…"}` (**Instructor1+**, dual-accept Bearer | cookie; CSRF when cookie). Response is standard `APIV1Response` with `data.errors`, plus `icao` / `surface_count` or `aircraft_count`. Transient request body only — never written to disk/DB.
+- **Handoff:** download `.apt`/`.air`, then load on `/sweatbox` (no automatic push from editor → live session).
+- Design: `docs/design/apt-air-editor.md`. JS unit tests: `webjs/` + `bash scripts/check-webjs.sh`.
+
+### JS budget / map exception
+First-party openfsd modules stay small and vanilla (no jQuery). The **dashboard route** may load **Leaflet** (vendor) + `dashboard.js` as a documented exception to the 30–50 KB compressed first-party budget. Failure mode: map is absent; connection summary HTML still works.
+
+The **airport editor** (`/airport-editor`) is a second complexity-gate exception for map geometry authoring (Leaflet + first-party modules). Open/edit/download are JS-primary (toolbar FileReader + Blob download; Raw tab for text). Map region is inert when JS is off. Optional `POST /airport-editor/download-*` echo handlers remain for tests/tools and never write APT/AIR to disk or DB.
+
 ---
 
 ## Operator REST guide
@@ -30,7 +55,7 @@ curl -sS -X POST "$BASE/api/v1/config/createtoken" \
   -H "OpenFSD-API-Version: 2026-07-28" \
   -H "Content-Type: application/json" \
   -d '{"expiry_date_time":"2026-10-01T00:00:00.000Z"}'
-# → data.token, data.recommended_api_version, data.api_version_min, data.api_version_max
+# expect 201 Created; data.token + recommended_api_version (+ min/max)
 ```
 
 On every subsequent resource call, send both headers:
@@ -114,33 +139,6 @@ From design Appendix A:
 | Sweatbox control | Stable | Mutations + `GET /session` (raw `/state`/`/ops` for PE) |
 | Account self-service | **Provisional** | `POST /account/password`, `POST /account/delete` |
 | Config / tokens | Stable | `GET/POST /config/*`, `createtoken` |
-
----
-
-### First-party HTML pages (no-JS primary path)
-| Page | Routes | Authz |
-|------|--------|-------|
-| Login | `GET/POST /login`, `POST /logout` | public / session |
-| Dashboard | `GET /dashboard` | any session (OBS+); **server-rendered connection summary** (table/counts from FSD service). Leaflet map is PE only (`credentials: 'same-origin'`) |
-| Account | `GET /account`, `POST /account/password`, `POST /account/delete` | any session; change password (current required) + soft-delete account (optional hard-delete via `ALLOW_PERMANENT_ACCOUNT_DELETE`, default false). CSRF; password step-up on delete |
-| Users (directory) | `GET /usereditor[?q&rating&sort&dir&page&cid&new&flash]`, `POST /usereditor/create`, `POST /usereditor/update` | **Supervisor+**; create + name/password + ratings (network ceiling ≤ actor; full pilot scale). CSRF; URL-owned filters; `dir_*` on POST for PRG |
-| Config editor | `GET/POST /configeditor`, `POST /configeditor/create-token`, `POST /configeditor/reset-secret` | Administrator; CSRF on mutations |
-| Sweatbox | `GET /sweatbox`, form POSTs under `/sweatbox/*` | **Instructor1+**; CSRF on mutations; proxies FSD service HTTP. Operator JSON: `/api/v1/sweatbox/*` (mutations + `/session`) |
-| Airport editor | `GET /airport-editor`, `POST /airport-editor/download-apt`, `POST /airport-editor/download-air` | **Instructor1+**; CSRF on download; **echo-only** (no disk/DB persistence of `.apt`/`.air`). Validate API: `POST /api/v1/editor/validate-*` also I1+ |
-
-JSON under `/api/v1` remains for external consumers and map polling. Session dual-accept mutations work with **cookie + CSRF only** (no `Authorization` header required).
-
-### Airport editor validation
-
-- **Live client:** JS `parseAPT` / `parseAIR` + soft cross-file warnings (dep ICAO, aircraft far from field) on the Validate tab.
-- **Confirm with server (optional):** `POST /api/v1/editor/validate-apt` and `POST /api/v1/editor/validate-air` with JSON `{"text":"…"}` (**Instructor1+**, dual-accept Bearer | cookie; CSRF when cookie). Response is standard `APIV1Response` with `data.errors`, plus `icao` / `surface_count` or `aircraft_count`. Transient request body only — never written to disk/DB.
-- **Handoff:** download `.apt`/`.air`, then load on `/sweatbox` (no automatic push from editor → live session).
-- Design: `docs/design/apt-air-editor.md`. JS unit tests: `webjs/` + `bash scripts/check-webjs.sh`.
-
-### JS budget / map exception
-First-party openfsd modules stay small and vanilla (no jQuery). The **dashboard route** may load **Leaflet** (vendor) + `dashboard.js` as a documented exception to the 30–50 KB compressed first-party budget. Failure mode: map is absent; connection summary HTML still works.
-
-The **airport editor** (`/airport-editor`) is a second complexity-gate exception for map geometry authoring (Leaflet + first-party modules). Open/edit/download are JS-primary (toolbar FileReader + Blob download; Raw tab for text). Map region is inert when JS is off. Optional `POST /airport-editor/download-*` echo handlers remain for tests/tools and never write APT/AIR to disk or DB.
 
 ---
 

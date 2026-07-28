@@ -353,11 +353,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/APIV1EnvelopeUser"
         "400":
-          description: Invalid cid or bad API version
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/APIV1Envelope"
+          $ref: "#/components/responses/BadAPIVersion"
         "401":
           description: Unauthorized
           content:
@@ -617,11 +613,11 @@ paths:
         - $ref: "#/components/parameters/OpenFSDAPIVersion"
       responses:
         "200":
-          description: Envelope with session state
+          description: Envelope with session state (serviceapi.SweatboxStateJSON)
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/APIV1Envelope"
+                $ref: "#/components/schemas/APIV1EnvelopeSweatboxSession"
         "403":
           description: Below Instructor1
         "404":
@@ -657,13 +653,13 @@ paths:
                 replace: { type: boolean, default: false }
       responses:
         "200":
-          description: Airport loaded (data = SweatboxAirportLoadResponse)
+          description: Airport loaded (serviceapi.SweatboxAirportLoadResponse)
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/APIV1Envelope"
+                $ref: "#/components/schemas/APIV1EnvelopeSweatboxAirport"
         "400":
-          description: Invalid JSON, empty text, or invalid airport
+          $ref: "#/components/responses/BadAPIVersion"
         "403":
           description: Below Instructor1
         "404":
@@ -699,13 +695,13 @@ paths:
                 text: { type: string, description: Full .air file text }
       responses:
         "200":
-          description: Scenario load result (data = SweatboxScenarioResponse)
+          description: Scenario load result (serviceapi.SweatboxScenarioResponse)
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/APIV1Envelope"
+                $ref: "#/components/schemas/APIV1EnvelopeSweatboxScenario"
         "400":
-          description: Invalid JSON, empty text, or invalid scenario
+          $ref: "#/components/responses/BadAPIVersion"
         "403":
           description: Below Instructor1
         "404":
@@ -744,14 +740,14 @@ paths:
       responses:
         "200":
           description: |
-            Command processed. `data` is SweatboxCommandResponse with ok/message.
-            Soft-fail: ok=false still HTTP 200, envelope err null.
+            Command processed (serviceapi.SweatboxCommandResponse).
+            Soft-fail: data.ok=false still HTTP 200, envelope err null.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/APIV1Envelope"
+                $ref: "#/components/schemas/APIV1EnvelopeSweatboxCommand"
         "400":
-          description: Invalid JSON or empty command
+          $ref: "#/components/responses/BadAPIVersion"
         "403":
           description: Below Instructor1
         "404":
@@ -780,6 +776,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/APIV1Envelope"
+        "400":
+          $ref: "#/components/responses/BadAPIVersion"
         "403":
           description: Below Instructor1
         "404":
@@ -806,6 +804,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/APIV1Envelope"
+        "400":
+          $ref: "#/components/responses/BadAPIVersion"
         "403":
           description: Below Instructor1
         "404":
@@ -836,6 +836,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/APIV1Envelope"
+        "400":
+          $ref: "#/components/responses/BadAPIVersion"
         "403":
           description: Below Instructor1
         "404":
@@ -878,7 +880,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/APIV1Envelope"
         "400":
-          description: confirm required / invalid JSON
+          $ref: "#/components/responses/BadAPIVersion"
         "403":
           description: Below Instructor1
         "404":
@@ -922,13 +924,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/APIV1Envelope"
         "400":
-          description: |
-            Validation failure (empty current, incorrect password, weak new
-            password, confirm mismatch, new equals current) or bad API version.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/APIV1Envelope"
+          $ref: "#/components/responses/BadAPIVersion"
         "401":
           description: Missing/invalid credentials
           content:
@@ -979,14 +975,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/APIV1EnvelopeAccountDelete"
         "400":
-          description: |
-            Validation failure, permanent delete disabled (fail-closed), or bad
-            API version. No account mutation when permanent is requested but
-            disabled.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/APIV1Envelope"
+          $ref: "#/components/responses/BadAPIVersion"
         "401":
           description: Missing/invalid credentials
           content:
@@ -998,12 +987,12 @@ components:
   responses:
     BadAPIVersion:
       description: |
-        Invalid or unsupported `OpenFSD-API-Version` on a dual-accept resource group
-        (HTTP 400 envelope). Also used when the request body is invalid JSON on
-        some routes — check `err` text.
+        HTTP 400 envelope on a dual-accept resource group. Common causes:
+        invalid or unsupported `OpenFSD-API-Version`; invalid JSON / request body;
+        route-specific validation failures (check `err` text).
 
-        Recovery: call version-agnostic `GET /api/v1/versions` (never rejects on pin)
-        and upgrade the client pin.
+        Recovery for version pins: call version-agnostic `GET /api/v1/versions`
+        (never rejects on pin) and upgrade the client pin.
       headers:
         OpenFSD-API-Version:
           schema: { type: string }
@@ -1196,3 +1185,102 @@ components:
           properties:
             data:
               $ref: "#/components/schemas/AccountDeleteData"
+
+    SweatboxAirportLoadData:
+      type: object
+      required: [icao, surfaces, errors]
+      description: serviceapi.SweatboxAirportLoadResponse
+      properties:
+        icao: { type: string }
+        surfaces: { type: integer }
+        errors:
+          type: array
+          items: { type: string }
+
+    APIV1EnvelopeSweatboxAirport:
+      allOf:
+        - $ref: "#/components/schemas/APIV1Envelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/SweatboxAirportLoadData"
+
+    SweatboxScenarioData:
+      type: object
+      required: [loaded, errors]
+      description: serviceapi.SweatboxScenarioResponse
+      properties:
+        loaded: { type: integer }
+        errors:
+          type: array
+          items: { type: string }
+
+    APIV1EnvelopeSweatboxScenario:
+      allOf:
+        - $ref: "#/components/schemas/APIV1Envelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/SweatboxScenarioData"
+
+    SweatboxCommandData:
+      type: object
+      required: [ok, message]
+      description: serviceapi.SweatboxCommandResponse (soft-fail keeps HTTP 200)
+      properties:
+        ok: { type: boolean }
+        message: { type: string }
+
+    APIV1EnvelopeSweatboxCommand:
+      allOf:
+        - $ref: "#/components/schemas/APIV1Envelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/SweatboxCommandData"
+
+    SweatboxAircraft:
+      type: object
+      description: serviceapi.SweatboxAircraftJSON
+      properties:
+        callsign: { type: string }
+        type: { type: string }
+        rules: { type: string }
+        squawk: { type: string }
+        xpdr_mode: { type: string }
+        lat: { type: number }
+        lon: { type: number }
+        alt: { type: number }
+        speed: { type: number }
+        heading: { type: number }
+        status: { type: string }
+        instruction: { type: string }
+        flight_plan: { type: string }
+        dep: { type: string }
+        arr: { type: string }
+        cruise_alt: { type: integer }
+        route: { type: string }
+        remarks: { type: string }
+
+    SweatboxSessionData:
+      type: object
+      description: serviceapi.SweatboxStateJSON (enveloped GET /sweatbox/session)
+      required: [icao, paused, elapsed_sec, arr_count, dep_count, aircraft]
+      properties:
+        icao: { type: string }
+        paused: { type: boolean }
+        elapsed_sec: { type: number }
+        arr_count: { type: integer }
+        dep_count: { type: integer }
+        aircraft:
+          type: array
+          items:
+            $ref: "#/components/schemas/SweatboxAircraft"
+
+    APIV1EnvelopeSweatboxSession:
+      allOf:
+        - $ref: "#/components/schemas/APIV1Envelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/SweatboxSessionData"

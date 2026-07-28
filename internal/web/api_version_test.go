@@ -321,6 +321,15 @@ func TestOpenAPIEndpoints(t *testing.T) {
 	assert.Contains(t, w.Header().Get("Content-Type"), "yaml")
 	assert.Contains(t, w.Body.String(), "openapi:")
 	assert.Contains(t, w.Body.String(), "openfsd")
+	// Guard against merge regressions that duplicate top-level components: keys
+	// (YAML last-key-wins would drop earlier schemas such as Account*).
+	componentsYAMLLines := 0
+	for _, line := range strings.Split(w.Body.String(), "\n") {
+		if line == "components:" {
+			componentsYAMLLines++
+		}
+	}
+	assert.Equal(t, 1, componentsYAMLLines, "OpenAPI YAML must contain exactly one top-level components: map")
 
 	// JSON
 	req = httptest.NewRequest(http.MethodGet, "/api/v1/openapi.json", nil)
@@ -333,6 +342,56 @@ func TestOpenAPIEndpoints(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &doc))
 	assert.Contains(t, doc, "openapi")
 	assert.Contains(t, doc, "paths")
+
+	paths, ok := doc["paths"].(map[string]any)
+	require.True(t, ok, "paths must be an object")
+	for _, p := range []string{
+		"/users",
+		"/users/{cid}",
+		"/account/password",
+		"/account/delete",
+		"/sweatbox/session",
+		"/sweatbox/airport",
+		"/sweatbox/pause",
+		"/config/createtoken",
+		"/versions",
+	} {
+		assert.Contains(t, paths, p, "first-train path missing from OpenAPI")
+	}
+
+	components, ok := doc["components"].(map[string]any)
+	require.True(t, ok, "components must be an object")
+	schemas, ok := components["schemas"].(map[string]any)
+	require.True(t, ok, "components.schemas must be an object")
+	for _, name := range []string{
+		"UserRecord",
+		"UserListData",
+		"AccountPasswordRequest",
+		"AccountDeleteRequest",
+		"AccountDeleteData",
+		"APIV1EnvelopeUserList",
+		"SweatboxSessionData",
+		"SweatboxCommandData",
+	} {
+		assert.Contains(t, schemas, name, "expected schema missing after YAML→JSON")
+	}
+
+	// Account ops stay Provisional until maintainer sign-off.
+	assertOpenAPIStability(t, paths, "/account/password", "post", "provisional")
+	assertOpenAPIStability(t, paths, "/account/delete", "post", "provisional")
+	assertOpenAPIStability(t, paths, "/users", "get", "stable")
+	assertOpenAPIStability(t, paths, "/sweatbox/session", "get", "stable")
+}
+
+// assertOpenAPIStability checks x-openfsd-stability on a path operation.
+func assertOpenAPIStability(t *testing.T, paths map[string]any, path, method, want string) {
+	t.Helper()
+	item, ok := paths[path].(map[string]any)
+	require.True(t, ok, "path %s", path)
+	op, ok := item[method].(map[string]any)
+	require.True(t, ok, "path %s method %s", path, method)
+	got, _ := op["x-openfsd-stability"].(string)
+	assert.Equal(t, want, got, "x-openfsd-stability on %s %s", method, path)
 }
 
 func TestDataFeed_NoVersionReject(t *testing.T) {

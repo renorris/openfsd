@@ -1076,7 +1076,7 @@ Ordered for incremental merge. Each PR race-clean, gofmt, import-graph green.
 |--|--|
 | **Title** | `docs: operator REST guide; OpenAPI complete; design status Accepted` |
 | **Depends on** | PR-3–5 |
-| **Files** | `internal/web/README.md`, design status, openapi fill-in; optional mirrored `docs/openapi/` with CI note that embed is authoritative |
+| **Files** | `internal/web/README.md`, design status, `internal/web/openapi/openapi.v1.yaml` fill-in (embed is sole authoritative source; **no** `docs/openapi/` mirror — OQ#7) |
 | **Description** | curl examples; blast-radius framing (KD-16); stability tiers; pin checklist. |
 
 ### PR-7 (follow-up): Token-pinned API version claim
