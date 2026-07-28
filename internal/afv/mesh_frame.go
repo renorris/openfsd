@@ -6,6 +6,12 @@ package afv
 // shape match FSD mesh Hello (nodeID + PSK strings); comparison is CT-upgraded
 // vs FSD's non-constant-time !=. Do not log PSK contents on failure.
 //
+// Hello first-frame rule (TCP only, PR-10b / M-11): on a TCP mesh connection the
+// first frame must be type Hello; any other type closes the conn. MemoryMesh has
+// no wire Hello — auth is constructor PSK verify on Start. When mesh_tcp.go
+// lands, enforce first-frame type == MeshTypeHello on accept/dial before any
+// Snapshot/Interest/AudioRelay.
+//
 // Local length-prefix framing — do not import internal/cluster.
 
 import (

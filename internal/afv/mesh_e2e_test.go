@@ -105,11 +105,13 @@ func meshBindHB(t *testing.T, ch *afvprotocol.Channel, cli *net.UDPConn, server 
 	}
 }
 
-func waitPeerWants(t *testing.T, m *afv.MemoryMesh, peer string, freq uint32, lat, lon float64) {
+// waitPeerWantsTX waits until local mesh believes peer wants the TX radio cell
+// used by EnqueueAudioRelay fan-out (CellKey of speaker TX lat/lon), not RX pos.
+func waitPeerWantsTX(t *testing.T, m *afv.MemoryMesh, peer string, freq uint32, txLat, txLon float64) {
 	t.Helper()
 	ck := geo.CellKey{
-		ILat: geo.CellIndex(lat, geo.DefaultGridCellDeg),
-		ILon: geo.CellIndex(lon, geo.DefaultGridCellDeg),
+		ILat: geo.CellIndex(txLat, geo.DefaultGridCellDeg),
+		ILon: geo.CellIndex(txLon, geo.DefaultGridCellDeg),
 	}
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
@@ -118,7 +120,7 @@ func waitPeerWants(t *testing.T, m *afv.MemoryMesh, peer string, freq uint32, la
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatalf("timeout PeerWants peer=%s freq=%d cell=%+v", peer, freq, ck)
+	t.Fatalf("timeout PeerWants peer=%s freq=%d txCell=%+v (tx=%.4f,%.4f)", peer, freq, ck, txLat, txLon)
 }
 
 func setupMeshPairWithUsers(t *testing.T) (n1, n2 *meshNode, cidA, cidB int) {
@@ -235,12 +237,13 @@ func TestMeshE2E_CaseA_BidirectionalA2A(t *testing.T) {
 	meshBindHB(t, chA, cliA, udp1, "AAL1", 0)
 	meshBindHB(t, chB, cliB, udp2, "AAL2", 0)
 
-	// force interest now and wait PeerWants barriers
+	// force interest now; barriers use speaker TX cells (fan-out filter keys)
 	n1.srv.PublishInterestNowForTest()
 	n2.srv.PublishInterestNowForTest()
-	// n1 needs to know n2 wants TX cells near A; n2 wants n1's TX cells near B
-	waitPeerWants(t, n1.mesh, "n2", freq, lat+0.001, lon+0.001)
-	waitPeerWants(t, n2.mesh, "n1", freq, lat, lon)
+	// A→B: n1 fans out if n2 wants A's TX cell
+	waitPeerWantsTX(t, n1.mesh, "n2", freq, lat, lon)
+	// B→A: n2 fans out if n1 wants B's TX cell
+	waitPeerWantsTX(t, n2.mesh, "n1", freq, lat+0.001, lon+0.001)
 
 	// A → B
 	at := afvprotocol.AudioTx{
@@ -278,8 +281,8 @@ func TestMeshE2E_CaseA_BidirectionalA2A(t *testing.T) {
 	if !ok {
 		t.Fatal("Case A: A did not receive AR from B")
 	}
-	if ar2.Callsign != "AAL2" || ar2.SequenceCounter != 9 {
-		t.Fatalf("AR2=%+v", ar2)
+	if ar2.Callsign != "AAL2" || ar2.SequenceCounter != 9 || ar2.LastPacket {
+		t.Fatalf("AR2=%+v want LastPacket=false", ar2)
 	}
 }
 
@@ -352,7 +355,8 @@ func TestMeshE2E_CaseC_ATCRadius(t *testing.T) {
 	meshBindHB(t, chB, cliB, udp2, "AAL2", 0)
 	n1.srv.PublishInterestNowForTest()
 	n2.srv.PublishInterestNowForTest()
-	waitPeerWants(t, n1.mesh, "n2", freq, 41.5, -73.0)
+	// ATC TX at 40.0: n1 fans out if n2 wants that TX cell (ATC-range interest)
+	waitPeerWantsTX(t, n1.mesh, "n2", freq, 40.0, -73.0)
 
 	// ATC TX → pilot AR
 	at := afvprotocol.AudioTx{
@@ -369,7 +373,8 @@ func TestMeshE2E_CaseC_ATCRadius(t *testing.T) {
 	// drain any leftover
 	_, _ = readAR(t, chA, cliA, 50*time.Millisecond)
 	n2.srv.PublishInterestNowForTest()
-	waitPeerWants(t, n2.mesh, "n1", freq, 40.0, -73.0)
+	// pilot TX at 41.5: n2 fans out if n1 wants pilot TX cell
+	waitPeerWantsTX(t, n2.mesh, "n1", freq, 41.5, -73.0)
 	atP := afvprotocol.AudioTx{
 		Callsign: "AAL2", SequenceCounter: 2, Audio: []byte{6}, LastPacket: true,
 		Transceivers: []afvprotocol.TxTransceiver{{ID: 0}},
@@ -404,7 +409,7 @@ func TestMeshE2E_CaseD_PeerDeathReconnect(t *testing.T) {
 	meshBindHB(t, chB, cliB, udp2, "AAL2", 0)
 	n1.srv.PublishInterestNowForTest()
 	n2.srv.PublishInterestNowForTest()
-	waitPeerWants(t, n1.mesh, "n2", freq, lat+0.001, lon+0.001)
+	waitPeerWantsTX(t, n1.mesh, "n2", freq, lat, lon)
 
 	// peer death both directions
 	n1.mesh.SimulatePeerDown("n2")
@@ -426,13 +431,12 @@ func TestMeshE2E_CaseD_PeerDeathReconnect(t *testing.T) {
 		t.Fatal("AR during peer death")
 	}
 
-	// reconnect
+	// reconnect: SimulatePeerUp re-runs Snapshot + current Interest via provider (M-16)
 	n1.mesh.SimulatePeerUp("n2")
 	n2.mesh.SimulatePeerUp("n1")
-	n1.srv.PublishInterestNowForTest()
-	n2.srv.PublishInterestNowForTest()
-	waitPeerWants(t, n1.mesh, "n2", freq, lat+0.001, lon+0.001)
-	waitPeerWants(t, n2.mesh, "n1", freq, lat, lon)
+	// No PublishInterestNowForTest — rely on SetInterestProvider path from Server.
+	waitPeerWantsTX(t, n1.mesh, "n2", freq, lat, lon)
+	waitPeerWantsTX(t, n2.mesh, "n1", freq, lat+0.001, lon+0.001)
 
 	at.SequenceCounter = 4
 	pkt, _ = chA.Encapsulate(12, afvprotocol.DTONameAudioTx, at.EncodeMsgpack(), nil)
@@ -465,7 +469,7 @@ func TestMeshE2E_CaseE_KeysNeverOnMesh(t *testing.T) {
 	meshBindHB(t, chB, cliB, udp2, "AAL2", 0)
 	n1.srv.PublishInterestNowForTest()
 	n2.srv.PublishInterestNowForTest()
-	waitPeerWants(t, n1.mesh, "n2", freq, lat+0.001, lon+0.001)
+	waitPeerWantsTX(t, n1.mesh, "n2", freq, lat, lon)
 
 	rxKey := append([]byte(nil), pcA.VoiceServer.ChannelConfig.AeadReceiveKey...)
 	txKey := append([]byte(nil), pcA.VoiceServer.ChannelConfig.AeadTransmitKey...)
@@ -559,5 +563,60 @@ func TestMeshE2E_CaseF_EmptyInterestNoFlood(t *testing.T) {
 	}
 	if n1.mesh.PeerWants("n2", freq, ck) {
 		t.Fatal("Case F: PeerWants became true during burst")
+	}
+}
+
+// TestFirstBindDirtyOnceViaUDPHB exercises production BindUDP→markInterestDirty
+// via real UDP heartbeat (not a reimplemented mark path).
+func TestFirstBindDirtyOnceViaUDPHB(t *testing.T) {
+	n1, _, cidA, _ := setupMeshPairWithUsers(t)
+	tok := meshAuth(t, n1.api, cidA)
+	pc := meshPostCS(t, n1.api, tok, cidA, "P1", n1.udp)
+	meshPostTrx(t, n1.api, tok, cidA, "P1", 40.0, -73.0, 118700000)
+
+	// clear dirty from trx post
+	n1.srv.ClearInterestDirtyForTest()
+	if n1.srv.InterestDirtyForTest() {
+		t.Fatal("dirty should be clear before first HB")
+	}
+
+	udp, err := net.ResolveUDPAddr("udp", n1.udp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cli, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cli.Close()
+	ch, err := afvprotocol.ClientChannel(
+		pc.VoiceServer.ChannelConfig.ChannelTag,
+		pc.VoiceServer.ChannelConfig.AeadReceiveKey,
+		pc.VoiceServer.ChannelConfig.AeadTransmitKey,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// First HB binds and dirties interest (production udp.go path)
+	meshBindHB(t, ch, cli, udp, "P1", 0)
+	// allow handleUDP to finish
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if n1.srv.InterestDirtyForTest() {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !n1.srv.InterestDirtyForTest() {
+		t.Fatal("first UDP HB must mark interest dirty")
+	}
+
+	n1.srv.ClearInterestDirtyForTest()
+	// Second HB same addr: re-touch, must not dirty again
+	meshBindHB(t, ch, cli, udp, "P1", 1)
+	time.Sleep(50 * time.Millisecond)
+	if n1.srv.InterestDirtyForTest() {
+		t.Fatal("second HB re-touch must not dirty interest")
 	}
 }

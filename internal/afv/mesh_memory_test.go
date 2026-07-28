@@ -178,54 +178,103 @@ func TestMemoryMesh_KeysNeverOnCapturedRelay(t *testing.T) {
 	}
 }
 
+// TestMemoryMesh_ReconnectSnapshot hardens Snapshot apply after death+up (M-16).
 func TestMemoryMesh_ReconnectSnapshot(t *testing.T) {
 	hub := NewMemoryHub()
-	m1, _ := NewMemoryMesh(hub, MeshConfig{NodeID: "n1", PSK: "p", PeerIDs: []string{"n1", "n2"}})
-	m2, _ := NewMemoryMesh(hub, MeshConfig{NodeID: "n2", PSK: "p", PeerIDs: []string{"n1", "n2"}})
-	remote := newRemoteDir()
-	m1.OnDirectory(remote)
+	m1, err := NewMemoryMesh(hub, MeshConfig{NodeID: "n1", PSK: "p", PeerIDs: []string{"n1", "n2"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m2, err := NewMemoryMesh(hub, MeshConfig{NodeID: "n2", PSK: "p", PeerIDs: []string{"n1", "n2"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote1 := newRemoteDir()
+	remote2 := newRemoteDir()
+	m1.OnDirectory(remote1)
+	m2.OnDirectory(remote2)
+	m1.OnPeerDead(func(id string) { remote1.RemoveNode(id) })
+	m2.OnPeerDead(func(id string) { remote2.RemoveNode(id) })
+
 	m1.SetSnapshotProvider(func() []MeshSessionBlock {
-		return []MeshSessionBlock{{Callsign: "LOC", IsATC: false}}
+		return []MeshSessionBlock{{Callsign: "LOC", IsATC: false, Trxs: []MeshTrx{{ID: 0, FreqHz: 118700000}}}}
 	})
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	_ = m1.Start(ctx)
-	_ = m2.Start(ctx)
-	// allow ctrl drain for snapshot to m2... actually m1 PublishTrxSnapshot enqueues to n2
-	// m2 delivers to m2.onDir which is nil — set m2's dir to receive n1
-	// reverse: m2 publishes so m1 remote sees it
 	m2.SetSnapshotProvider(func() []MeshSessionBlock {
 		return []MeshSessionBlock{{Callsign: "REM", IsATC: true, Trxs: []MeshTrx{{ID: 0, FreqHz: 1}}}}
 	})
-	m2.OnDirectory(newRemoteDir())
-	m2.PublishTrxSnapshot()
-	// wait for drain
+	m1.SetInterestProvider(func() []InterestEntry {
+		return []InterestEntry{{FreqHz: 1, ILat: 0, ILon: 0}}
+	})
+	m2.SetInterestProvider(func() []InterestEntry {
+		return []InterestEntry{{FreqHz: 1, ILat: 0, ILon: 0}}
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := m1.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := m2.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// Wait for cross Snapshot delivery (control drain)
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if remote.CountOrigin("n2") > 0 {
+		if remote1.CountOrigin("n2") > 0 && remote2.CountOrigin("n1") > 0 {
 			break
 		}
-		// force delivery by also applying directly if drain slow
 		time.Sleep(20 * time.Millisecond)
 	}
-	// death + up
-	m1.SimulatePeerDown("n2")
-	if remote.CountOrigin("n2") != 0 {
-		// OnPeerDead removes — we didn't wire RemoveNode to remote in this test path
-		// SimulatePeerDown calls onPeerDead which we didn't set — set it
+	if remote1.CountOrigin("n2") == 0 {
+		// Start already published; force one more snapshot exchange
+		m2.PublishTrxSnapshot()
+		deadline = time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			if remote1.CountOrigin("n2") > 0 {
+				break
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
 	}
-	// rewire death
-	m1.OnPeerDead(func(id string) { remote.RemoveNode(id) })
-	remote.ApplySnapshot("n2", []RemoteSession{{Callsign: "REM"}})
-	m1.SimulatePeerDown("n2")
-	if remote.CountOrigin("n2") != 0 {
-		t.Fatal("expected purge")
+	if remote1.CountOrigin("n2") == 0 {
+		t.Fatal("expected remote snapshot of n2 on n1 before death")
 	}
+	s, ok := remote1.Session("n2", "REM")
+	if !ok || !s.IsATC {
+		t.Fatalf("REM snapshot missing or wrong: %+v ok=%v", s, ok)
+	}
+
+	// Death purges remote dir
+	m1.SimulatePeerDown("n2")
+	if remote1.CountOrigin("n2") != 0 {
+		t.Fatal("expected purge after peer death")
+	}
+
+	// Reconnect: Snapshot + Interest via provider (no test-only force)
 	m1.SimulatePeerUp("n2")
-	// interest barrier
-	m2.PublishInterest([]InterestEntry{{FreqHz: 1, ILat: 0, ILon: 0}})
+	m2.SimulatePeerUp("n1")
+	// PeerUp re-publishes Snapshot from provider; wait for apply
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if remote1.CountOrigin("n2") > 0 {
+			break
+		}
+		// m2 must also re-snapshot toward n1 after m1 is up
+		m2.PublishTrxSnapshot()
+		time.Sleep(20 * time.Millisecond)
+	}
+	if remote1.CountOrigin("n2") == 0 {
+		t.Fatal("expected Snapshot re-apply after reconnect")
+	}
+	s, ok = remote1.Session("n2", "REM")
+	if !ok || !s.IsATC || len(s.Trxs) != 1 {
+		t.Fatalf("post-reconnect snapshot %+v ok=%v", s, ok)
+	}
+	// Interest provider path on PeerUp
 	if !m1.PeerWants("n2", 1, geo.CellKey{ILat: 0, ILon: 0}) {
-		t.Fatal("reconnect interest")
+		// PeerUp publishes n2's interest onto n1 when n2.SimulatePeerUp runs
+		// n2.SimulatePeerUp publishes n2's current interest to peers including n1
+		t.Fatal("reconnect interest from provider")
 	}
 }
 

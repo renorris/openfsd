@@ -63,9 +63,8 @@ func TestRouteSyntheticTX_DualLoginSkip(t *testing.T) {
 }
 
 func TestRouteSyntheticTX_IsXCNoReXC(t *testing.T) {
-	// isXC is handled in handleMeshAudioRelay (primary only); routeSyntheticTX
-	// itself is frequency-primary. Ensure basic route still works with XC flag
-	// ignored at router layer.
+	// isXC: primary synthetic TX only — never XC-again (PR-9 not implemented).
+	// routeSyntheticTX is frequency-primary; second freq is not auto-coupled.
 	cfg := &Config{MaxSessions: 10, MaxSessionsPerCID: 5, RangeDefaultNM: 100}
 	r := newRegistry(cfg)
 	now := time.Now()
@@ -74,22 +73,23 @@ func TestRouteSyntheticTX_IsXCNoReXC(t *testing.T) {
 		ID: 0, Frequency: 118700000, LatDeg: 40.0, LonDeg: -73.0,
 	}})
 	_, _, _ = r.BindUDP(rx, fakeAddr{"2"}, now)
-	// Cross-freq radio would be XC path if implemented — primary route only
-	// routes matching freq; second freq not auto-coupled.
 	recs := r.routeSyntheticTX("AAL1", false, []RelayTxRadio{
 		{TxID: 0, FreqHz: 118700000, LatDeg: 40.01, LonDeg: -73.01},
-		{TxID: 1, FreqHz: 119000000, LatDeg: 40.01, LonDeg: -73.01}, // no local RX on this freq
+		{TxID: 1, FreqHz: 119000000, LatDeg: 40.01, LonDeg: -73.01}, // no local RX
 	})
 	if len(recs) != 1 {
-		t.Fatalf("got %d", len(recs))
+		t.Fatalf("primary-only recipients=%d", len(recs))
 	}
-	// Server path with isXC=true still only primary synthetic (no second hop)
+	// handleMeshAudioRelay with IsXC=true: no panic, primary route only (nil udp drops)
 	s := New(cfg, nil, nil, []byte("k"))
+	s.reg = r
 	s.handleMeshAudioRelay("nX", AudioRelay{
 		Callsign: "AAL1", IsATC: false, IsXC: true, Audio: []byte{1},
-		TxRadios: []RelayTxRadio{{TxID: 0, FreqHz: 118700000, LatDeg: 40.01, LonDeg: -73.01}},
+		TxRadios: []RelayTxRadio{
+			{TxID: 0, FreqHz: 118700000, LatDeg: 40.01, LonDeg: -73.01},
+			{TxID: 1, FreqHz: 119000000, LatDeg: 40.01, LonDeg: -73.01},
+		},
 	})
-	// nil udp — no panic; isXC ignored for re-XC
 }
 
 func TestHandleMeshAudioRelay_NilUDP(t *testing.T) {

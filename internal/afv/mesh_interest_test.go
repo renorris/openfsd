@@ -186,6 +186,8 @@ func TestInterestRateLimit_DirtyStorm(t *testing.T) {
 	}
 }
 
+// TestFirstBindDirtyOnceOnServer covers registry firstBind flag (M-15).
+// UDP production path is exercised in TestFirstBindDirtyOnceViaUDPHB (afv_test).
 func TestFirstBindDirtyOnceOnServer(t *testing.T) {
 	cfg := &Config{MaxSessions: 10, MaxSessionsPerCID: 5, RangeDefaultNM: 40}
 	s := New(cfg, nil, nil, []byte("k"))
@@ -203,6 +205,7 @@ func TestFirstBindDirtyOnceOnServer(t *testing.T) {
 	if !ok || !first {
 		t.Fatal("first bind")
 	}
+	// Production UDP path: mark only when firstBind (mirrored here for unit isolation)
 	if first {
 		s.markInterestDirty()
 	}
@@ -214,6 +217,9 @@ func TestFirstBindDirtyOnceOnServer(t *testing.T) {
 	_, first2, ok := s.reg.BindUDP(sess, fakeAddr{"127.0.0.1:1"}, now)
 	if !ok || first2 {
 		t.Fatalf("re-touch first=%v ok=%v", first2, ok)
+	}
+	if first2 {
+		s.markInterestDirty()
 	}
 	if s.InterestDirtyForTest() {
 		t.Fatal("re-touch must not dirty interest")
