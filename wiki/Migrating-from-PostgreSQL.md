@@ -14,7 +14,7 @@ go build -o openfsd-migrate-to-sqlite ./cmd/openfsd-migrate-to-sqlite
 
 ## Steps
 
-1. **Stop** openfsd (FSD + web) so nothing writes to either database during the copy.
+1. **Stop** openfsd (FSD, web, and AFV if running) so nothing writes to either database during the copy.
 2. **Back up** PostgreSQL (`pg_dump`) and keep a copy until you confirm the new server works.
 3. **Run the migrator**:
 

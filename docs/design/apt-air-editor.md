@@ -19,8 +19,8 @@ Shipped. Summary of the tree as of closeout:
 |------|------------------|
 | Parse + Format | `pkg/twrfiles` (`ParseAPT`/`ParseAIR`, `FormatAPT`/`FormatAIR`, fixtures under `pkg/twrfiles/testdata`) |
 | Sweatbox | Thin aliases/wrappers over `pkg/twrfiles` (engine still pure) |
-| Editor MPA | `/airport-editor` shell + Leaflet PE; echo-download; Admin-only |
-| Validate API | `POST /api/v1/editor/validate-apt` / `validate-air` via `pkg/twrfiles` |
+| Editor MPA | `/airport-editor` shell + Leaflet PE; echo-download; **Instructor1+** (product KD-5; was Admin-only in original design) |
+| Validate API | `POST /api/v1/editor/validate-apt` / `validate-air` via `pkg/twrfiles` (**Instructor1+**) |
 | Web JS | Pure modules under `internal/web/static/js/openfsd/`; Node tests in `webjs/` + `scripts/check-webjs.sh` in CI |
 | Persistence | **None** durable (no disk/DB); Blob download + transient request bodies only |
 | Playwright | **Cancelled** — no browser automation suite |
@@ -35,7 +35,7 @@ Design history below is retained. Stale “Format missing / JS tests none” row
 
 openfsd already loads TWRTrainer-compatible **`.apt`** (airport geometry) and **`.air`** (scenario aircraft snapshots) into an in-process sweatbox simulator and exposes an instructor control panel at `/sweatbox`. Instructors can also author those files in-product via the integrated map editor.
 
-This design delivers a **single, integrated map-first editor** on the openfsd admin Web UI for creating and editing **paired** `.apt` and `.air` files. The editor is a **server-rendered MPA shell** with a **JavaScript-heavy progressive enhancement** (Leaflet map + geometry tools). **No durable server persistence** of `.apt` / `.air` (no disk, no DB): primary load is client-local (FileReader / paste) and primary save is **browser Blob download**. Optional Admin-only echo-download and validate POSTs may hold bodies **transiently in process memory** for the duration of the request only — they never write files or store rows.
+This design delivers a **single, integrated map-first editor** on the openfsd admin Web UI for creating and editing **paired** `.apt` and `.air` files. The editor is a **server-rendered MPA shell** with a **JavaScript-heavy progressive enhancement** (Leaflet map + geometry tools). **No durable server persistence** of `.apt` / `.air` (no disk, no DB): primary load is client-local (FileReader / paste) and primary save is **browser Blob download**. Optional Instructor1+ echo-download and validate POSTs may hold bodies **transiently in process memory** for the duration of the request only — they never write files or store rows.
 
 The page targets a dense **16:9 operator console** matching the sweatbox rail aesthetic, reuses in-tree Leaflet assets, and respects the boring-web house standard and the web ↛ sweatbox import-graph edge.
 
@@ -94,7 +94,7 @@ Airport geometry is inherently geographic. A text-only form would satisfy “no 
 1. **Integrated .apt + .air editor** on one bookmarkable URL, map canvas + dense rail.
 2. **OpenStreetMap base map** with airport-intuitive layering (documented tile choice).
 3. **Utilitarian 16:9 console** consistent with sweatbox visual language (tokens, panels, mono numbers).
-4. **No durable server persistence** of APT/AIR (disk/DB); document lives in the browser; download only. Transient request bodies allowed for echo-download and validate (Admin-only, size-capped).
+4. **No durable server persistence** of APT/AIR (disk/DB); document lives in the browser; download only. Transient request bodies allowed for echo-download and validate (Instructor1+, size-capped).
 5. **Boring-web compliance**: real route, server authz, no SPA router, no global server-state store, CSRF only when mutating the server. Map geometry authoring is a **documented complexity-gate exception** (like dashboard Leaflet); no-JS paste + echo-download remains for the data path.
 6. **JS heavily tested**: unit coverage as close to 100% as practical on pure modules; e2e covering editor flows.
 7. **Go tests** for any new routes/handlers (authz, shell render, optional echo-download).
@@ -286,7 +286,7 @@ Also update `Agents.md` §1 package table: sweatbox = stdlib + `internal/geo` + 
 |------|--------|
 | **URL** | `GET /airport-editor` |
 | **Auth** | Session cookie (`requireSessionHTML`) |
-| **Authz** | **Administrator** (`requireMinRatingHTML(protocol.NetworkRatingAdministator)`) — same tier as `/sweatbox` and config editor |
+| **Authz** | **Instructor1+** (`requireMinRatingHTML(protocol.NetworkRatingInstructor1)`) — same tier as `/sweatbox`; config editor remains Administrator |
 | **Nav** | Layout header: link **Airport Editor** next to Sweatbox when `User.CanEditConfig` |
 | **Does not require** | `SWEATBOX_ENABLED` or FSD process |
 
@@ -861,7 +861,7 @@ Content-Disposition: attachment; filename="airport.apt"
 - No `os.WriteFile`, `os.Create`, `os.OpenFile` for user content; no DB repository calls.
 - Go tests: snapshot workdir (or `t.TempDir` as cwd if needed) before/after — file set unchanged.
 - `slog` allowlist: `cid`, `content_length`, `icao` (if parsed), `error_count`, `path` — **never** full body text.
-- Transient RAM only for request lifetime; Admin-only so body-in-RAM is accepted risk.
+- Transient RAM only for request lifetime; Instructor1+ so body-in-RAM is accepted risk.
 
 Default filename: from form field `filename` if safe (`^[A-Za-z0-9._-]{1,64}$`), else `airport.apt` / `scenario.air`. Prefer ICAO when parse succeeds: `KBTV.apt`. **Do not block download on validation errors** (WIP authoring); optional `strict=1` may reject later — not v1 default.
 
@@ -880,7 +880,7 @@ api.POST("/validate-air", s.handleAPIValidateAIR)
 | Condition | Response |
 |-----------|----------|
 | Unauthenticated | Existing `jwtBearerMiddleware` behavior (401 JSON) |
-| Authenticated but rating &lt; Administrator | **`403`** + `writeAPIV1Response(c, http.StatusForbidden, &genericAPIV1Forbidden)` — same as `handleAPISweatboxState` / `api_tokens.go` |
+| Authenticated but rating &lt; Instructor1 | **`403`** + `writeAPIV1Response(c, http.StatusForbidden, &genericAPIV1Forbidden)` — same as sweatbox JSON proxies |
 | Never | `303` redirect to `/dashboard` (that is **HTML-only** middleware) |
 
 **Do not** introduce `requireMinRatingAPI` that wraps `requireMinRatingHTML`. Prefer **inline rating check** after claims (copy sweatbox API pattern). If a shared helper is added later, it must return JSON 403 only and must not redirect.
@@ -966,7 +966,7 @@ webjs/
     format-air.test.js
     model.test.js
     …
-  README.md                 # how to run; Node 20 LTS pin
+  README.md                 # how to run; Node ≥20 floor (CI pins 24)
 ```
 
 ```text
@@ -997,7 +997,7 @@ cd "$(dirname "$0")/../webjs"
 node --test airport-editor/**/*.test.js
 ```
 
-- Pin **Node 24** in CI (`actions/setup-node@v7` with `node-version: "24"`; local floor ≥20).
+- Pin **Node 24** in CI (`actions/setup-node@v7` with `node-version: "24"`; local floor ≥20). *(Landed: CI workflow uses Node 24.)*
 - Prefer **zero npm deps** for unit tests (`node:test` only). If `package.json` scripts only, `npm test` can invoke node without `node_modules`.
 - Add `node_modules/` to `.gitignore` if any package is ever added.
 - Update `Agents.md` §9 and CI workflow in **PR 4**.
@@ -1124,10 +1124,10 @@ Update `scripts/check-import-graph.sh`: `check_stdlib_only` for `pkg/twrfiles`; 
 | Open redirect | N/A |
 | Tile server data leakage | Only lat/lon tile coords leave browser to OSM/Esri — expected for maps |
 | Sensitive scenario data in localStorage | v1: do not persist full drafts |
-| Validate API as parse oracle | Admin-only; rate not critical; still size-capped |
+| Validate API as parse oracle | Instructor1+; rate not critical; still size-capped |
 | Content-Disposition injection | Sanitize filename (no CR/LF/quotes) |
 | Accidental durable write | Handler criteria: no file/DB APIs; PE tests assert workdir unchanged |
-| Body in RAM (echo/validate) | Admin-only + 2 MiB cap; transient request scope only — **not** a persistence path |
+| Body in RAM (echo/validate) | Instructor1+ + 2 MiB cap; transient request scope only — **not** a persistence path |
 
 **Persistence wording (airtight):**
 
@@ -1290,7 +1290,7 @@ bash scripts/check-webjs.sh
 | 5 | PR6: read-only map; PR7: edit + Blob; PR8: validation polish |
 | 6 | ~~PR9 Playwright~~ **cancelled** — docs only; no browser automation |
 
-**Feature flag:** not required — Admin-only page is the gate. If needed, env `AIRPORT_EDITOR_ENABLED=false` can hide route; **default on** once shipped.
+**Feature flag:** not required — Instructor1+ page authz is the gate. If needed, env `AIRPORT_EDITOR_ENABLED=false` can hide route; **default on** once shipped.
 
 **Rollback:** revert PRs; no DB migration. Static embed reverts with binary.
 
@@ -1300,7 +1300,7 @@ bash scripts/check-webjs.sh
 
 ## Open Questions
 
-1. **Should Supervisors access the editor?** **Resolved for v1:** Admin-only (product default; Supervisor access deferred).
+1. **Should Supervisors / instructors access the editor?** **Resolved:** **Instructor1+** (aligned with sweatbox; see user-dashboard KD-5). Original v1 draft was Admin-only.
 2. **Esri imagery ToS** for each deployer's traffic profile — keep optional and documented.
 3. **Undo stack?** **Shipped** — keyboard-only snapshot history; see `docs/design/airport-editor-undo-redo.md`. (Earlier “deferred v1.1” superseded.)
 4. **~~Playwright CI~~** — **cancelled.** No browser automation suite.
@@ -1314,7 +1314,7 @@ Resolved by this rev: WIP download allowed (yes); fixture path = `pkg/twrfiles/t
 | # | Decision | Rationale |
 |---|----------|-----------|
 | 1 | **Single page `/airport-editor`**, not nested under live sweatbox | Independent of `SWEATBOX_ENABLED`; clear authoring vs control-plane split |
-| 2 | **Admin-only** (same as `/sweatbox`) | Consistent training-ops audience; tight authz |
+| 2 | **Instructor1+** (same as `/sweatbox`; product update from Admin-only) | Training-ops audience; instructors author layouts |
 | 3 | **No durable server persistence**; Blob primary; transient echo/validate only | User requirement; RAM OK for Admin-sized POSTs |
 | 4 | **Optional form echo-download** for no-JS | Boring-web data path without map |
 | 5 | **`pkg/twrfiles` stdlib package** + **sweatbox type aliases/wrappers in PR1** | Web cannot import sweatbox; sim blast radius controlled; Format missing today |

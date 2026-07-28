@@ -5,17 +5,29 @@
 | **Document** | Distributed multi-node openfsd (mesh + rqlite) |
 | **Author** | _(design author / implementer)_ |
 | **Date** | 2026-07-28 |
-| **Status** | **Draft** (rev 4 — product decisions: full mesh path, synthetic #DP, FPL cache) |
+| **Status** | **Implemented (opt-in)** on `dev` — rqlite driver, FSD TCP mesh, `docker-compose.cluster.yml`, migrate-to-rqlite, wiki Deployment/Configuration. Single-node SQLite remains default. Design history retained. |
 | **Project** | openfsd |
-| **Target land path** | `docs/design/distributed-openfsd.md` (when accepted) |
+| **Target land path** | `docs/design/distributed-openfsd.md` |
 | **Related** | `Agents.md`, `internal/postoffice`, `internal/server/deps.go`, `internal/db/*`, `internal/serviceapi`, `docs/design/sweatbox-integrated-simulator.md`, `wiki/Deployment.md`, rqlite docs |
 | **Revision** | rev 4: product G0=full mesh; synthetic #DP on peer death; FPL cache+RPC miss; ≤8 peers; ring reconfig remains ops-drain v1 |
 
 ---
 
+## Implementation status (as of 2026-07-28)
+
+| Slice | State |
+|-------|--------|
+| rqlite driver + migrate tool | **Landed** (`DATABASE_DRIVER=rqlite`, `cmd/openfsd-migrate-to-rqlite`) |
+| FSD TCP mesh (claim, directory, interest, HomeRPC) | **Landed** (`internal/cluster`, `CLUSTER_*`) |
+| Sample multi-node compose | **Landed** (`docker-compose.cluster.yml`) |
+| Operator wiki | **Landed** (Deployment multi-node section, Configuration cluster env) |
+| Default path | Still **single-node SQLite** (`CLUSTER_ENABLED=false`) |
+
+Design body below retains the full plan and feasibility report.
+
 ## Overview
 
-openfsd today is a **single-process, single-node** FSD stack: gnet TCP plane, in-process `postoffice` registry (lock-free O(N) slab scan, VATSIM-scale ≤~15k), session-local flight plans, SQLite for users/config, and a boring-web control plane that talks to FSD only via service HTTP. That design is correct and fast for club / VA / regional networks. It does **not** give VATSIM-style properties: clients cannot pin to a geographically nearest edge, formation flying across distant peers cannot exploit local RTT, and a node death takes the whole network offline.
+openfsd’s **default** is a **single-process, single-node** FSD stack: gnet TCP plane, in-process `postoffice` registry (lock-free O(N) slab scan, VATSIM-scale ≤~15k), session-local flight plans, SQLite for users/config, and a boring-web control plane that talks to FSD only via service HTTP. That design is correct and fast for club / VA / regional networks. Without the optional cluster path it does **not** give VATSIM-style properties: clients cannot pin to a geographically nearest edge, formation flying across distant peers cannot exploit local RTT, and a node death takes the whole network offline.
 
 This document is a **full implementation plan plus an honest feasibility/rationality report** for making openfsd **optionally distributed**:
 

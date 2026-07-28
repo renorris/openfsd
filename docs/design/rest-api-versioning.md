@@ -5,7 +5,7 @@
 | **Document** | Operator REST surface expansion + durable versioning/compatibility |
 | **Author** | _(design author / implementer)_ |
 | **Date** | 2026-07-28 |
-| **Status** | **Accepted** (design review consensus 2026-07-28) |
+| **Status** | **Accepted + Implemented** (design review 2026-07-28; middleware, discovery, OpenAPI embed, first-train routes, goldens, operator guide in `internal/web/README.md`) |
 | **Project** | openfsd |
 | **Target land path** | `docs/design/rest-api-versioning.md` |
 | **Related** | `internal/web/README.md`, `Agents.md` §2/§6, `docs/design/user-dashboard-self-service.md`, `docs/design/sweatbox-integrated-simulator.md`, `internal/serviceapi/*` |

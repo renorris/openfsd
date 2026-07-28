@@ -5,11 +5,20 @@
 | **Title** | AFV multi-node mesh — directory sync + AT frame relay |
 | **Author** | openfsd design (implementer-ready) |
 | **Date** | 2026-07-28 |
-| **Status** | Draft (rev 3 — hard testing bar + residual review) |
+| **Status** | **Memory path Implemented** (PR-10 on `dev`: framing, Interest, AudioRelay, MemoryMesh e2e Cases A–F, fail-closed `ENABLED` without TCP). **TCP mesh = PR-10b** (not in production binary). |
 | **Parent** | `docs/design/afv-server.md` (Clustering, KD-8/9/16/17, PR-10) |
 | **Contract** | `docs/design/afv-mesh-implementer-prompt.md` |
 
 ---
+
+## Implementation status (as of 2026-07-28)
+
+| Item | State |
+|------|--------|
+| Framing, Interest, remote directory, AudioRelay, MemoryMesh e2e | **Landed** (`internal/afv/mesh_*.go`, Cases A–F) |
+| Fail-closed `AFV_CLUSTER_ENABLED` without TCP | **Landed** |
+| Production `TCPMesh` | **PR-10b** — not in binary; enable fails with clear error |
+| Operator wiki for multi-node AFV | Single-node ops documented; multi-host voice deferred until TCP |
 
 ## Overview
 

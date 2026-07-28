@@ -4,10 +4,11 @@ openfsd is a **single binary** (`openfsd`) that can run:
 
 1. The FSD server (TCP protocol + internal service HTTP)
 2. The web UI and `/api/v1`
+3. Optionally, the **AFV** voice API + UDP voice server (`-afv`)
 
-By default both run in one process. Use CLI flags to select services.
+By default **FSD + web** run in one process (AFV stays off). Use CLI flags to select services.
 
-Storage is **SQLite only** (a file on disk, or `:memory:` for ephemeral use). If you are upgrading from a PostgreSQL deployment, see [Migrating from PostgreSQL](Migrating-from-PostgreSQL.md).
+Storage is **SQLite only** by default (a file on disk, or `:memory:` for ephemeral use). Optional multi-node uses **rqlite** for durable users/config. If you are upgrading from a PostgreSQL deployment, see [Migrating from PostgreSQL](Migrating-from-PostgreSQL.md).
 
 ## Docker Compose (recommended)
 
@@ -32,7 +33,7 @@ Images: **`ghcr.io/renorris/openfsd`** — CI publishes `:latest` from **`main` 
 ### Service selection
 
 ```bash
-# Both (default CMD)
+# FSD + web (default CMD)
 docker run --rm -p 6809:6809 -p 8000:8000 ghcr.io/renorris/openfsd:latest
 
 # FSD only
@@ -42,6 +43,14 @@ docker run --rm -p 6809:6809 ghcr.io/renorris/openfsd:latest /openfsd -fsd
 docker run --rm -p 8000:8000 \
   -e FSD_HTTP_SERVICE_ADDRESS=http://fsd-host:13618 \
   ghcr.io/renorris/openfsd:latest /openfsd -web
+
+# AFV only (set advertise + public URL for real clients)
+docker run --rm -p 8080:8080 -p 50000:50000/udp \
+  -e AFV_API_LISTEN=0.0.0.0:8080 \
+  -e AFV_UDP_ADVERTISE_IPV4=your.public.host:50000 \
+  -e AFV_API_PUBLIC_BASE_URL=https://voice.example \
+  -e DATABASE_SOURCE_NAME=/path/to/shared.db?... \
+  ghcr.io/renorris/openfsd:latest /openfsd -afv
 ```
 
 Back up the SQLite volume (or the `.db` file) regularly.
@@ -54,12 +63,14 @@ go build -o openfsd ./cmd/openfsd
 export DATABASE_SOURCE_NAME=./openfsd.db?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)
 export DATABASE_AUTO_MIGRATE=true
 
-./openfsd              # both FSD and web
+./openfsd              # FSD + web
 ./openfsd -fsd         # FSD only
 ./openfsd -web         # web only
+./openfsd -afv         # AFV only
+./openfsd -fsd -web -afv
 ```
 
-See [Configuration](Configuration.md) for the full environment list.
+See [Configuration](Configuration.md) for the full environment list (including `AFV_*`).
 
 ## Windows
 
@@ -85,7 +96,9 @@ To reset the database, delete the created `openfsd.db` file next to `run-windows
 
 - Prefer a single pod/process with a persistent volume for the SQLite file for small/medium networks.
 - If you split `-fsd` and `-web` across hosts, set `FSD_HTTP_SERVICE_ADDRESS` on the web process to the FSD internal service HTTP address (default `http://127.0.0.1:13618` when colocated).
+- Multi-FSD web: set `FSD_HTTP_SERVICE_ADDRESSES` (`nodeID=http://host:port,...`) for online_users aggregation and kick routing.
 - Do not put two writers on the same SQLite file over NFS without understanding SQLite locking limits; local disk or a block volume is preferred.
+- AFV may run colocated (`-fsd -web -afv`) or as a separate process sharing the same user database DSN.
 
 ## Optional multi-node cluster
 
@@ -100,6 +113,7 @@ See also `docs/design/distributed-openfsd.md` and the sample compose file `docke
 | Durable users/config | **rqlite** (Raft SQLite) | `DATABASE_DRIVER=rqlite`, HTTP DSN |
 | Live callsigns/positions | In-process postoffice + **TCP mesh** | Never stored in rqlite |
 | Control plane | Web ×N → service HTTP on each FSD | `FSD_HTTP_SERVICE_ADDRESSES` |
+| Voice (optional) | AFV process(es) | Separate from FSD mesh; see AFV section |
 
 ### Required env (FSD edges)
 
@@ -154,3 +168,20 @@ Default `docker compose up` remains **one container + SQLite**.
 ### CI note
 
 Optional multi-node compose is **manual / ops** (`docker compose -f docker-compose.cluster.yml`). Default CI remains single-node `go test` + MemoryMesh unit/e2e tests (no required cluster compose job in v1).
+
+## Optional AFV voice
+
+AFV is **opt-in** (`-afv`). It is not started by the default Docker CMD.
+
+| Plane | Port (defaults) | Notes |
+|-------|-----------------|--------|
+| AFV REST | `AFV_API_LISTEN` default `127.0.0.1:8080` | Auth, callsign, transceivers; prefer TLS in production |
+| AFV UDP | `AFV_UDP_LISTEN` default `0.0.0.0:50000` | CryptoDTO Opus relay (opaque; no decode) |
+
+**Required for clients to connect UDP:** `AFV_UDP_ADVERTISE_IPV4` (and optionally `AFV_UDP_ADVERTISE_IPV6`) — the address embedded in channel config for clients. Behind NAT, this must be the **public** host:port.
+
+Share the same `DATABASE_*` as FSD so AFV authenticates against the same certificates. Optional `AFV_REQUIRE_FSD_ONLINE=true` gates voice sessions on the FSD online_users service.
+
+Multi-node AFV mesh (`AFV_CLUSTER_*`) directory + AT relay is implemented for in-process/MemoryMesh testing; **production TCP mesh is not enabled** in the binary yet (`AFV_CLUSTER_ENABLED=true` fails closed until PR-10b). See `docs/design/afv-server.md` and `docs/design/afv-mesh-pr10.md`.
+
+Full env list: [Configuration](Configuration.md#afv-voice-optional).

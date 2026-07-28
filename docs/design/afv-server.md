@@ -5,14 +5,25 @@
 | **Document** | AFV (Audio for VATSIM) server — full feature design |
 | **Author** | _(design author / implementer)_ |
 | **Date** | 2026-07-28 |
-| **Status** | **Draft** (rev 2 — review e59fdb24 addressed) |
+| **Status** | **P0 Implemented** (single-node REST + UDP on `dev`; design history retained). Mesh: MemoryMesh path landed (PR-10); production TCP = PR-10b. |
 | **Project** | openfsd |
-| **Target land path** | `docs/design/afv-server.md` (when accepted) |
+| **Target land path** | `docs/design/afv-server.md` |
 | **Related** | `Agents.md`, `docs/design/distributed-openfsd.md`, `internal/auth`, `internal/geo`, `internal/cluster`, `internal/db`, `cmd/openfsd/main.go`, [AFV-Native](https://github.com/xsquawkbox/AFV-Native) (BSD-3) |
 | **Protocol source of truth** | AFV-Native headers/sources (Chris Collins); also used by TrackAudio, xPilot, VectorAudio, vPilot (VATSIM clients) |
 | **Revision** | rev 2: JWT/`internal/auth` alignment; normative HA recipe; bootstrap; mesh/XC/concurrency/coverage/PR-plan fixes |
 
 ---
+
+## Implementation status (as of 2026-07-28)
+
+| Slice | State |
+|-------|--------|
+| P0 single-node (`pkg/afvprotocol`, `internal/afv`, `-afv`) | **Landed** — REST auth/callsign/transceivers; UDP H/HA + AT→AR; range model; reaper; empty stations route |
+| PR-10 mesh (MemoryMesh + framing + Interest + AudioRelay) | **Landed** (in-process / test mesh; e2e Cases A–F) |
+| PR-10b production TCP mesh | **Not landed** — `AFV_CLUSTER_ENABLED=true` fails closed without TCP in binary |
+| Operator docs | Wiki Configuration/Deployment AFV sections; root README |
+
+Design body below is the engineering record (decisions, protocol, PR plan). Prefer wiki + `internal/afv` for day-to-day ops.
 
 ## Overview
 
