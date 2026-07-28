@@ -39,6 +39,11 @@ tags:
     description: APT/AIR validate (Stable; Instructor1+)
   - name: Sweatbox
     description: Read-only PE proxies (raw; outside envelope goldens)
+  - name: Account
+    description: |
+      Self-service password change and account delete (Provisional).
+      Any OBS+ dual-accept actor; self only. Shape may change without a
+      microversion bump until promoted to Stable (post-release sign-off).
   # Data feeds (/data/*) are public and outside microversion reject; documented in
   # internal/web/README.md. Not listed here until a full inventory is needed.
 
@@ -467,6 +472,114 @@ paths:
         "400":
           $ref: "#/components/responses/BadAPIVersion"
 
+  /account/password:
+    post:
+      tags: [Account]
+      summary: Change own password (self-service)
+      description: |
+        Change the authenticated actor's password. Validation parity with the
+        HTML `/account/password` form (`validateNewPassword`, confirm match,
+        new ≠ current).
+
+        **Stability: Provisional** — request/response shape may change without a
+        microversion bump until maintainer sign-off promotes this route to Stable.
+
+        **Auth side effects:** Bearer success does **not** set or clear session
+        cookies. Cookie dual-accept may re-issue a 24h session cookie and clear
+        CSRF (parity with HTML).
+      operationId: postAccountPassword
+      x-openfsd-stability: provisional
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OpenFSDAPIVersion"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AccountPasswordRequest"
+      responses:
+        "200":
+          description: Password updated (`data` is null)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+        "400":
+          description: |
+            Validation failure (empty current, incorrect password, weak new
+            password, confirm mismatch, new equals current) or bad API version.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+        "401":
+          description: Missing/invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+
+  /account/delete:
+    post:
+      tags: [Account]
+      summary: Soft- or hard-delete own account
+      description: |
+        Delete the authenticated actor's account after password step-up and
+        `confirm_cid` match.
+
+        - Default / `permanent: false`: soft-delete (`network_rating = Inactive`).
+        - `permanent: true` and `ALLOW_PERMANENT_ACCOUNT_DELETE=true`: hard-delete row.
+        - **`permanent: true` when hard-delete is disabled → 400**
+          `"permanent delete is disabled"` and **no mutation**.
+
+        **Intentional JSON divergence from HTML:** the HTML form falls back to
+        soft-delete and redirects with `permanent=disabled` when permanent was
+        requested but disabled. Automation must not silently receive a different
+        delete mode than requested — retry with `permanent: false` for soft-delete,
+        or enable hard-delete server-side.
+
+        **Stability: Provisional.** Bearer success does not clear cookies (client
+        drops the token). Cookie dual-accept clears session + CSRF like HTML.
+        After success, clients must drop credentials.
+      operationId: postAccountDelete
+      x-openfsd-stability: provisional
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OpenFSDAPIVersion"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AccountDeleteRequest"
+      responses:
+        "200":
+          description: Account deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1EnvelopeAccountDelete"
+        "400":
+          description: |
+            Validation failure, permanent delete disabled (fail-closed), or bad
+            API version. No account mutation when permanent is requested but
+            disabled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+        "401":
+          description: Missing/invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+
 components:
   responses:
     BadAPIVersion:
@@ -580,3 +693,50 @@ components:
           properties:
             data:
               $ref: "#/components/schemas/CreateTokenData"
+
+    AccountPasswordRequest:
+      type: object
+      required: [current_password, new_password, confirm_password]
+      properties:
+        current_password:
+          type: string
+          description: Existing password (required; incorrect → 400 "incorrect password")
+        new_password:
+          type: string
+          description: Min 8 characters; must not contain ":"; must differ from current
+        confirm_password:
+          type: string
+          description: Must equal new_password (required for JSON parity with HTML)
+
+    AccountDeleteRequest:
+      type: object
+      required: [current_password, confirm_cid]
+      properties:
+        current_password:
+          type: string
+        confirm_cid:
+          type: integer
+          description: Must equal the actor CID
+          minimum: 1
+        permanent:
+          type: boolean
+          default: false
+          description: |
+            When true and ALLOW_PERMANENT_ACCOUNT_DELETE is enabled, hard-delete.
+            When true and hard-delete is disabled, 400 fail-closed (no mutation).
+
+    AccountDeleteData:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [soft_deleted, hard_deleted]
+
+    APIV1EnvelopeAccountDelete:
+      allOf:
+        - $ref: "#/components/schemas/APIV1Envelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/AccountDeleteData"
