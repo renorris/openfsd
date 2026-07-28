@@ -101,9 +101,9 @@ OpenFSD-API-Version: 2026-07-28
 
 Canonical OpenAPI file: `internal/web/openapi/openapi.v1.yaml` (`//go:embed`). No mirrored copy under `docs/`.
 
-**Outside microversion reject:** `/api/v1/data/*`, `/api/v1/fsd-jwt`, auth login/refresh, discovery, OpenAPI. Resource groups (`/user`, `/config`, `/fsdconn`, `/sweatbox`, `/editor`) reject unknown/invalid pins with **400** envelope.
+**Outside microversion reject:** `/api/v1/data/*`, `/api/v1/fsd-jwt`, auth login/refresh, discovery, OpenAPI. Resource groups (`/user`, `/users`, `/config`, `/fsdconn`, `/sweatbox`, `/editor`) reject unknown/invalid pins with **400** envelope.
 
-**Stability tiers:** existing enveloped user/config/fsdconn/editor routes are **Stable** (goldens under `testdata/api_v1/<pin>/`). New expansion routes may ship **Provisional** (shape may change without a microversion bump while Provisional). Design: `docs/design/rest-api-versioning.md`.
+**Stability tiers:** enveloped user/users/config/fsdconn/editor routes are **Stable** (goldens under `testdata/api_v1/<pin>/`). New expansion routes may ship **Provisional** (shape may change without a microversion bump while Provisional). Design: `docs/design/rest-api-versioning.md`.
 
 Baseline pin (first supported): **`2026-07-28`**.
 
@@ -298,6 +298,70 @@ Retrieve user information by CID.
 - **500 Internal Server Error**: Database error.
 
 **Permissions**: Requires valid JWT access token. Users can retrieve their own info; Supervisor rating (11) required for other users' info.
+
+---
+
+#### GET /api/v1/users
+List users (directory). **Stable.** Operator-automation parity with the HTML user editor directory.
+
+**Query parameters** (same semantics as HTML `parseUserDirectoryQuery` / `clampDirectoryPage`):
+
+| Param | Default | Notes |
+|-------|---------|-------|
+| `q` | `""` | Free-text (CID substring / name); empty = all |
+| `rating` | omit (all) | Exact network rating −1…12; invalid/out of range → all (never 500) |
+| `sort` | `cid` | `cid` \| `name` \| `rating`; unknown → `cid` |
+| `dir` | `asc` | `desc` flips; anything else → `asc` |
+| `page` | `1` (1-based) | non-int or &lt;1 → 1; clamped to last page after count |
+| `page_size` | `50` | ≤0 → 50; clamp **[1, 200]** |
+
+**Response (200 OK)**:
+```json
+{
+  "version": "v1",
+  "err": null,
+  "data": {
+    "items": [
+      {
+        "cid": integer,
+        "first_name": string,
+        "last_name": string,
+        "network_rating": integer,
+        "pilot_rating": integer
+      }
+    ],
+    "total": integer,
+    "page": integer,
+    "page_size": integer,
+    "pages": integer
+  }
+}
+```
+
+`page` / `page_size` / `pages` / `total` are the **effective** values after clamping (not raw illegal inputs). Items never include password hashes.
+
+**Errors**:
+- **401 Unauthorized**: Invalid bearer token / session.
+- **403 Forbidden**: Actor is not Supervisor+.
+- **500 Internal Server Error**: Database error.
+
+**Permissions**: Supervisor rating (11)+. Dual-accept Bearer | session cookie (+ CSRF when cookie).
+
+---
+
+#### GET /api/v1/users/:cid
+Retrieve one user by CID. **Stable.** Same public fields as `POST /user/load`.
+
+**Response (200 OK)**: same `data` shape as `POST /user/load`.
+
+**Errors**:
+- **400 Bad Request**: Invalid path `cid` (non-int or &lt;1).
+- **401 Unauthorized**: Invalid bearer token / session.
+- **403 Forbidden**: Non-self CID without Supervisor+.
+- **404 Not Found**: User not found.
+- **500 Internal Server Error**: Database error.
+
+**Permissions**: Self always allowed; other CIDs require Supervisor+.
 
 ---
 

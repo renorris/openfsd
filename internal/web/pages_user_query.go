@@ -6,13 +6,19 @@ import (
 	"strings"
 )
 
-// userDirectoryPageSize is the fixed directory page size (not a query param).
+// userDirectoryPageSize is the default directory page size (HTML omits page_size).
 const userDirectoryPageSize = 50
+
+// userDirectoryPageSizeMax matches db.UserListFilter hard cap.
+const userDirectoryPageSizeMax = 200
 
 // parseUserDirectoryQuery parses and clamps directory GET query parameters.
 // Invalid values never 500: bad sort → cid, bad dir → asc, page < 1 → 1,
 // rating outside [-1,12] or non-int → all (nil). Page clamping past the last
 // page is applied later once Total is known (clampDirectoryPage).
+//
+// page_size (JSON API; HTML never sends it): missing/non-int/≤0 → 50;
+// clamp to [1, 200] (UserListFilter hard cap).
 func parseUserDirectoryQuery(values url.Values) userDirectoryQuery {
 	q := userDirectoryQuery{
 		Q:        strings.TrimSpace(values.Get("q")),
@@ -52,6 +58,17 @@ func parseUserDirectoryQuery(values url.Values) userDirectoryQuery {
 		if r, err := strconv.Atoi(strings.TrimSpace(ratingStr[0])); err == nil && r >= -1 && r <= 12 {
 			q.Rating = &r
 		}
+	}
+
+	// page_size: optional (JSON directory API). HTML never sends it → stays 50.
+	if psStr := strings.TrimSpace(values.Get("page_size")); psStr != "" {
+		if ps, err := strconv.Atoi(psStr); err == nil && ps > 0 {
+			if ps > userDirectoryPageSizeMax {
+				ps = userDirectoryPageSizeMax
+			}
+			q.PageSize = ps
+		}
+		// non-int or ≤0 → keep default 50 (never 500)
 	}
 
 	return q

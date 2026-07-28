@@ -42,23 +42,8 @@ func (s *Server) getUserByCID(c *gin.Context) {
 		return
 	}
 
-	type ResponseBody struct {
-		CID           int    `json:"cid"`
-		FirstName     string `json:"first_name"`
-		LastName      string `json:"last_name"`
-		NetworkRating int    `json:"network_rating"`
-		PilotRating   int    `json:"pilot_rating"`
-	}
-
-	resBody := ResponseBody{
-		CID:           user.CID,
-		FirstName:     safeStr(user.FirstName),
-		LastName:      safeStr(user.LastName),
-		NetworkRating: user.NetworkRating,
-		PilotRating:   user.PilotRating,
-	}
-
-	res := newAPIV1Success(&resBody)
+	data := apiUserFromDB(user)
+	res := newAPIV1Success(&data)
 	writeAPIV1Response(c, http.StatusOK, &res)
 }
 

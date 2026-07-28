@@ -71,11 +71,19 @@ func (s *Server) setupAuthRoutes(parent *gin.RouterGroup) {
 }
 
 func (s *Server) setupUserRoutes(parent *gin.RouterGroup) {
-	usersGroup := parent.Group("/user")
-	s.useAPIV1Protected(usersGroup)
-	usersGroup.POST("/load", s.getUserByCID)
-	usersGroup.PATCH("/update", s.updateUser)
-	usersGroup.POST("/create", s.createUser)
+	// Legacy RPC-ish paths (Stable; preserved).
+	userRPC := parent.Group("/user")
+	s.useAPIV1Protected(userRPC)
+	userRPC.POST("/load", s.getUserByCID)
+	userRPC.PATCH("/update", s.updateUser)
+	userRPC.POST("/create", s.createUser)
+
+	// Resource-oriented directory (Stable) — SUP+ list; self or SUP+ get.
+	// See docs/design/rest-api-versioning.md §B.
+	usersDir := parent.Group("/users")
+	s.useAPIV1Protected(usersDir)
+	usersDir.GET("", s.handleAPIListUsers)
+	usersDir.GET("/:cid", s.handleAPIGetUser)
 }
 
 func (s *Server) setupConfigRoutes(parent *gin.RouterGroup) {

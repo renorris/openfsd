@@ -30,7 +30,7 @@ tags:
   - name: Auth
     description: Password login / refresh (discouraged for automation; mint API tokens instead)
   - name: User
-    description: User load/create/update (Stable)
+    description: User load/create/update and directory list (Stable)
   - name: Config
     description: Server configuration and API tokens (Stable; admin)
   - name: FSDConn
@@ -242,6 +242,123 @@ paths:
                 $ref: "#/components/schemas/APIV1Envelope"
         "400":
           $ref: "#/components/responses/BadAPIVersion"
+
+  /users:
+    get:
+      tags: [User]
+      summary: List users (directory; Supervisor+)
+      description: |
+        Operator automation for the HTML user directory. Query/pagination semantics
+        match `parseUserDirectoryQuery` / `clampDirectoryPage` (1-based page, default
+        page_size 50, clamp [1,200], invalid sort/rating never 500, page past end
+        clamps to last page). No password hashes in items.
+      operationId: getUsers
+      x-openfsd-stability: stable
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OpenFSDAPIVersion"
+        - name: q
+          in: query
+          required: false
+          description: Free-text filter (CID substring or name); empty = all
+          schema: { type: string }
+        - name: rating
+          in: query
+          required: false
+          description: Exact network rating filter (−1…12). Invalid/out of range → all.
+          schema: { type: integer, minimum: -1, maximum: 12 }
+        - name: sort
+          in: query
+          required: false
+          description: "cid | name | rating (default cid; unknown → cid)"
+          schema: { type: string, enum: [cid, name, rating], default: cid }
+        - name: dir
+          in: query
+          required: false
+          description: "asc | desc (default asc; unknown → asc)"
+          schema: { type: string, enum: [asc, desc], default: asc }
+        - name: page
+          in: query
+          required: false
+          description: 1-based page (default 1; <1 or non-int → 1; clamped past last page)
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: page_size
+          in: query
+          required: false
+          description: Page size (default 50; ≤0 → 50; clamp [1, 200])
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        "200":
+          description: Directory page (effective page / page_size / pages / total after clamp)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1EnvelopeUserList"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+        "403":
+          description: Forbidden (Supervisor+ required)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+        "400":
+          $ref: "#/components/responses/BadAPIVersion"
+
+  /users/{cid}:
+    get:
+      tags: [User]
+      summary: Get user by CID (self or Supervisor+)
+      description: |
+        Same public fields as POST /user/load. Self always allowed; other CIDs require Supervisor+.
+      operationId: getUserByCID
+      x-openfsd-stability: stable
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OpenFSDAPIVersion"
+        - name: cid
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: User record
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1EnvelopeUser"
+        "400":
+          description: Invalid cid or bad API version
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+        "403":
+          description: Forbidden (non-self without Supervisor+)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+        "404":
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
 
   /config/load:
     get:
@@ -580,3 +697,42 @@ components:
           properties:
             data:
               $ref: "#/components/schemas/CreateTokenData"
+
+    UserRecord:
+      type: object
+      required: [cid, first_name, last_name, network_rating, pilot_rating]
+      properties:
+        cid: { type: integer, minimum: 1 }
+        first_name: { type: string }
+        last_name: { type: string }
+        network_rating: { type: integer, minimum: -1, maximum: 12 }
+        pilot_rating: { type: integer, minimum: 0, maximum: 63 }
+
+    UserListData:
+      type: object
+      required: [items, total, page, page_size, pages]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/UserRecord"
+        total: { type: integer, minimum: 0 }
+        page: { type: integer, minimum: 1 }
+        page_size: { type: integer, minimum: 1, maximum: 200 }
+        pages: { type: integer, minimum: 1 }
+
+    APIV1EnvelopeUser:
+      allOf:
+        - $ref: "#/components/schemas/APIV1Envelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/UserRecord"
+
+    APIV1EnvelopeUserList:
+      allOf:
+        - $ref: "#/components/schemas/APIV1Envelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/UserListData"

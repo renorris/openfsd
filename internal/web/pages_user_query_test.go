@@ -162,6 +162,38 @@ func TestParseUserDirectoryQuery(t *testing.T) {
 	}
 }
 
+func TestParseUserDirectoryQuery_PageSize(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		raw  string
+		want int
+	}{
+		{name: "omitted", raw: "", want: 50},
+		{name: "valid 25", raw: "page_size=25", want: 25},
+		{name: "zero → default", raw: "page_size=0", want: 50},
+		{name: "negative → default", raw: "page_size=-3", want: 50},
+		{name: "non-int → default", raw: "page_size=nope", want: 50},
+		{name: "cap 200", raw: "page_size=500", want: 200},
+		{name: "boundary 200", raw: "page_size=200", want: 200},
+		{name: "boundary 1", raw: "page_size=1", want: 1},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			vals, err := url.ParseQuery(tt.raw)
+			if err != nil {
+				t.Fatalf("ParseQuery: %v", err)
+			}
+			got := parseUserDirectoryQuery(vals)
+			if got.PageSize != tt.want {
+				t.Errorf("PageSize=%d want %d", got.PageSize, tt.want)
+			}
+		})
+	}
+}
+
 func TestDirectoryValuesFromPost(t *testing.T) {
 	t.Parallel()
 	post := url.Values{}
