@@ -397,8 +397,7 @@ func (e *fsdEngine) beginLogin(c gnet.Conn, cc *fsdConnCtx, idPacket, addPacket 
 
 	// Offload auth + ClaimReserve (PHASE A).
 	srv := e.srv
-	select {
-	case srv.authPool <- func() {
+	job := func() {
 		res := e.runAuthReserve(c, cc, client, token)
 		cc.mu.Lock()
 		if cc.closed {
@@ -422,8 +421,16 @@ func (e *fsdEngine) beginLogin(c gnet.Conn, cc *fsdConnCtx, idPacket, addPacket 
 			e.onAuthWake(gc)
 			return nil
 		})
-	}:
-	default:
+	}
+	enqueued, shutDown := srv.tryAuthPool(job)
+	if shutDown {
+		// Server shutting down — do not run auth inline.
+		if o := client.Outbound(); o != nil {
+			_ = o.Close()
+		}
+		return gnet.Close
+	}
+	if !enqueued {
 		// Pool full — run inline (still better than hanging forever).
 		res := e.runAuthReserve(c, cc, client, token)
 		cc.mu.Lock()
@@ -584,8 +591,7 @@ func (e *fsdEngine) finishAuthPending(c gnet.Conn, cc *fsdConnCtx) gnet.Action {
 		cc.mu.Lock()
 		cc.claimInFlight = true
 		cc.mu.Unlock()
-		select {
-		case e.srv.authPool <- func() {
+		job := func() {
 			ctx, cancel := context.WithTimeout(context.Background(), e.srv.mesh.ClaimTimeout())
 			defer cancel()
 			err := e.srv.mesh.ClaimCommit(ctx, cs, fence)
@@ -607,17 +613,27 @@ func (e *fsdEngine) finishAuthPending(c gnet.Conn, cc *fsdConnCtx) gnet.Action {
 				e.onAuthWake(gc)
 				return nil
 			})
-		}:
-			return gnet.None
-		default:
-			ctx, cancel := context.WithTimeout(context.Background(), e.srv.mesh.ClaimTimeout())
-			err := e.srv.mesh.ClaimCommit(ctx, cs, fence)
-			cancel()
+		}
+		enqueued, shutDown := e.srv.tryAuthPool(job)
+		if shutDown {
 			cc.mu.Lock()
 			cc.claimInFlight = false
 			cc.mu.Unlock()
-			return e.finishCommit(c, cc, &authJobResult{kind: "commit", commitOK: err == nil, commitErr: err})
+			e.srv.mesh.ClaimRelease(cs, fence)
+			e.srv.mesh.ClaimAbort(cs, fence)
+			return gnet.Close
 		}
+		if enqueued {
+			return gnet.None
+		}
+		// Pool full — run commit inline.
+		ctx, cancel := context.WithTimeout(context.Background(), e.srv.mesh.ClaimTimeout())
+		err := e.srv.mesh.ClaimCommit(ctx, cs, fence)
+		cancel()
+		cc.mu.Lock()
+		cc.claimInFlight = false
+		cc.mu.Unlock()
+		return e.finishCommit(c, cc, &authJobResult{kind: "commit", commitOK: err == nil, commitErr: err})
 	}
 
 	// Single-node: skip commit
