@@ -45,7 +45,7 @@ The **airport editor** (`/airport-editor`) is a second complexity-gate exception
 - Cookie-authenticated API mutations require a CSRF synchronizer token (`csrf_token` form field or `X-CSRF-Token` header matching the `openfsd_csrf` cookie)
 - Suspended/inactive ratings cannot open a web session (same as FSD policy)
 - **Session cookies are revalidated against the DB on every use** (HTML + dual-accept API): missing or inactive/suspended certificates clear cookies and are rejected; claims (network rating + names) are overlaid from the DB so demotions take effect immediately.
-- **Bearer access tokens on dual-accept resource groups** (`/api/v1/user|config|fsdconn|sweatbox|editor/*`) are revalidated the same way (KD-18): demotion, suspension, and soft-delete take effect on the next request. Login/refresh/fsd-jwt remain credential-based and are outside this middleware.
+- **Bearer access tokens on dual-accept resource groups** (`/api/v1/user|config|fsdconn|sweatbox|editor|account/*`) are revalidated the same way (KD-18): demotion, suspension, and soft-delete take effect on the next request. Login/refresh/fsd-jwt remain credential-based and are outside this middleware.
 
 ### Cookie `Secure` flag (`COOKIE_SECURE`)
 | Condition | Secure |
@@ -101,9 +101,7 @@ OpenFSD-API-Version: 2026-07-28
 
 Canonical OpenAPI file: `internal/web/openapi/openapi.v1.yaml` (`//go:embed`). No mirrored copy under `docs/`.
 
-**Outside microversion reject:** `/api/v1/data/*`, `/api/v1/fsd-jwt`, auth login/refresh, discovery, OpenAPI. Resource groups (`/user`, `/users`, `/config`, `/fsdconn`, `/sweatbox`, `/editor`) reject unknown/invalid pins with **400** envelope.
-
-**Stability tiers:** enveloped user/users/config/fsdconn/editor routes and sweatbox mutations/`session` are **Stable** (goldens under `testdata/api_v1/<pin>/`). Account JSON is **Provisional**. Design: `docs/design/rest-api-versioning.md`.
+**Stability tiers:** enveloped user/users/config/fsdconn/editor routes and sweatbox mutations/`session` are **Stable** (goldens under `testdata/api_v1/<pin>/`). Account JSON (`/api/v1/account/*`) is **Provisional**. Design: `docs/design/rest-api-versioning.md`.
 
 Baseline pin (first supported): **`2026-07-28`**.
 
@@ -593,6 +591,75 @@ Create a new API access token with a specified expiry (max 90 days).
 - **500 Internal Server Error**: Error generating or signing token.
 
 **Permissions**: Requires valid JWT access token and Administrator rating (12).
+
+---
+
+### Account self-service (Provisional)
+
+Operator automation for the same self-service flows as `GET/POST /account` HTML.
+**Provisional** until post-release maintainer sign-off — shapes may change without a microversion bump while still Provisional. Dual-accept (Bearer or session cookie + CSRF); self only (OBS+ after revalidation).
+
+#### POST /api/v1/account/password
+Change the authenticated actor's password.
+
+**Request Body**:
+```json
+{
+  "current_password": "string",
+  "new_password": "string",
+  "confirm_password": "string"
+}
+```
+
+| Rule | Behavior |
+|------|----------|
+| `current_password` | Required; incorrect → **400** `"incorrect password"` |
+| `new_password` | Min **8** chars; must not contain `:` (`validateNewPassword`) |
+| `new_password != current_password` | Else **400** |
+| `confirm_password` | Required; must equal `new_password` |
+
+**Response (200 OK)**: envelope with `data: null`.
+
+**Auth side effects:** Bearer — none (no session cookies). Cookie dual-accept — may re-issue 24h session + clear CSRF (HTML parity).
+
+**Permissions**: Dual-accept; any active self (OBS+).
+
+---
+
+#### POST /api/v1/account/delete
+Soft- or hard-delete the authenticated actor's account (password step-up + CID confirm).
+
+**Request Body**:
+```json
+{
+  "current_password": "string",
+  "confirm_cid": 12345,
+  "permanent": false
+}
+```
+
+| Rule | Behavior |
+|------|----------|
+| Current password | Required + verified (same as password change) |
+| `confirm_cid` | Must equal actor CID |
+| Soft-delete (default / `permanent` false or omitted) | `network_rating = Inactive`; `data.status = "soft_deleted"` |
+| `permanent: true` + `ALLOW_PERMANENT_ACCOUNT_DELETE` | Hard-delete row; `data.status = "hard_deleted"` |
+| `permanent: true` + hard-delete **disabled** | **400** `"permanent delete is disabled"`; **no mutation** |
+
+**Intentional JSON divergence from HTML:** HTML falls back to soft-delete and redirects with `permanent=disabled` when permanent was requested but disabled. JSON is **fail-closed** so automation does not silently get a different delete mode — retry with `permanent: false` or enable hard-delete server-side.
+
+**Response (200 OK)**:
+```json
+{
+  "version": "v1",
+  "err": null,
+  "data": { "status": "soft_deleted" }
+}
+```
+
+**Auth side effects:** Bearer — none (client drops token). Cookie dual-accept — clears session + CSRF like HTML. After success, drop credentials.
+
+**Permissions**: Dual-accept; any active self (OBS+).
 
 ---
 

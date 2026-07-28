@@ -44,12 +44,13 @@ func (s *Server) setupRoutes() (*gin.Engine, error) {
 	s.setupAuthRoutes(apiV1Group)            // login/refresh: soft version headers only
 	s.setupDataRoutes(apiV1Group)            // never version-reject
 
-	// Dual-accept JSON resource groups (jwt + csrf + apiVersion).
+	// Dual-accept JSON resource groups (jwt + csrf + apiVersion + bearer revalidate).
 	s.setupUserRoutes(apiV1Group)
 	s.setupConfigRoutes(apiV1Group)
 	s.setupFsdConnRoutes(apiV1Group)
 	s.setupSweatboxAPIRoutes(apiV1Group)
 	s.setupEditorAPIRoutes(apiV1Group)
+	s.setupAccountAPIRoutes(apiV1Group)
 
 	// Frontend groups
 	s.setupFrontendRoutes(e.Group(""))

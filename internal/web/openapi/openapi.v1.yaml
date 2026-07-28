@@ -25,6 +25,11 @@ servers:
     description: Relative to the openfsd web listener
 
 tags:
+  - name: Account
+    description: |
+      Self-service password change and account delete (Provisional).
+      Any OBS+ dual-accept actor; self only. Shape may change without a
+      microversion bump until promoted to Stable (post-release sign-off).
   - name: Discovery
     description: Version-agnostic discovery and machine-readable schema
   - name: Auth
@@ -881,6 +886,274 @@ paths:
         "502":
           description: FSD unreachable / unexpected
 
+  /account/password:
+    post:
+      tags: [Account]
+      summary: Change own password (self-service)
+      description: |
+        Change the authenticated actor's password. Validation parity with the
+        HTML `/account/password` form (`validateNewPassword`, confirm match,
+        new ≠ current).
+
+        **Stability: Provisional** — request/response shape may change without a
+        microversion bump until maintainer sign-off promotes this route to Stable.
+
+        **Auth side effects:** Bearer success does **not** set or clear session
+        cookies. Cookie dual-accept may re-issue a 24h session cookie and clear
+        CSRF (parity with HTML).
+      operationId: postAccountPassword
+      x-openfsd-stability: provisional
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OpenFSDAPIVersion"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AccountPasswordRequest"
+      responses:
+        "200":
+          description: Password updated (`data` is null)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+        "400":
+          description: |
+            Validation failure (empty current, incorrect password, weak new
+            password, confirm mismatch, new equals current) or bad API version.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+        "401":
+          description: Missing/invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+
+  /account/delete:
+    post:
+      tags: [Account]
+      summary: Soft- or hard-delete own account
+      description: |
+        Delete the authenticated actor's account after password step-up and
+        `confirm_cid` match.
+
+        - Default / `permanent: false`: soft-delete (`network_rating = Inactive`).
+        - `permanent: true` and `ALLOW_PERMANENT_ACCOUNT_DELETE=true`: hard-delete row.
+        - **`permanent: true` when hard-delete is disabled → 400**
+          `"permanent delete is disabled"` and **no mutation**.
+
+        **Intentional JSON divergence from HTML:** the HTML form falls back to
+        soft-delete and redirects with `permanent=disabled` when permanent was
+        requested but disabled. Automation must not silently receive a different
+        delete mode than requested — retry with `permanent: false` for soft-delete,
+        or enable hard-delete server-side.
+
+        **Stability: Provisional.** Bearer success does not clear cookies (client
+        drops the token). Cookie dual-accept clears session + CSRF like HTML.
+        After success, clients must drop credentials.
+      operationId: postAccountDelete
+      x-openfsd-stability: provisional
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OpenFSDAPIVersion"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AccountDeleteRequest"
+      responses:
+        "200":
+          description: Account deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1EnvelopeAccountDelete"
+        "400":
+          description: |
+            Validation failure, permanent delete disabled (fail-closed), or bad
+            API version. No account mutation when permanent is requested but
+            disabled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+        "401":
+          description: Missing/invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+
+components:
+  responses:
+    BadAPIVersion:
+      description: |
+        Invalid or unsupported `OpenFSD-API-Version` on a dual-accept resource group
+        (HTTP 400 envelope). Also used when the request body is invalid JSON on
+        some routes — check `err` text.
+
+        Recovery: call version-agnostic `GET /api/v1/versions` (never rejects on pin)
+        and upgrade the client pin.
+      headers:
+        OpenFSD-API-Version:
+          schema: { type: string }
+          description: Echo of current max (or registry effective)
+        OpenFSD-API-Min-Version:
+          schema: { type: string }
+        OpenFSD-API-Max-Version:
+          schema: { type: string }
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/APIV1Envelope"
+          examples:
+            invalid:
+              summary: Malformed pin
+              value:
+                version: v1
+                err: invalid OpenFSD-API-Version
+                data: null
+            unsupported:
+              summary: Unknown or sunset pin
+              value:
+                version: v1
+                err: 'unsupported OpenFSD-API-Version "2020-01-01"; min=2026-07-28 max=2026-07-28'
+                data: null
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Access JWT (API token or short-lived access). No CSRF required.
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: openfsd_session
+      description: First-party session cookie; mutations require CSRF synchronizer.
+
+  parameters:
+    OpenFSDAPIVersion:
+      name: OpenFSD-API-Version
+      in: header
+      required: false
+      description: |
+        Date microversion pin (`YYYY-MM-DD` or `1.YYYYMMDD` or `latest`).
+        Production clients MUST send a supported pin. Omitted → max + Defaulted header.
+      schema:
+        type: string
+        example: "2026-07-28"
+
+  schemas:
+    APIV1Envelope:
+      type: object
+      required: [version, err, data]
+      properties:
+        version:
+          type: string
+          enum: [v1]
+          description: URL major only; microversion is header-only
+        err:
+          type: string
+          nullable: true
+        data:
+          nullable: true
+
+    DiscoveryData:
+      type: object
+      required: [major, min_version, max_version, versions, header, default, openapi]
+      properties:
+        major: { type: string, example: v1 }
+        min_version: { type: string, example: "2026-07-28" }
+        max_version: { type: string, example: "2026-07-28" }
+        versions:
+          type: array
+          items: { type: string }
+        header: { type: string, example: OpenFSD-API-Version }
+        default: { type: string, example: max }
+        openapi: { type: string, example: /api/v1/openapi.json }
+
+    APIV1EnvelopeDiscovery:
+      allOf:
+        - $ref: "#/components/schemas/APIV1Envelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/DiscoveryData"
+
+    CreateTokenData:
+      type: object
+      required: [token, recommended_api_version, api_version_min, api_version_max]
+      properties:
+        token: { type: string }
+        recommended_api_version: { type: string, example: "2026-07-28" }
+        api_version_min: { type: string, example: "2026-07-28" }
+        api_version_max: { type: string, example: "2026-07-28" }
+
+    APIV1EnvelopeCreateToken:
+      allOf:
+        - $ref: "#/components/schemas/APIV1Envelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/CreateTokenData"
+
+    AccountPasswordRequest:
+      type: object
+      required: [current_password, new_password, confirm_password]
+      properties:
+        current_password:
+          type: string
+          description: Existing password (required; incorrect → 400 "incorrect password")
+        new_password:
+          type: string
+          description: Min 8 characters; must not contain ":"; must differ from current
+        confirm_password:
+          type: string
+          description: Must equal new_password (required for JSON parity with HTML)
+
+    AccountDeleteRequest:
+      type: object
+      required: [current_password, confirm_cid]
+      properties:
+        current_password:
+          type: string
+        confirm_cid:
+          type: integer
+          description: Must equal the actor CID
+          minimum: 1
+        permanent:
+          type: boolean
+          default: false
+          description: |
+            When true and ALLOW_PERMANENT_ACCOUNT_DELETE is enabled, hard-delete.
+            When true and hard-delete is disabled, 400 fail-closed (no mutation).
+
+    AccountDeleteData:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [soft_deleted, hard_deleted]
+
+    APIV1EnvelopeAccountDelete:
+      allOf:
+        - $ref: "#/components/schemas/APIV1Envelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/AccountDeleteData"
 components:
   responses:
     BadAPIVersion:
