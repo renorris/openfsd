@@ -85,6 +85,25 @@ func errString(res APIV1Response) string {
 	return *res.Err
 }
 
+// setCookieIsClear reports whether a Set-Cookie header line clears the named cookie.
+func setCookieIsClear(sc, name string) bool {
+	if !strings.HasPrefix(sc, name+"=") {
+		return false
+	}
+	return strings.Contains(sc, "Max-Age=0") ||
+		strings.Contains(sc, "Max-Age=-1") ||
+		strings.Contains(sc, name+"=;") ||
+		strings.HasPrefix(sc, name+"=;")
+}
+
+// setCookieIsLiveSession reports a non-clear session Set-Cookie (re-issue).
+func setCookieIsLiveSession(sc string) bool {
+	if !strings.HasPrefix(sc, sessionCookieName+"=") {
+		return false
+	}
+	return !setCookieIsClear(sc, sessionCookieName)
+}
+
 func TestAPIAccountPasswordBearerSuccess(t *testing.T) {
 	ts := newTestServer(t)
 	user := createTestUser(t, ts, "oldpassword", int(protocol.NetworkRatingObserver))
@@ -101,6 +120,13 @@ func TestAPIAccountPasswordBearerSuccess(t *testing.T) {
 	res := decodeAccountEnvelope(t, w)
 	if res.Err != nil {
 		t.Fatalf("err=%v", *res.Err)
+	}
+	// Design §C: 200 envelope data: null.
+	if res.Data != nil {
+		t.Fatalf("data=%v want null", res.Data)
+	}
+	if !strings.Contains(w.Body.String(), `"data":null`) {
+		t.Fatalf("body missing \"data\":null: %s", w.Body.String())
 	}
 	// Bearer: no session cookie side effects.
 	for _, sc := range w.Result().Header.Values("Set-Cookie") {
@@ -142,16 +168,35 @@ func TestAPIAccountPasswordCookieSessionReissue(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status %d body %s", w.Code, w.Body.String())
 	}
-	// Session re-issued for cookie dual-accept.
+	// Password must actually change (not only cookie side effects).
+	u, err := ts.dbRepo.UserRepo.GetUserByCID(user.CID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ts.dbRepo.UserRepo.VerifyPasswordHash("newpassword1", u.Password) {
+		t.Fatal("password not updated on cookie dual-accept path")
+	}
+
+	// Session re-issued for cookie dual-accept (rememberMe=false → Max-Age=86400).
 	foundSession := false
+	clearedCSRF := false
 	for _, sc := range w.Result().Header.Values("Set-Cookie") {
-		if strings.HasPrefix(sc, sessionCookieName+"=") && !strings.Contains(sc, "Max-Age=0") && !strings.Contains(sc, "Max-Age=-1") {
+		if setCookieIsLiveSession(sc) {
 			foundSession = true
-			break
+			// sessionDefaultTTL = 24h when rememberMe=false.
+			if !strings.Contains(sc, "Max-Age=86400") {
+				t.Fatalf("session re-issue want Max-Age=86400 (24h), got %s", sc)
+			}
+		}
+		if setCookieIsClear(sc, csrfCookieName) {
+			clearedCSRF = true
 		}
 	}
 	if !foundSession {
 		t.Fatal("expected session Set-Cookie re-issue on cookie password change")
+	}
+	if !clearedCSRF {
+		t.Fatal("expected CSRF cookie clear on cookie password change (HTML parity)")
 	}
 }
 
@@ -384,6 +429,49 @@ func TestAPIAccountDeletePermanentFailClosed(t *testing.T) {
 	}
 }
 
+// Cookie dual-accept fail-closed: must not clear session (HTML permanent-disabled
+// soft-deletes and logs out; JSON must keep the session and leave rating OBS).
+func TestAPIAccountDeletePermanentFailClosedCookie(t *testing.T) {
+	ts := newTestServer(t)
+	user := createTestUser(t, ts, "soft-only2", int(protocol.NetworkRatingObserver))
+	cookies := formLogin(t, ts, user.CID, "soft-only2")
+	_, cookies = authedGET(t, ts, "/account", cookies)
+
+	w := apiAccountJSON(t, ts, http.MethodPost, "/api/v1/account/delete", map[string]any{
+		"current_password": "soft-only2",
+		"confirm_cid":      user.CID,
+		"permanent":        true,
+	}, "", cookies)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status %d want 400 body %s", w.Code, w.Body.String())
+	}
+	res := decodeAccountEnvelope(t, w)
+	if !strings.Contains(errString(res), "permanent delete is disabled") {
+		t.Fatalf("err=%q", errString(res))
+	}
+	u, err := ts.dbRepo.UserRepo.GetUserByCID(user.CID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.NetworkRating != int(protocol.NetworkRatingObserver) {
+		t.Fatalf("rating=%d want OBS (no silent soft-delete)", u.NetworkRating)
+	}
+	// Fail-closed must not log the user out.
+	for _, sc := range w.Result().Header.Values("Set-Cookie") {
+		if setCookieIsClear(sc, sessionCookieName) {
+			t.Fatalf("fail-closed must not clear session: %s", sc)
+		}
+		if setCookieIsClear(sc, csrfCookieName) {
+			t.Fatalf("fail-closed must not clear CSRF: %s", sc)
+		}
+	}
+	// Session still usable for a follow-up HTML GET.
+	w2, _ := authedGET(t, ts, "/account", cookies)
+	if w2.Code != http.StatusOK {
+		t.Fatalf("session should remain valid after fail-closed, GET /account status %d", w2.Code)
+	}
+}
+
 func TestAPIAccountDeleteValidation(t *testing.T) {
 	ts := newTestServer(t)
 	user := createTestUser(t, ts, "keep-me1x", int(protocol.NetworkRatingObserver))
@@ -454,16 +542,21 @@ func TestAPIAccountDeleteCookieClearsSession(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status %d body %s", w.Code, w.Body.String())
 	}
-	cleared := false
+	clearedSession := false
+	clearedCSRF := false
 	for _, sc := range w.Result().Header.Values("Set-Cookie") {
-		if strings.HasPrefix(sc, sessionCookieName+"=") &&
-			(strings.Contains(sc, "Max-Age=0") || strings.Contains(sc, "Max-Age=-1") || strings.Contains(sc, sessionCookieName+"=;")) {
-			cleared = true
-			break
+		if setCookieIsClear(sc, sessionCookieName) {
+			clearedSession = true
+		}
+		if setCookieIsClear(sc, csrfCookieName) {
+			clearedCSRF = true
 		}
 	}
-	if !cleared {
+	if !clearedSession {
 		t.Fatal("expected session cookie clear on cookie dual-accept delete")
+	}
+	if !clearedCSRF {
+		t.Fatal("expected CSRF cookie clear on cookie dual-accept delete (HTML parity)")
 	}
 }
 
