@@ -139,11 +139,9 @@ func (h *SweatboxHost) tickOnce(dt time.Duration) {
 }
 
 // AirportLoadResult is the structured outcome of loading .apt text (HTTP / tests).
-type AirportLoadResult struct {
-	ICAO     string   `json:"icao"`
-	Surfaces int      `json:"surfaces"`
-	Errors   []string `json:"errors"`
-}
+// Type alias of serviceapi.SweatboxAirportLoadResponse so FSD service HTTP and
+// the public /api/v1 envelope share a single wire shape (design §D).
+type AirportLoadResult = serviceapi.SweatboxAirportLoadResponse
 
 // LoadAirport parses .apt text and installs it on the engine.
 // Does not remove existing aircraft; use LoadAirportReplace for that flow.
