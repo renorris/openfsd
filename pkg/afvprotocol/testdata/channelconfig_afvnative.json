@@ -1,0 +1,6 @@
+{
+  "channelTag": "abc123",
+  "aeadReceiveKey": "N/v4cGEr0ko04zsli340q+r5eRrctKbfQJo6tJ88UtM=",
+  "aeadTransmitKey": "594N9AjfiCL8b/P1oWA0i0IgUNg2mwbVvQI7yfb0Ud8=",
+  "hmacKey": "totallyFakeHmacKey"
+}

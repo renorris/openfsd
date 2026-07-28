@@ -164,7 +164,7 @@ check_no_imports "internal/session" "${MODULE}/internal/session/..." \
 # internal/geo — stdlib only
 check_stdlib_only "internal/geo" "${MODULE}/internal/geo/..."
 
-# internal/web — must not import session, postoffice, metar, sweatbox, server, cluster
+# internal/web — must not import session, postoffice, metar, sweatbox, server, cluster, afv
 # (service-HTTP DTOs live in internal/serviceapi; web talks to FSD over HTTP only)
 check_no_imports "internal/web" "${MODULE}/internal/web/..." \
   "${MODULE}/internal/session" \
@@ -172,7 +172,8 @@ check_no_imports "internal/web" "${MODULE}/internal/web/..." \
   "${MODULE}/internal/metar" \
   "${MODULE}/internal/sweatbox" \
   "${MODULE}/internal/server" \
-  "${MODULE}/internal/cluster"
+  "${MODULE}/internal/cluster" \
+  "${MODULE}/internal/afv"
 
 # internal/serviceapi — pure DTOs: no orchestration packages
 check_no_imports "internal/serviceapi" "${MODULE}/internal/serviceapi/..." \
@@ -211,6 +212,20 @@ check_no_imports "internal/auth" "${MODULE}/internal/auth/..." \
 check_imports_allowlist "internal/sweatbox" "${MODULE}/internal/sweatbox/..." \
   "${MODULE}/internal/geo" \
   "${MODULE}/pkg/twrfiles"
+
+# pkg/afvprotocol — stdlib + golang.org/x/crypto only (CryptoDTO wire)
+check_imports_allowlist "pkg/afvprotocol" "${MODULE}/pkg/afvprotocol/..." \
+  "golang.org/x/crypto"
+
+# internal/afv — forbid FSD internals and web (AFV is a peer service)
+check_no_imports "internal/afv" "${MODULE}/internal/afv/..." \
+  "${MODULE}/internal/server" \
+  "${MODULE}/internal/session" \
+  "${MODULE}/internal/postoffice" \
+  "${MODULE}/internal/web" \
+  "${MODULE}/internal/cluster" \
+  "${MODULE}/internal/sweatbox" \
+  "${MODULE}/internal/metar"
 
 if [[ "$failed" -ne 0 ]]; then
   echo

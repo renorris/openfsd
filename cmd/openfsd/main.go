@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/renorris/openfsd/internal/afv"
 	"github.com/renorris/openfsd/internal/db"
 	"github.com/renorris/openfsd/internal/server"
 	"github.com/renorris/openfsd/internal/web"
@@ -24,32 +25,42 @@ func main() {
 
 	fsdFlag := flag.Bool("fsd", false, "run the FSD server (TCP protocol + internal service HTTP)")
 	webFlag := flag.Bool("web", false, "run the web UI and /api/v1 HTTP server")
+	afvFlag := flag.Bool("afv", false, "run the AFV voice API + UDP voice server")
 	flag.Parse()
 
-	runFSD, runWeb := *fsdFlag, *webFlag
-	// Default: both services when neither flag is set.
-	if !runFSD && !runWeb {
+	runFSD, runWeb, runAFV := *fsdFlag, *webFlag, *afvFlag
+	// Default when NO flags: fsd+web only (AFV is opt-in).
+	if !runFSD && !runWeb && !runAFV {
 		runFSD, runWeb = true, true
 	}
 
-	// Bare ":memory:" is private per sql.Open. When both services run in this
-	// process they must share one database (migrations/admin seed + JWT/config).
-	normalizeColocatedMemoryDSN(runFSD, runWeb)
+	// Bare ":memory:" is private per sql.Open. Any multi-service process that
+	// opens the user DB must share one in-memory database.
+	normalizeColocatedMemoryDSN(runFSD, runWeb, runAFV)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	if err := run(ctx, runFSD, runWeb); err != nil && !errors.Is(err, context.Canceled) {
+	if err := run(ctx, runFSD, runWeb, runAFV); err != nil && !errors.Is(err, context.Canceled) {
 		slog.Error(err.Error())
 		os.Exit(1)
 	}
 }
 
 // normalizeColocatedMemoryDSN rewrites DATABASE_SOURCE_NAME=:memory: to a
-// shared in-memory DSN when FSD and web both run. Without this, each service
-// opens an empty private DB and web fails with "no such table: config".
-func normalizeColocatedMemoryDSN(runFSD, runWeb bool) {
-	if !runFSD || !runWeb {
+// shared in-memory DSN when ≥2 of {fsd, web, afv} run in this process.
+func normalizeColocatedMemoryDSN(runFSD, runWeb, runAFV bool) {
+	n := 0
+	if runFSD {
+		n++
+	}
+	if runWeb {
+		n++
+	}
+	if runAFV {
+		n++
+	}
+	if n < 2 {
 		return
 	}
 	dsn := strings.TrimSpace(os.Getenv("DATABASE_SOURCE_NAME"))
@@ -57,19 +68,19 @@ func normalizeColocatedMemoryDSN(runFSD, runWeb bool) {
 		return
 	}
 	_ = os.Setenv("DATABASE_SOURCE_NAME", db.SharedMemorySQLiteDSN)
-	slog.Info("DATABASE_SOURCE_NAME=:memory: rewritten to shared in-memory DSN for colocated FSD+web")
+	slog.Info("DATABASE_SOURCE_NAME=:memory: rewritten to shared in-memory DSN for colocated services")
 }
 
-func run(parent context.Context, runFSD, runWeb bool) error {
+func run(parent context.Context, runFSD, runWeb, runAFV bool) error {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 
-	errCh := make(chan error, 2)
+	errCh := make(chan error, 3)
 	var wg sync.WaitGroup
 
 	if runFSD {
-		// Construct first so migrations/admin seed complete before the web
-		// process opens the same database (colocated mode).
+		// Construct first so migrations/admin seed complete before web/AFV
+		// open the same database (colocated mode).
 		fsdSrv, err := server.NewDefault(ctx)
 		if err != nil {
 			return fmt.Errorf("fsd: %w", err)
@@ -115,11 +126,34 @@ func run(parent context.Context, runFSD, runWeb bool) error {
 		}()
 	}
 
+	if runAFV {
+		afvSrv, err := afv.NewDefault(ctx)
+		if err != nil {
+			cancel()
+			wg.Wait()
+			return fmt.Errorf("afv: %w", err)
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := afvSrv.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				errCh <- fmt.Errorf("afv: %w", err)
+				cancel()
+				return
+			}
+			slog.Info("AFV server closed")
+			errCh <- nil
+		}()
+	}
+
 	expected := 0
 	if runFSD {
 		expected++
 	}
 	if runWeb {
+		expected++
+	}
+	if runAFV {
 		expected++
 	}
 

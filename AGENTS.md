@@ -2,7 +2,7 @@
 
 Operational rules for agents and humans changing this repository. This file is the in-repo source of truth.
 
-**Layout is settled:** `pkg/*`, `internal/*`, single binary `cmd/openfsd` (FSD + web via CLI flags). Do not reintroduce dual entrypoints, top-level `fsd/` / `db/` / `web/` packages, or split Docker images.
+**Layout is settled:** `pkg/*`, `internal/*`, single binary `cmd/openfsd` (FSD + web + optional AFV via CLI flags). Do not reintroduce dual entrypoints, top-level `fsd/` / `db/` / `web/` packages, or split Docker images.
 
 ---
 
@@ -12,6 +12,7 @@ Operational rules for agents and humans changing this repository. This file is t
 |---------|------|-------|
 | `pkg/protocol` | Pure wire format (parse/serialize/validate) | No I/O; **stdlib only** |
 | `pkg/twrfiles` | TWRTrainer `.apt`/`.air` types + Parse + Format | No I/O beyond text parse/serialize; **stdlib only** |
+| `pkg/afvprotocol` | Pure CryptoDTO wire + AFV DTOs + AEAD | No I/O; **stdlib + golang.org/x/crypto only** |
 | `pkg/fsdclient` | Public mock/real FSD client | Imports `protocol` only (+ stdlib) |
 | `internal/geo` | Pure haversine / bounding box | **stdlib only** |
 | `internal/auth` | JWT + VATSIM auth state | No TCP |
@@ -24,7 +25,8 @@ Operational rules for agents and humans changing this repository. This file is t
 | `internal/serviceapi` | Pure JSON DTOs for FSD service-HTTP (online users, sweatbox) | No I/O; shared by server + web |
 | `internal/web` | Gin MPA + progressive enhancement + `/api/v1` | boring-web mandatory |
 | `internal/cluster` | Mesh framing, claim, directory, interest, HomeRPC, MemoryMesh/TCP | stdlib + `internal/geo` + uuid; **no** server/web/db/postoffice |
-| `cmd/openfsd` | Process entry | Binary `openfsd`; `-fsd` / `-web` (default both) |
+| `internal/afv` | AFV REST API + UDP voice + radio router + session registry + optional AFV mesh | geo, db, auth, afvprotocol, serviceapi DTOs; **never** server/web/session/postoffice/cluster |
+| `cmd/openfsd` | Process entry | Binary `openfsd`; `-fsd` / `-web` (default both); `-afv` opt-in |
 | `cmd/openfsd-migrate-to-rqlite` | SQLite file → rqlite HTTP row copy | Depends on `internal/db` |
 
 **Wire format:** `pkg/protocol` (FSD) and `pkg/twrfiles` (.apt/.air) — no alternate field order or marshaling in handlers/clients.
@@ -34,7 +36,7 @@ Operational rules for agents and humans changing this repository. This file is t
 ### Allowed import direction
 
 ```
-cmd/openfsd       → internal/server, internal/web, …
+cmd/openfsd       → internal/server, internal/web, internal/afv, …
 internal/server   → session, postoffice, protocol, auth, metar, db, sweatbox, serviceapi, cluster
 internal/postoffice → geo, session
 internal/metar    → protocol, session
@@ -42,11 +44,14 @@ internal/sweatbox → geo, pkg/twrfiles
 internal/cluster  → geo (+ stdlib, google/uuid); never server/web/db/postoffice/session
 internal/serviceapi → (stdlib only; no session/postoffice/server/web/cluster)
 internal/web      → auth, db, protocol, serviceapi
-                    (never server/session/postoffice/metar/sweatbox/cluster —
+                    (never server/session/postoffice/metar/sweatbox/cluster/afv —
                      control plane is service HTTP + serviceapi DTOs;
                      may import pkg/twrfiles for optional APT/AIR validate)
+internal/afv      → afvprotocol, geo, db, auth, serviceapi (DTOs only);
+                    never server/session/postoffice/web/cluster/sweatbox/metar
 pkg/fsdclient     → protocol
 pkg/twrfiles      → (stdlib only)
+pkg/afvprotocol   → stdlib + golang.org/x/crypto only
 internal/auth     → protocol
 internal/session  → protocol
 ```
@@ -61,15 +66,17 @@ Enforce with `scripts/check-import-graph.sh`.
 |------|-----------------|
 | `pkg/protocol` | Any non-stdlib import |
 | `pkg/twrfiles` | Any non-stdlib import |
+| `pkg/afvprotocol` | Non-stdlib other than `golang.org/x/crypto` |
 | `pkg/fsdclient` | `internal/*` |
 | `internal/session` | `postoffice`, `server`, `web`, `metar` |
 | `internal/geo` | Any non-stdlib import |
-| `internal/web` | `session`, `postoffice`, `metar`, `sweatbox`, `server`, `cluster` |
+| `internal/web` | `session`, `postoffice`, `metar`, `sweatbox`, `server`, `cluster`, `afv` |
 | `internal/serviceapi` | `server`, `session`, `postoffice`, `web`, `sweatbox`, `cluster` |
 | `internal/db` | `server`, `session`, `web`, `fsdclient`, `cluster` |
 | `internal/cluster` | `server`, `web`, `db`, `postoffice`, `session`, `sweatbox`, `metar`, `serviceapi` (allow: `geo`, `google/uuid`) |
 | `internal/auth` | `server`, `session`, `web` |
 | `internal/sweatbox` | `server`, `web`, `postoffice`, `session`, `db`, `auth`, `metar`, `fsdclient`, `protocol` |
+| `internal/afv` | `server`, `session`, `postoffice`, `web`, `cluster`, `sweatbox`, `metar` |
 
 Stdlib heuristic: first path element contains no `.` (e.g. `fmt`, `net/http`). Third-party is never allowed in `pkg/protocol`, `pkg/twrfiles`, or `internal/geo`.
 
@@ -165,12 +172,14 @@ Enforced by `scripts/check-coverage.sh` (CI).
 | Overall (exclude `cmd/`) | ≥80% | **Hard** |
 | `pkg/protocol` | ≥98% | **Hard** |
 | `pkg/twrfiles` | ≥98% | **Hard** |
+| `pkg/afvprotocol` | ≥98% | **Hard** |
 | `internal/geo` | ≥98% | **Hard** |
 | `internal/auth` | ≥95% | **Hard** |
 | `internal/postoffice` | ≥90% | **Hard** |
 | `internal/sweatbox` | ≥95% | **Hard** |
 | `internal/cluster` | ≥90% | **Hard** |
 | `internal/web` | ≥80% | Soft (report only) |
+| `internal/afv` | ≥80% | Soft (P0; hard ≥85 later) |
 | Overall aspirational | 90% | Soft (report only) |
 | `cmd/*` | — | Excluded from measurement |
 
