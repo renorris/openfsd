@@ -267,28 +267,37 @@ paths:
         - name: rating
           in: query
           required: false
-          description: Exact network rating filter (−1…12). Invalid/out of range → all.
-          schema: { type: integer, minimum: -1, maximum: 12 }
+          description: |
+            Exact network rating filter (−1…12). Server coerces invalid/out-of-range
+            values to "all ratings" (does not 400; never 500).
+          schema: { type: integer }
         - name: sort
           in: query
           required: false
-          description: "cid | name | rating (default cid; unknown → cid)"
-          schema: { type: string, enum: [cid, name, rating], default: cid }
+          description: |
+            cid | name | rating (default cid). Server coerces unknown values to cid
+            (does not 400).
+          schema: { type: string, default: cid }
         - name: dir
           in: query
           required: false
-          description: "asc | desc (default asc; unknown → asc)"
-          schema: { type: string, enum: [asc, desc], default: asc }
+          description: |
+            asc | desc (default asc). Server coerces unknown values to asc (does not 400).
+          schema: { type: string, default: asc }
         - name: page
           in: query
           required: false
-          description: 1-based page (default 1; <1 or non-int → 1; clamped past last page)
-          schema: { type: integer, minimum: 1, default: 1 }
+          description: |
+            1-based page (default 1). Server coerces non-int or &lt;1 → 1; clamps past last
+            page after count (does not 400).
+          schema: { type: integer, default: 1 }
         - name: page_size
           in: query
           required: false
-          description: Page size (default 50; ≤0 → 50; clamp [1, 200])
-          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+          description: |
+            Page size (default 50). Server coerces ≤0/non-int → 50 and clamps to [1, 200]
+            (does not 400). JSON API only; HTML directory is fixed at 50.
+          schema: { type: integer, default: 50 }
       responses:
         "200":
           description: Directory page (effective page / page_size / pages / total after clamp)

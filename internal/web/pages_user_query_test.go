@@ -162,7 +162,20 @@ func TestParseUserDirectoryQuery(t *testing.T) {
 	}
 }
 
-func TestParseUserDirectoryQuery_PageSize(t *testing.T) {
+func TestParseUserDirectoryQuery_PageSizeHTMLIgnores(t *testing.T) {
+	t.Parallel()
+	// HTML helper never applies page_size (fixed 50) so pager links stay consistent.
+	vals, err := url.ParseQuery("page_size=100")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := parseUserDirectoryQuery(vals)
+	if got.PageSize != userDirectoryPageSize {
+		t.Errorf("HTML PageSize=%d want %d", got.PageSize, userDirectoryPageSize)
+	}
+}
+
+func TestParseUserDirectoryQueryAPI_PageSize(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name string
@@ -186,7 +199,7 @@ func TestParseUserDirectoryQuery_PageSize(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ParseQuery: %v", err)
 			}
-			got := parseUserDirectoryQuery(vals)
+			got := parseUserDirectoryQueryAPI(vals)
 			if got.PageSize != tt.want {
 				t.Errorf("PageSize=%d want %d", got.PageSize, tt.want)
 			}

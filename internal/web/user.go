@@ -135,23 +135,8 @@ func (s *Server) updateUser(c *gin.Context) {
 		return
 	}
 
-	type ResponseBody struct {
-		CID           int    `json:"cid"`
-		FirstName     string `json:"first_name"`
-		LastName      string `json:"last_name"`
-		NetworkRating int    `json:"network_rating"`
-		PilotRating   int    `json:"pilot_rating"`
-	}
-
-	resBody := ResponseBody{
-		CID:           targetUser.CID,
-		FirstName:     safeStr(targetUser.FirstName),
-		LastName:      safeStr(targetUser.LastName),
-		NetworkRating: targetUser.NetworkRating,
-		PilotRating:   targetUser.PilotRating,
-	}
-
-	res := newAPIV1Success(&resBody)
+	data := apiUserFromDB(targetUser)
+	res := newAPIV1Success(&data)
 	writeAPIV1Response(c, http.StatusOK, &res)
 }
 

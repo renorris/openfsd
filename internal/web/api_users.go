@@ -53,7 +53,7 @@ func (s *Server) handleAPIListUsers(c *gin.Context) {
 		return
 	}
 
-	q := parseUserDirectoryQuery(c.Request.URL.Query())
+	q := parseUserDirectoryQueryAPI(c.Request.URL.Query())
 
 	filter := db.UserListFilter{
 		Query:  q.Q,
