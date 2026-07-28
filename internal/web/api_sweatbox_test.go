@@ -523,11 +523,167 @@ func TestAPISweatboxMutationsUnreachable502(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "unreachable")
 }
 
-func TestAPISweatboxAirportForbiddenForObserver(t *testing.T) {
+func TestAPISweatboxMutationsForbiddenForObserver(t *testing.T) {
 	env := setupTestAPI(t)
 	access, _ := env.login(t, env.observer.CID, env.observerPass)
-	w := env.doJSON(t, http.MethodPost, "/api/v1/sweatbox/airport", map[string]any{
-		"text": "icao=KBTV\n",
-	}, access)
+
+	cases := []struct {
+		method string
+		path   string
+		body   any
+	}{
+		{http.MethodGet, "/api/v1/sweatbox/session", nil},
+		{http.MethodPost, "/api/v1/sweatbox/airport", map[string]any{"text": "icao=KBTV\n"}},
+		{http.MethodPost, "/api/v1/sweatbox/scenario", map[string]any{"text": "AAL1"}},
+		{http.MethodPost, "/api/v1/sweatbox/command", map[string]any{"command": "ops"}},
+		{http.MethodPost, "/api/v1/sweatbox/pause", nil},
+		{http.MethodPost, "/api/v1/sweatbox/unpause", nil},
+		{http.MethodDelete, "/api/v1/sweatbox/aircraft/AAL123", nil},
+		{http.MethodDelete, "/api/v1/sweatbox/aircraft?confirm=1", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			w := env.doJSON(t, tc.method, tc.path, tc.body, access)
+			require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
+			assert.Empty(t, w.Header().Get("Location"))
+			res := decodeAPIV1(t, w)
+			require.NotNil(t, res.Err)
+			assert.Equal(t, "forbidden", *res.Err)
+		})
+	}
+}
+
+func TestAPISweatboxPauseCookieSessionCSRF(t *testing.T) {
+	m := &sweatboxMock{}
+	fsd := httptest.NewServer(m.handler())
+	t.Cleanup(fsd.Close)
+
+	ts := newTestServer(t)
+	ts.cfg.FsdHttpServiceAddress = fsd.URL
+	admin := createTestUser(t, ts, "admin-pass", int(protocol.NetworkRatingAdministator))
+	cookies := formLogin(t, ts, admin.CID, "admin-pass")
+	_, cookies = authedGET(t, ts, "/dashboard", cookies)
+	csrf := csrfFromCookies(cookies)
+	require.NotEmpty(t, csrf)
+
+	// Cookie session without CSRF → 403 JSON.
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/sweatbox/pause", nil)
+	req.Header.Set("Cookie", cookieHeader(cookies))
+	req.Header.Set("Accept", "application/json")
+	w := httptest.NewRecorder()
+	ts.engine.ServeHTTP(w, req)
 	require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
+	assert.Empty(t, w.Header().Get("Location"))
+	res := decodeAPIV1(t, w)
+	require.NotNil(t, res.Err)
+	assert.Contains(t, *res.Err, "CSRF")
+	assert.False(t, m.paused)
+
+	// Cookie session with CSRF header → 200.
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/sweatbox/pause", nil)
+	req.Header.Set("Cookie", cookieHeader(cookies))
+	req.Header.Set(csrfHeaderName, csrf)
+	req.Header.Set("Accept", "application/json")
+	w = httptest.NewRecorder()
+	ts.engine.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	res = decodeAPIV1(t, w)
+	require.Nil(t, res.Err)
+	assert.True(t, m.paused)
+	assertGoldenJSON(t, "2026-07-28/sweatbox_pause_ok.json", w.Body.Bytes())
+}
+
+func TestAPISweatboxErrorStatusMapping(t *testing.T) {
+	// Table-driven Stable §D error statuses not covered by success goldens.
+	cases := []struct {
+		name       string
+		mock       sweatboxMock
+		method     string
+		path       string
+		body       any
+		wantStatus int
+		errSubstr  string
+	}{
+		{
+			name:       "airport FSD 413",
+			mock:       sweatboxMock{airportTooLarge: true},
+			method:     http.MethodPost,
+			path:       "/api/v1/sweatbox/airport",
+			body:       map[string]any{"text": "icao=KBTV\n"},
+			wantStatus: http.StatusRequestEntityTooLarge,
+			errSubstr:  "too large",
+		},
+		{
+			name:       "airport FSD 200 invalid JSON → 502",
+			mock:       sweatboxMock{airportBadJSON: true},
+			method:     http.MethodPost,
+			path:       "/api/v1/sweatbox/airport",
+			body:       map[string]any{"text": "icao=KBTV\n"},
+			wantStatus: http.StatusBadGateway,
+			errSubstr:  "invalid JSON",
+		},
+		{
+			name:       "scenario 409 no airport",
+			mock:       sweatboxMock{scenarioConflict: true},
+			method:     http.MethodPost,
+			path:       "/api/v1/sweatbox/scenario",
+			body:       map[string]any{"text": "AAL1 B738"},
+			wantStatus: http.StatusConflict,
+			errSubstr:  "airport",
+		},
+		{
+			name:       "scenario 200 invalid JSON → 502",
+			mock:       sweatboxMock{scenarioBadJSON: true},
+			method:     http.MethodPost,
+			path:       "/api/v1/sweatbox/scenario",
+			body:       map[string]any{"text": "AAL1"},
+			wantStatus: http.StatusBadGateway,
+			errSubstr:  "invalid JSON",
+		},
+		{
+			name:       "command 409 no airport",
+			mock:       sweatboxMock{commandConflict: true},
+			method:     http.MethodPost,
+			path:       "/api/v1/sweatbox/command",
+			body:       map[string]any{"command": "add"},
+			wantStatus: http.StatusConflict,
+			errSubstr:  "airport",
+		},
+		{
+			name:       "delete-one 404",
+			mock:       sweatboxMock{deleteNotFound: true},
+			method:     http.MethodDelete,
+			path:       "/api/v1/sweatbox/aircraft/NOEXIST",
+			body:       nil,
+			wantStatus: http.StatusNotFound,
+			errSubstr:  "not found",
+		},
+		{
+			name:       "delete-all 404 disabled",
+			mock:       sweatboxMock{deleteAllNotFound: true},
+			method:     http.MethodDelete,
+			path:       "/api/v1/sweatbox/aircraft",
+			body:       map[string]any{"confirm": true},
+			wantStatus: http.StatusNotFound,
+			errSubstr:  "not enabled",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := tc.mock
+			fsd := httptest.NewServer(m.handler())
+			t.Cleanup(fsd.Close)
+
+			env := setupTestAPI(t)
+			env.server.cfg.FsdHttpServiceAddress = fsd.URL
+			access, _ := env.login(t, env.admin.CID, env.adminPass)
+
+			w := env.doJSON(t, tc.method, tc.path, tc.body, access)
+			require.Equal(t, tc.wantStatus, w.Code, w.Body.String())
+			res := decodeAPIV1(t, w)
+			require.NotNil(t, res.Err)
+			assert.Contains(t, strings.ToLower(*res.Err), strings.ToLower(tc.errSubstr))
+			assert.Nil(t, res.Data)
+		})
+	}
 }

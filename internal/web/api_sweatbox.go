@@ -12,7 +12,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/renorris/openfsd/internal/auth"
 	"github.com/renorris/openfsd/internal/serviceapi"
-	"github.com/renorris/openfsd/pkg/protocol"
 )
 
 // Public JSON request bodies for sweatbox mutations (design §D).
@@ -34,7 +33,7 @@ type sweatboxDeleteAllJSONRequest struct {
 // requireSweatboxI1 returns claims when the actor is Instructor1+; otherwise writes 403 and ok=false.
 func requireSweatboxI1(c *gin.Context) (claims *auth.CustomClaims, ok bool) {
 	claims = getJwtContext(c)
-	if claims == nil || claims.NetworkRating < protocol.NetworkRatingInstructor1 {
+	if claims == nil || !canAccessSweatbox(claims.NetworkRating) {
 		writeAPIV1Response(c, http.StatusForbidden, &genericAPIV1Forbidden)
 		return nil, false
 	}
@@ -47,9 +46,18 @@ func writeSweatboxProxyErr(c *gin.Context, msg string) {
 	writeAPIV1Response(c, http.StatusBadGateway, &res)
 }
 
+func writeSweatboxInvalidJSON(c *gin.Context) {
+	writeSweatboxProxyErr(c, "FSD service returned invalid JSON")
+}
+
 func writeSweatboxDisabled(c *gin.Context) {
 	res := newAPIV1Failure("Sweatbox is not enabled on the FSD server")
 	writeAPIV1Response(c, http.StatusNotFound, &res)
+}
+
+// limitSweatboxAPISmallBody caps non-upload mutation bodies (pause/delete/command).
+func limitSweatboxAPISmallBody(c *gin.Context) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, sweatboxWebSmallFormMaxBody)
 }
 
 // handleAPISweatboxState GET /api/v1/sweatbox/state
@@ -124,7 +132,7 @@ func (s *Server) handleAPISweatboxSession(c *gin.Context) {
 	case http.StatusOK:
 		var st serviceapi.SweatboxStateJSON
 		if err := json.Unmarshal(body, &st); err != nil {
-			writeSweatboxProxyErr(c, "FSD service returned unexpected status")
+			writeSweatboxInvalidJSON(c)
 			return
 		}
 		if st.Aircraft == nil {
@@ -190,7 +198,7 @@ func (s *Server) handleAPISweatboxAirport(c *gin.Context) {
 	case http.StatusOK:
 		var data serviceapi.SweatboxAirportLoadResponse
 		if err := json.Unmarshal(respBody, &data); err != nil {
-			writeSweatboxProxyErr(c, "FSD service returned unexpected status")
+			writeSweatboxInvalidJSON(c)
 			return
 		}
 		if data.Errors == nil {
@@ -264,7 +272,7 @@ func (s *Server) handleAPISweatboxScenario(c *gin.Context) {
 	case http.StatusOK:
 		var data serviceapi.SweatboxScenarioResponse
 		if err := json.Unmarshal(respBody, &data); err != nil {
-			writeSweatboxProxyErr(c, "FSD service returned unexpected status")
+			writeSweatboxInvalidJSON(c)
 			return
 		}
 		if data.Errors == nil {
@@ -303,7 +311,7 @@ func (s *Server) handleAPISweatboxCommand(c *gin.Context) {
 		return
 	}
 
-	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, sweatboxWebSmallFormMaxBody)
+	limitSweatboxAPISmallBody(c)
 	var req serviceapi.SweatboxCommandRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		if isRequestTooLarge(err) {
@@ -340,7 +348,7 @@ func (s *Server) handleAPISweatboxCommand(c *gin.Context) {
 	case http.StatusOK:
 		var data serviceapi.SweatboxCommandResponse
 		if err := json.Unmarshal(respBody, &data); err != nil {
-			writeSweatboxProxyErr(c, "FSD service returned unexpected status")
+			writeSweatboxInvalidJSON(c)
 			return
 		}
 		slog.Info("sweatbox api command",
@@ -366,9 +374,13 @@ func (s *Server) handleAPISweatboxCommand(c *gin.Context) {
 
 // handleAPISweatboxPause POST /api/v1/sweatbox/pause — FSD 204/200 → public 200 envelope.
 func (s *Server) handleAPISweatboxPause(c *gin.Context) {
-	if _, ok := requireSweatboxI1(c); !ok {
+	claims, ok := requireSweatboxI1(c)
+	if !ok {
 		return
 	}
+	limitSweatboxAPISmallBody(c)
+	// Drain (and enforce) body cap; body is unused.
+	_, _ = io.Copy(io.Discard, c.Request.Body)
 
 	status, _, err := s.fsdSweatboxDo(http.MethodPost, "/sweatbox/pause", "", nil)
 	if err != nil {
@@ -377,6 +389,7 @@ func (s *Server) handleAPISweatboxPause(c *gin.Context) {
 	}
 	switch status {
 	case http.StatusNoContent, http.StatusOK:
+		slog.Info("sweatbox api pause", "cid", claims.CID)
 		res := newAPIV1Success(nil)
 		writeAPIV1Response(c, http.StatusOK, &res)
 	case http.StatusNotFound:
@@ -388,9 +401,12 @@ func (s *Server) handleAPISweatboxPause(c *gin.Context) {
 
 // handleAPISweatboxUnpause POST /api/v1/sweatbox/unpause — FSD 204/200 → public 200 envelope.
 func (s *Server) handleAPISweatboxUnpause(c *gin.Context) {
-	if _, ok := requireSweatboxI1(c); !ok {
+	claims, ok := requireSweatboxI1(c)
+	if !ok {
 		return
 	}
+	limitSweatboxAPISmallBody(c)
+	_, _ = io.Copy(io.Discard, c.Request.Body)
 
 	status, _, err := s.fsdSweatboxDo(http.MethodPost, "/sweatbox/unpause", "", nil)
 	if err != nil {
@@ -399,6 +415,7 @@ func (s *Server) handleAPISweatboxUnpause(c *gin.Context) {
 	}
 	switch status {
 	case http.StatusNoContent, http.StatusOK:
+		slog.Info("sweatbox api unpause", "cid", claims.CID)
 		res := newAPIV1Success(nil)
 		writeAPIV1Response(c, http.StatusOK, &res)
 	case http.StatusNotFound:
@@ -410,9 +427,12 @@ func (s *Server) handleAPISweatboxUnpause(c *gin.Context) {
 
 // handleAPISweatboxDeleteAircraft DELETE /api/v1/sweatbox/aircraft/:callsign
 func (s *Server) handleAPISweatboxDeleteAircraft(c *gin.Context) {
-	if _, ok := requireSweatboxI1(c); !ok {
+	claims, ok := requireSweatboxI1(c)
+	if !ok {
 		return
 	}
+	limitSweatboxAPISmallBody(c)
+	_, _ = io.Copy(io.Discard, c.Request.Body)
 
 	cs := strings.TrimSpace(c.Param("callsign"))
 	if cs == "" {
@@ -429,6 +449,7 @@ func (s *Server) handleAPISweatboxDeleteAircraft(c *gin.Context) {
 	}
 	switch status {
 	case http.StatusNoContent, http.StatusOK:
+		slog.Info("sweatbox api delete aircraft", "cid", claims.CID, "callsign", cs)
 		res := newAPIV1Success(nil)
 		writeAPIV1Response(c, http.StatusOK, &res)
 	case http.StatusNotFound:
@@ -444,34 +465,34 @@ func (s *Server) handleAPISweatboxDeleteAircraft(c *gin.Context) {
 //
 // Requires confirm=true (JSON body or query confirm=1).
 func (s *Server) handleAPISweatboxDeleteAllAircraft(c *gin.Context) {
-	if _, ok := requireSweatboxI1(c); !ok {
+	claims, ok := requireSweatboxI1(c)
+	if !ok {
 		return
 	}
 
+	// Always cap body (even when confirm is only via query).
+	limitSweatboxAPISmallBody(c)
+
 	confirmed := queryTruthy(c.Query("confirm"))
-	if !confirmed {
-		// Optional JSON body {"confirm":true}; empty body is fine when query used.
-		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, sweatboxWebSmallFormMaxBody)
-		body, err := io.ReadAll(c.Request.Body)
-		if err != nil {
-			if isRequestTooLarge(err) {
-				res := newAPIV1Failure("Request body too large")
-				writeAPIV1Response(c, http.StatusRequestEntityTooLarge, &res)
-				return
-			}
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		if isRequestTooLarge(err) {
+			res := newAPIV1Failure("Request body too large")
+			writeAPIV1Response(c, http.StatusRequestEntityTooLarge, &res)
+			return
+		}
+		res := newAPIV1Failure("invalid JSON body")
+		writeAPIV1Response(c, http.StatusBadRequest, &res)
+		return
+	}
+	if !confirmed && len(bytes.TrimSpace(body)) > 0 {
+		var req sweatboxDeleteAllJSONRequest
+		if err := json.Unmarshal(body, &req); err != nil {
 			res := newAPIV1Failure("invalid JSON body")
 			writeAPIV1Response(c, http.StatusBadRequest, &res)
 			return
 		}
-		if len(bytes.TrimSpace(body)) > 0 {
-			var req sweatboxDeleteAllJSONRequest
-			if err := json.Unmarshal(body, &req); err != nil {
-				res := newAPIV1Failure("invalid JSON body")
-				writeAPIV1Response(c, http.StatusBadRequest, &res)
-				return
-			}
-			confirmed = req.Confirm
-		}
+		confirmed = req.Confirm
 	}
 	if !confirmed {
 		res := newAPIV1Failure("confirm required")
@@ -486,6 +507,7 @@ func (s *Server) handleAPISweatboxDeleteAllAircraft(c *gin.Context) {
 	}
 	switch status {
 	case http.StatusNoContent, http.StatusOK:
+		slog.Info("sweatbox api delete-all aircraft", "cid", claims.CID)
 		res := newAPIV1Success(nil)
 		writeAPIV1Response(c, http.StatusOK, &res)
 	case http.StatusNotFound:
