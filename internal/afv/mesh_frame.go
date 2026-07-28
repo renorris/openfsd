@@ -260,7 +260,11 @@ func DecodeHelloPayload(b []byte) (HelloPayload, error) {
 
 // VerifyHelloPSK constant-time compares peer PSK to local. Length mismatch rejects
 // without early return that leaks length via timing of compare body (dummy compare).
+// Empty PSK is rejected (defense in depth; production also requires non-empty via ValidateCluster).
 func VerifyHelloPSK(localPSK, peerPSK string) error {
+	if len(localPSK) == 0 || len(peerPSK) == 0 {
+		return errMeshHelloAuth
+	}
 	lb := []byte(localPSK)
 	pb := []byte(peerPSK)
 	if len(lb) != len(pb) {
@@ -358,7 +362,13 @@ func DecodeTrxSnapshot(b []byte) (TrxSnapshotPayload, error) {
 	if err != nil {
 		return p, err
 	}
-	if n > 1<<20 {
+	// Cap prealloc / session count (DoS guard before TCP mesh lands).
+	const maxSnapshotSessions = 8192
+	if n > maxSnapshotSessions {
+		return p, errMeshBadPayload
+	}
+	// Rough remaining-byte floor: each session needs at least a few u16 strings.
+	if int(n) > 0 && len(b) < int(n)*4 {
 		return p, errMeshBadPayload
 	}
 	p.Sessions = make([]MeshSessionBlock, 0, n)
@@ -657,7 +667,13 @@ func DecodeInterest(b []byte) (InterestPayload, error) {
 	if err != nil {
 		return p, err
 	}
-	if n > 1<<20 {
+	// Cap to Interest max (4096) with small headroom for wire tolerance.
+	const maxInterestDecode = 8192
+	if n > maxInterestDecode {
+		return p, errMeshBadPayload
+	}
+	// Each entry is 4+4+4 = 12 bytes.
+	if int(n) > 0 && len(b) < int(n)*12 {
 		return p, errMeshBadPayload
 	}
 	p.Entries = make([]InterestEntry, 0, n)

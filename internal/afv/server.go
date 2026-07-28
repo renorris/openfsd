@@ -142,9 +142,14 @@ func (s *Server) Run(ctx context.Context) error {
 			meshCtx, meshCancel := context.WithCancel(runCtx)
 			defer meshCancel()
 			go s.runInterestLoop(meshCtx)
-			if err := s.mesh.Start(meshCtx); err != nil && runCtx.Err() == nil {
-				errCh <- err
-				cancel()
+			if err := s.mesh.Start(meshCtx); err != nil {
+				_ = s.mesh.Stop() // always cleanup on Start failure (hub/workers)
+				if runCtx.Err() == nil {
+					errCh <- err
+					cancel()
+					return
+				}
+				errCh <- nil
 				return
 			}
 			<-meshCtx.Done()

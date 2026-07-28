@@ -57,6 +57,8 @@ type Mesh interface {
 	OnDirectory(fn MeshDirectoryHandler)
 	// SetSnapshotProvider supplies local session blocks for TrxSnapshot.
 	SetSnapshotProvider(fn func() []MeshSessionBlock)
+	// SetInterestProvider supplies current Interest for post-Hello / reconnect (M-16).
+	SetInterestProvider(fn func() []InterestEntry)
 }
 
 // MeshDirectoryHandler receives remote directory updates from peers.
@@ -134,8 +136,12 @@ func (c *Config) ValidateCluster() error {
 	if strings.TrimSpace(c.ClusterNodeID) == "" {
 		return fmt.Errorf("AFV_CLUSTER_NODE_ID required when AFV_CLUSTER_ENABLED=true")
 	}
-	if strings.TrimSpace(c.ClusterListen) == "" {
+	listen := strings.TrimSpace(c.ClusterListen)
+	if listen == "" {
 		return fmt.Errorf("AFV_CLUSTER_LISTEN required when AFV_CLUSTER_ENABLED=true")
+	}
+	if _, _, err := net.SplitHostPort(listen); err != nil {
+		return fmt.Errorf("AFV_CLUSTER_LISTEN: want host:port: %w", err)
 	}
 	if strings.TrimSpace(c.ClusterPSK) == "" {
 		return fmt.Errorf("AFV_CLUSTER_PSK required when AFV_CLUSTER_ENABLED=true")
@@ -158,6 +164,9 @@ func (c *Config) ValidateCluster() error {
 		}
 		if p.ID == "" || p.Addr == "" {
 			return fmt.Errorf("AFV_CLUSTER_PEERS: empty id or addr")
+		}
+		if _, _, err := net.SplitHostPort(p.Addr); err != nil {
+			return fmt.Errorf("AFV_CLUSTER_PEERS: peer %q addr want host:port: %w", p.ID, err)
 		}
 		if _, ok := seen[p.ID]; ok {
 			return fmt.Errorf("AFV_CLUSTER_PEERS: duplicate peer id %q", p.ID)
@@ -272,6 +281,9 @@ func (s *Server) registerMeshCallbacks() {
 	s.mesh.SetSnapshotProvider(func() []MeshSessionBlock {
 		return s.reg.snapshotLocalSessionsForMesh()
 	})
+	s.mesh.SetInterestProvider(func() []InterestEntry {
+		return s.reg.buildInterestEntries(s.cfg)
+	})
 }
 
 // runInterestLoop publishes Interest ≤ 2 Hz when dirty (M-5 / M-15 / test 20).
@@ -303,13 +315,14 @@ func (s *Server) publishInterestNow() {
 }
 
 // handleMeshAudioRelay routes inbound AudioRelay to local bound RX (M-8).
+// isXC: primary synthetic TX only; never XC-again (PR-9 not implemented).
 func (s *Server) handleMeshAudioRelay(fromNode string, r AudioRelay) {
 	if s == nil || s.reg == nil {
 		return
 	}
-	// isXC: primary synthetic TX only; never XC-again (PR-9 not implemented).
-	_ = r.IsXC
 	_ = fromNode
+	// isXC is intentionally not re-XC'd; routeSyntheticTX is primary-only.
+	_ = r.IsXC
 
 	s.udpMu.Lock()
 	pc := s.udpConn
@@ -332,11 +345,13 @@ func (s *Server) handleMeshAudioRelay(fromNode string, r AudioRelay) {
 		}
 		ch, err := afvprotocol.ServerChannel(rec.tag, rec.rxKey[:], rec.txKey[:])
 		if err != nil {
+			slog.Debug("AFV mesh AR ServerChannel", "err", err, "callsign", r.Callsign)
 			continue
 		}
 		seq := rec.sess.nextTxSeq()
 		pkt, err := ch.Encapsulate(seq, afvprotocol.DTONameAudioRx, ar.EncodeMsgpack(), nil)
 		if err != nil {
+			slog.Debug("AFV mesh AR Encapsulate", "err", err, "callsign", r.Callsign)
 			continue
 		}
 		addr, ok := rec.udp.(net.Addr)
@@ -423,4 +438,11 @@ func (s *Server) PublishInterestNowForTest() {
 // MarkInterestDirtyForTest sets dirty (tests).
 func (s *Server) MarkInterestDirtyForTest() {
 	s.markInterestDirty()
+}
+
+// ClearInterestDirtyForTest clears dirty so the interest loop will not republish (tests).
+func (s *Server) ClearInterestDirtyForTest() {
+	if s != nil {
+		s.interestDirty.Store(false)
+	}
 }

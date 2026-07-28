@@ -521,24 +521,43 @@ func TestMeshE2E_CaseF_EmptyInterestNoFlood(t *testing.T) {
 	meshBindHB(t, chA, cliA, udp1, "AAL1", 0)
 	meshBindHB(t, chB, cliB, udp2, "AAL2", 0)
 
-	// clear interest so n1 does not think n2 wants anything
-	n1.mesh.ClearPeerInterest("n2")
-	// prevent interest loop from re-publishing immediately by not calling PublishInterestNow on n2
-	// (n2's interest would re-apply on n1 when n2 publishes — clear after and block)
-	// Rapid clear after publish
-	n1.mesh.ClearPeerInterest("n2")
+	// Explicit empty Interest from n2; clear dirty so interest loop cannot
+	// immediately republish full RX coverage (would race the no-flood assert).
+	ck := geo.CellKey{
+		ILat: geo.CellIndex(lat+0.001, geo.DefaultGridCellDeg),
+		ILon: geo.CellIndex(lon+0.001, geo.DefaultGridCellDeg),
+	}
+	n2.srv.ClearInterestDirtyForTest()
+	n2.mesh.PublishInterest(nil)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if !n1.mesh.PeerWants("n2", freq, ck) {
+			break
+		}
+		n2.srv.ClearInterestDirtyForTest()
+		n2.mesh.PublishInterest(nil)
+		time.Sleep(10 * time.Millisecond)
+	}
+	if n1.mesh.PeerWants("n2", freq, ck) {
+		t.Fatal("Case F: peer still wants after empty Interest")
+	}
+	// Keep dirty clear during burst
+	n2.srv.ClearInterestDirtyForTest()
+	n1.srv.ClearInterestDirtyForTest()
 
 	at := afvprotocol.AudioTx{
 		Callsign: "AAL1", SequenceCounter: 1, Audio: []byte{1}, LastPacket: true,
 		Transceivers: []afvprotocol.TxTransceiver{{ID: 0}},
 	}
 	pkt, _ := chA.Encapsulate(1, afvprotocol.DTONameAudioTx, at.EncodeMsgpack(), nil)
-	// send a few times with clear between
 	for i := 0; i < 5; i++ {
-		n1.mesh.ClearPeerInterest("n2")
+		n2.srv.ClearInterestDirtyForTest()
 		_, _ = cliA.WriteTo(pkt, udp1)
 	}
 	if _, ok := readAR(t, chB, cliB, 400*time.Millisecond); ok {
 		t.Fatal("Case F: flood with empty peer interest")
+	}
+	if n1.mesh.PeerWants("n2", freq, ck) {
+		t.Fatal("Case F: PeerWants became true during burst")
 	}
 }

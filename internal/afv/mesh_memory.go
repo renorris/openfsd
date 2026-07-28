@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/renorris/openfsd/internal/geo"
 )
@@ -50,10 +51,14 @@ type MemoryMesh struct {
 	onPeerDead func(nodeID string)
 	onDir      MeshDirectoryHandler
 	snapFn     func() []MeshSessionBlock
+	interestFn func() []InterestEntry
 
 	// capture last outbound AudioRelay encodings for Case E (optional)
 	lastRelayMu sync.Mutex
 	lastRelays  []AudioRelay
+
+	// interestPublishCount counts PublishInterest calls (rate tests).
+	interestPublishCount atomic.Uint64
 
 	stopCh   chan struct{}
 	stopOnce sync.Once
@@ -115,7 +120,29 @@ func (m *MemoryMesh) Start(ctx context.Context) error {
 		m.mu.Unlock()
 		return nil
 	}
+	m.mu.Unlock()
+
+	// Auth first (M-3 / Issue 2+9): fail closed before workers or Snapshot/Interest.
+	m.hub.mu.RLock()
+	for id, peer := range m.hub.nodes {
+		if id == m.self {
+			continue
+		}
+		if err := VerifyHelloPSK(m.psk, peer.psk); err != nil {
+			m.hub.mu.RUnlock()
+			slog.Warn("AFV mesh hello auth failed", "peer", id)
+			return err
+		}
+	}
+	m.hub.mu.RUnlock()
+
+	m.mu.Lock()
+	if m.started {
+		m.mu.Unlock()
+		return nil
+	}
 	m.started = true
+	// reset stop so a prior failed Start/Stop can recover in tests
 	m.mu.Unlock()
 
 	// Start per-peer drainers that deliver control then voice.
@@ -134,30 +161,27 @@ func (m *MemoryMesh) Start(ctx context.Context) error {
 		}()
 	}
 
-	// Post-link sequence (M-16): Snapshot then Interest (even if empty).
+	// Post-auth sequence (M-16): Snapshot then current Interest (may be empty).
 	m.PublishTrxSnapshot()
-	// Interest may be empty until Server interest loop runs; still send empty.
-	m.PublishInterest(nil)
-
-	// Optional: verify PSK against peers already on hub (auth mode for tests).
-	m.hub.mu.RLock()
-	for id, peer := range m.hub.nodes {
-		if id == m.self {
-			continue
-		}
-		if err := VerifyHelloPSK(m.psk, peer.psk); err != nil {
-			m.hub.mu.RUnlock()
-			slog.Warn("AFV mesh hello auth failed", "peer", id)
-			return err
-		}
-	}
-	m.hub.mu.RUnlock()
+	m.publishCurrentInterest()
 
 	go func() {
 		<-ctx.Done()
 		_ = m.Stop()
 	}()
 	return nil
+}
+
+// publishCurrentInterest sends Interest from provider or empty set (M-16).
+func (m *MemoryMesh) publishCurrentInterest() {
+	m.mu.RLock()
+	fn := m.interestFn
+	m.mu.RUnlock()
+	var entries []InterestEntry
+	if fn != nil {
+		entries = fn()
+	}
+	m.PublishInterest(entries)
 }
 
 func (m *MemoryMesh) Stop() error {
@@ -208,6 +232,17 @@ func (m *MemoryMesh) SetSnapshotProvider(fn func() []MeshSessionBlock) {
 	m.mu.Unlock()
 }
 
+func (m *MemoryMesh) SetInterestProvider(fn func() []InterestEntry) {
+	m.mu.Lock()
+	m.interestFn = fn
+	m.mu.Unlock()
+}
+
+// InterestPublishCount returns how many times PublishInterest ran (tests).
+func (m *MemoryMesh) InterestPublishCount() uint64 {
+	return m.interestPublishCount.Load()
+}
+
 func (m *MemoryMesh) peerAlive(id string) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -247,8 +282,9 @@ func (m *MemoryMesh) SimulatePeerUp(nodeID string) {
 		m.peerCtrl[nodeID] = newDropOldestQueue[meshCtrlJob](meshControlQueueDepth)
 	}
 	m.mu.Unlock()
+	// Post-Hello sequence with current Interest (M-16), not forced empty.
 	m.PublishTrxSnapshot()
-	m.PublishInterest(nil)
+	m.publishCurrentInterest()
 }
 
 // ClearPeerInterest empties a peer's interest set (Case F / tests).
@@ -326,8 +362,10 @@ func (m *MemoryMesh) PublishInterest(entries []InterestEntry) {
 	if m == nil {
 		return
 	}
-	// Synchronous apply on peers (M-17) — deliver interest immediately, not via async queue,
-	// so PeerWants barrier works. Also enqueue encoded frame for control-path coverage.
+	m.interestPublishCount.Add(1)
+	// Synchronous apply on peers only (M-17). Control queue carries the frame for
+	// transport/drop-oldest metrics; deliverCtrl must NOT re-apply Interest (stale
+	// async frames must not overwrite a newer sync set).
 	payload := EncodeInterest(InterestPayload{NodeID: m.self, Entries: entries})
 	set := make(map[FreqCell]struct{}, len(entries))
 	for _, e := range entries {
@@ -345,9 +383,6 @@ func (m *MemoryMesh) PublishInterest(entries []InterestEntry) {
 	m.hub.mu.RUnlock()
 
 	for _, p := range peers {
-		if !m.peerAlive(p.self) && !p.peerAlive(m.self) {
-			// either side may track aliveness; skip if we think peer is down
-		}
 		if !m.peerAlive(p.self) {
 			continue
 		}
@@ -363,7 +398,7 @@ func (m *MemoryMesh) PublishInterest(entries []InterestEntry) {
 		p.peerInterest[m.self] = cp
 		p.mu.Unlock()
 	}
-	// Also put on control queues for drop-oldest testing (async apply already done).
+	// Enqueue for control-path drop-oldest only — not applied on receive (Issue 1).
 	m.broadcastCtrl(MeshTypeInterest, payload)
 }
 
@@ -480,6 +515,8 @@ func (m *MemoryMesh) broadcastCtrl(typ byte, payload []byte) {
 }
 
 func (m *MemoryMesh) drainPeer(ctx context.Context, peerID string) {
+	idle := time.NewTimer(2 * time.Millisecond)
+	defer idle.Stop()
 	for {
 		select {
 		case <-ctx.Done():
@@ -495,12 +532,19 @@ func (m *MemoryMesh) drainPeer(ctx context.Context, peerID string) {
 		alive := m.alive[peerID]
 		m.mu.RUnlock()
 		if !alive {
+			if !idle.Stop() {
+				select {
+				case <-idle.C:
+				default:
+				}
+			}
+			idle.Reset(50 * time.Millisecond)
 			select {
 			case <-ctx.Done():
 				return
 			case <-m.stopCh:
 				return
-			case <-timeAfter(50):
+			case <-idle.C:
 			}
 			continue
 		}
@@ -518,34 +562,22 @@ func (m *MemoryMesh) drainPeer(ctx context.Context, peerID string) {
 			}
 		}
 		if !delivered {
+			if !idle.Stop() {
+				select {
+				case <-idle.C:
+				default:
+				}
+			}
+			idle.Reset(2 * time.Millisecond)
 			select {
 			case <-ctx.Done():
 				return
 			case <-m.stopCh:
 				return
-			case <-timeAfter(2):
+			case <-idle.C:
 			}
 		}
 	}
-}
-
-// timeAfter is a tiny sleep helper (ms) to avoid busy loop without importing time in every call site pattern.
-func timeAfter(ms int) <-chan struct{} {
-	ch := make(chan struct{})
-	go func() {
-		// use real time package
-		sleepMS(ms)
-		close(ch)
-	}()
-	return ch
-}
-
-func sleepMS(ms int) {
-	if ms <= 0 {
-		return
-	}
-	// defined in mesh_memory_time.go to keep imports clean — inline here instead
-	doSleep(ms)
 }
 
 func (m *MemoryMesh) deliverCtrl(peerID string, job meshCtrlJob) {
@@ -557,6 +589,7 @@ func (m *MemoryMesh) deliverCtrl(peerID string, job meshCtrlJob) {
 	case MeshTypeTrxSnapshot:
 		p, err := DecodeTrxSnapshot(job.payload)
 		if err != nil {
+			slog.Debug("AFV mesh decode TrxSnapshot", "err", err, "from", m.self, "to", peerID)
 			return
 		}
 		sessions := meshSessionsToRemote(p.Sessions)
@@ -569,6 +602,7 @@ func (m *MemoryMesh) deliverCtrl(peerID string, job meshCtrlJob) {
 	case MeshTypeTrxDelta:
 		p, err := DecodeTrxDelta(job.payload)
 		if err != nil {
+			slog.Debug("AFV mesh decode TrxDelta", "err", err, "from", m.self)
 			return
 		}
 		trxs := meshTrxToLocal(p.Trxs)
@@ -581,6 +615,7 @@ func (m *MemoryMesh) deliverCtrl(peerID string, job meshCtrlJob) {
 	case MeshTypeSessionLeave:
 		p, err := DecodeSessionLeave(job.payload)
 		if err != nil {
+			slog.Debug("AFV mesh decode SessionLeave", "err", err, "from", m.self)
 			return
 		}
 		peer.mu.RLock()
@@ -590,19 +625,10 @@ func (m *MemoryMesh) deliverCtrl(peerID string, job meshCtrlJob) {
 			dir.ApplyLeave(p.OriginNodeID, p.Callsign)
 		}
 	case MeshTypeInterest:
-		// Already applied synchronously in PublishInterest; ignore async duplicate
-		// or apply again for queue-path completeness.
-		p, err := DecodeInterest(job.payload)
-		if err != nil {
-			return
-		}
-		set := make(map[FreqCell]struct{}, len(p.Entries))
-		for _, e := range p.Entries {
-			set[FreqCell{FreqHz: e.FreqHz, Cell: geo.CellKey{ILat: e.ILat, ILon: e.ILon}}] = struct{}{}
-		}
-		peer.mu.Lock()
-		peer.peerInterest[m.self] = set
-		peer.mu.Unlock()
+		// Interest is applied only synchronously in PublishInterest (M-17).
+		// Ignoring async re-apply prevents older queued frames from overwriting
+		// a newer set (Issue 1). Frame still counts toward control-queue metrics.
+		return
 	case MeshTypeHeartbeat:
 		// liveness only
 	}

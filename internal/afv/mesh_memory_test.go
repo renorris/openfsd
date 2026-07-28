@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/renorris/openfsd/internal/geo"
+	"github.com/renorris/openfsd/pkg/afvprotocol"
 )
 
 func TestMemoryMesh_PeerDeathPurgesInterest(t *testing.T) {
@@ -108,13 +109,34 @@ func TestMemoryMesh_HelloPSKReject(t *testing.T) {
 	m1, _ := NewMemoryMesh(hub, MeshConfig{NodeID: "n1", PSK: "good", PeerIDs: []string{"n1", "n2"}})
 	_, _ = NewMemoryMesh(hub, MeshConfig{NodeID: "n2", PSK: "bad", PeerIDs: []string{"n1", "n2"}})
 	ctx := context.Background()
-	// start n1 first ok; n2 will fail when verifying against n1?
-	// Start verifies local PSK against peer.psk
+	// Start verifies local PSK against peer.psk before workers (fail closed).
+	err := m1.Start(ctx)
+	if err == nil {
+		t.Fatal("expected PSK reject")
+	}
+	if err != errMeshHelloAuth {
+		t.Fatalf("err=%v want errMeshHelloAuth", err)
+	}
+	_ = m1.Stop()
+}
+
+func TestPublishInterest_NoAsyncStaleOverwrite(t *testing.T) {
+	hub := NewMemoryHub()
+	m1, _ := NewMemoryMesh(hub, MeshConfig{NodeID: "n1", PSK: "p", PeerIDs: []string{"n1", "n2"}})
+	m2, _ := NewMemoryMesh(hub, MeshConfig{NodeID: "n2", PSK: "p", PeerIDs: []string{"n1", "n2"}})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	if err := m1.Start(ctx); err != nil {
-		// m1 sees n2 with bad psk
-		if err != errMeshHelloAuth {
-			t.Fatalf("err=%v", err)
-		}
+		t.Fatal(err)
+	}
+	if err := m2.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	m2.PublishInterest(nil)
+	m2.PublishInterest([]InterestEntry{{FreqHz: 99, ILat: 1, ILon: 2}})
+	time.Sleep(50 * time.Millisecond)
+	if !m1.PeerWants("n2", 99, geo.CellKey{ILat: 1, ILon: 2}) {
+		t.Fatal("sync interest lost to stale async re-apply")
 	}
 }
 
@@ -262,7 +284,18 @@ func TestConcurrentATReapTrxRace(t *testing.T) {
 		MaxSessions: 50, MaxSessionsPerCID: 10,
 		RangeDefaultNM: 100, HeartbeatTimeout: time.Hour, SessionIdleTimeout: time.Hour,
 	}
-	r := newRegistry(cfg)
+	hub := NewMemoryHub()
+	m1, _ := NewMemoryMesh(hub, MeshConfig{NodeID: "n1", PSK: "p", PeerIDs: []string{"n1", "n2"}})
+	m2, _ := NewMemoryMesh(hub, MeshConfig{NodeID: "n2", PSK: "p", PeerIDs: []string{"n1", "n2"}})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	_ = m1.Start(ctx)
+	_ = m2.Start(ctx)
+
+	s := New(cfg, nil, nil, []byte("k"))
+	s.SetMesh(m1)
+	s.registerMeshCallbacks()
+	r := s.reg
 	now := time.Now()
 	s1, _, _ := r.CreateOrReplace(1, "A", "", now)
 	s2, _, _ := r.CreateOrReplace(2, "B", "", now)
@@ -270,6 +303,11 @@ func TestConcurrentATReapTrxRace(t *testing.T) {
 	_, _, _ = r.UpdateTransceivers(2, "B", []Transceiver{{ID: 0, Frequency: 118700000, LatDeg: 40.01, LonDeg: -73.01}})
 	_, _, _ = r.BindUDP(s1, fakeAddr{"1"}, now)
 	_, _, _ = r.BindUDP(s2, fakeAddr{"2"}, now)
+	m1.ApplyInterestDirect("n2", []InterestEntry{{
+		FreqHz: 118700000,
+		ILat:   geo.CellIndex(40, geo.DefaultGridCellDeg),
+		ILon:   geo.CellIndex(-73, geo.DefaultGridCellDeg),
+	}})
 
 	done := make(chan struct{})
 	go func() {
@@ -278,23 +316,31 @@ func TestConcurrentATReapTrxRace(t *testing.T) {
 			_ = r.routeSyntheticTX("C", false, []RelayTxRadio{{
 				TxID: 0, FreqHz: 118700000, LatDeg: 40.0, LonDeg: -73.0,
 			}})
-			_, _ = r.snapshotTXForMesh(s1, nil)
+			_, radios := r.snapshotTXForMesh(s1, []afvprotocol.TxTransceiver{{ID: 0}})
+			m1.EnqueueAudioRelay(AudioRelay{
+				Callsign: "A", SequenceCounter: uint32(i), Audio: []byte{1},
+				TxRadios: radios,
+			})
 			_ = r.snapshotLocalSessionsForMesh()
 		}
 	}()
 	go func() {
 		for i := 0; i < 100; i++ {
-			_, _, _ = r.UpdateTransceivers(1, "A", []Transceiver{{
+			isATC, trxs, _ := r.UpdateTransceivers(1, "A", []Transceiver{{
 				ID: 0, Frequency: 118700000, LatDeg: 40 + float64(i)*0.0001, LonDeg: -73,
 			}})
+			s.meshPublishDelta("A", isATC, trxs)
 		}
 	}()
 	go func() {
 		for i := 0; i < 50; i++ {
-			_ = r.Reap(now)
+			leaves := r.Reap(now) // unlikely to reap with long timeouts
+			s.meshPublishLeaves(leaves)
 			_ = r.buildInterestEntries(cfg)
+			s.PublishInterestNowForTest()
 		}
 	}()
 	<-done
 	time.Sleep(50 * time.Millisecond)
+	_ = m2
 }

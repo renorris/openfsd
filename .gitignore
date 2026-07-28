@@ -17,11 +17,12 @@ node_modules/
 # Local worklogs / personal trackers (not committed)
 *.local.md
 
-# Local binaries
+# Local binaries (built by go build -o …)
 /openfsd-web
 /fsdweb
 /fsd
 /openfsd
+/openfsd-migrate-to-rqlite
 
 # User-fetched X-Plane Global Airports data and bulk conversion output.
 # Tooling under cmd/, internal/xp12aptdat/, scripts/ is tracked.

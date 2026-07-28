@@ -31,6 +31,9 @@ func (d *remoteDir) ApplySnapshot(origin string, sessions []RemoteSession) {
 		return
 	}
 	origin = strings.TrimSpace(origin)
+	if origin == "" {
+		return // consistent with ApplyDelta empty-origin reject
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	m := make(map[string]RemoteSession, len(sessions))

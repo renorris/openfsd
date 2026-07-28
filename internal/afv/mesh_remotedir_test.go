@@ -94,6 +94,10 @@ func TestRemoteDir_NilSafe(t *testing.T) {
 
 func TestRemoteDir_EmptyCallsignAndMiss(t *testing.T) {
 	d := newRemoteDir()
+	d.ApplySnapshot("", []RemoteSession{{Callsign: "X", IsATC: true}})
+	if d.Count() != 0 {
+		t.Fatal("empty origin should reject")
+	}
 	d.ApplySnapshot("n", []RemoteSession{{Callsign: "  ", IsATC: true}})
 	if d.Count() != 0 {
 		t.Fatal("empty callsign should skip")

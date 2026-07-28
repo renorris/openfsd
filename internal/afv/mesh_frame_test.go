@@ -208,9 +208,18 @@ func TestHelloVerifyPSK(t *testing.T) {
 	if err := VerifyHelloPSK("abc", "ab"); err != errMeshHelloAuth {
 		t.Fatalf("length mismatch err=%v", err)
 	}
-	if err := VerifyHelloPSK("", ""); err != nil {
+	if err := VerifyHelloPSK("", ""); err != errMeshHelloAuth {
+		t.Fatalf("empty PSK should reject: %v", err)
+	}
+	if err := VerifyHelloPSK("x", ""); err != errMeshHelloAuth {
 		t.Fatal(err)
 	}
+}
+
+// Hello first-frame-not-type-1 is enforced on the TCP accept path (PR-10b).
+// MemoryMesh has no wire Hello; document here so row 2b is not silently dropped.
+func TestHelloFirstFrameTCPDeferred(t *testing.T) {
+	t.Log("Hello first-frame type check is TCP-only (mesh_tcp.go / PR-10b); MemoryMesh uses constructor PSK")
 }
 
 func TestMeshStringOversizeTruncate(t *testing.T) {
@@ -327,12 +336,19 @@ func TestDecodeAll_TrailingGarbageAndShort(t *testing.T) {
 	if _, err := DecodeInterest(ip); err == nil {
 		t.Fatal()
 	}
-	// Interest huge n
+	// Interest huge n (prealloc cap)
 	var big []byte
 	big = meshEncodeString(big, "n")
 	big = meshEncodeU32(big, 1<<21)
 	if _, err := DecodeInterest(big); err == nil {
 		t.Fatal()
+	}
+	// Interest n larger than remaining bytes
+	var shortN []byte
+	shortN = meshEncodeString(shortN, "n")
+	shortN = meshEncodeU32(shortN, 100)
+	if _, err := DecodeInterest(shortN); err == nil {
+		t.Fatal("short body for n entries")
 	}
 	// Interest short entry
 	var short []byte

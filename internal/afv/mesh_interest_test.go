@@ -1,6 +1,7 @@
 package afv
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -139,7 +140,10 @@ func TestBuildInterest_BoundOnly_ATCCoverage(t *testing.T) {
 }
 
 func TestInterestRateLimit_DirtyStorm(t *testing.T) {
-	// interest loop ticks at interestMinInterval; force-count publishes via Server helper
+	// Drive real runInterestLoop under rapid dirty storm; assert ≤ ~2 Hz publishes.
+	if interestMinInterval > 500*time.Millisecond {
+		t.Fatalf("interval=%v exceeds 2Hz budget", interestMinInterval)
+	}
 	cfg := &Config{
 		APIListen: "127.0.0.1:0", UDPListen: "127.0.0.1:0",
 		UDPAdvertiseIPv4: "127.0.0.1:1",
@@ -148,26 +152,72 @@ func TestInterestRateLimit_DirtyStorm(t *testing.T) {
 	}
 	s := New(cfg, nil, nil, []byte("x"))
 	hub := NewMemoryHub()
-	m, err := NewMemoryMesh(hub, MeshConfig{NodeID: "n1", PSK: "p", PeerIDs: []string{"n1", "n2"}})
+	m, err := NewMemoryMesh(hub, MeshConfig{NodeID: "n1", PSK: "psk-ok", PeerIDs: []string{"n1", "n2"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _ = NewMemoryMesh(hub, MeshConfig{NodeID: "n2", PSK: "p", PeerIDs: []string{"n1", "n2"}})
+	_, _ = NewMemoryMesh(hub, MeshConfig{NodeID: "n2", PSK: "psk-ok", PeerIDs: []string{"n1", "n2"}})
 	s.SetMesh(m)
+	s.registerMeshCallbacks()
 
-	// Rapid dirty without waiting interval: publishInterestNow only when we call it.
-	// Mark dirty many times — flag is boolean so storm collapses to one publish per tick.
-	for i := 0; i < 100; i++ {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := m.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	go s.runInterestLoop(ctx)
+
+	// Storm dirty for ~1.2s (boolean flag → at most one publish per 500ms tick)
+	deadline := time.Now().Add(1200 * time.Millisecond)
+	for time.Now().Before(deadline) {
 		s.MarkInterestDirtyForTest()
+		time.Sleep(5 * time.Millisecond)
+	}
+	cancel()
+	time.Sleep(20 * time.Millisecond)
+
+	n := m.InterestPublishCount()
+	// Start + loop initial + ticks over ~1.2s at 500ms — budget ≤8
+	if n > 8 {
+		t.Fatalf("interest publish count %d exceeds ≤2Hz storm budget", n)
+	}
+	if n < 2 {
+		t.Fatalf("expected loop to publish, got %d", n)
+	}
+}
+
+func TestFirstBindDirtyOnceOnServer(t *testing.T) {
+	cfg := &Config{MaxSessions: 10, MaxSessionsPerCID: 5, RangeDefaultNM: 40}
+	s := New(cfg, nil, nil, []byte("k"))
+	now := time.Now()
+	sess, _, err := s.reg.CreateOrReplace(1, "P1", "", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, _ = s.reg.UpdateTransceivers(1, "P1", []Transceiver{{
+		ID: 0, Frequency: 118700000, LatDeg: 40, LonDeg: -73,
+	}})
+	_ = s.interestDirty.Swap(false)
+
+	_, first, ok := s.reg.BindUDP(sess, fakeAddr{"127.0.0.1:1"}, now)
+	if !ok || !first {
+		t.Fatal("first bind")
+	}
+	if first {
+		s.markInterestDirty()
 	}
 	if !s.InterestDirtyForTest() {
-		t.Fatal("expected dirty")
+		t.Fatal("first bind must dirty interest")
 	}
-	// single publish clears path for rate ≤2Hz (interval 500ms)
-	if interestMinInterval > 500*time.Millisecond {
-		t.Fatalf("interval=%v exceeds 2Hz budget", interestMinInterval)
+	_ = s.interestDirty.Swap(false)
+
+	_, first2, ok := s.reg.BindUDP(sess, fakeAddr{"127.0.0.1:1"}, now)
+	if !ok || first2 {
+		t.Fatalf("re-touch first=%v ok=%v", first2, ok)
 	}
-	s.PublishInterestNowForTest()
+	if s.InterestDirtyForTest() {
+		t.Fatal("re-touch must not dirty interest")
+	}
 }
 
 func TestCapInterest_UnderCapNoOp(t *testing.T) {

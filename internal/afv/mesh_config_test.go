@@ -37,6 +37,8 @@ func TestValidateCluster(t *testing.T) {
 		}, "max 4"},
 		{"bad peer", func(c *Config) { c.ClusterPeers = "notvalid" }, "invalid"},
 		{"dup", func(c *Config) { c.ClusterPeers = "n2=1:1,n2=1:2" }, "duplicate"},
+		{"bad listen", func(c *Config) { c.ClusterListen = "not-a-hostport" }, "host:port"},
+		{"bad peer addr", func(c *Config) { c.ClusterPeers = "n2=nohostport" }, "host:port"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
