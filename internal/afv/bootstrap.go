@@ -74,6 +74,15 @@ func NewDefault(ctx context.Context) (*Server, error) {
 		return nil, fmt.Errorf("AFV_REQUIRE_FSD_ONLINE=true is not implemented in P0; leave false until the FSD online gate lands")
 	}
 
+	if err := cfg.ValidateCluster(); err != nil {
+		return nil, err
+	}
+	// M-11: ENABLED=true without TCP mesh in this binary fails closed.
+	// Never wire production NewDefault to MemoryMesh.
+	if cfg.ClusterEnabled {
+		return nil, errClusterTCPNotBuilt
+	}
+
 	return New(cfg, repos.UserRepo, repos.ConfigRepo, jwtSecret), nil
 }
 

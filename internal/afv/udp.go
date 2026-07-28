@@ -103,8 +103,12 @@ func (s *Server) handleUDP(pc net.PacketConn, pkt []byte, src net.Addr) {
 	if sess.acceptSeq(hdr.Sequence) == afvprotocol.ReceiveBefore {
 		return
 	}
-	if _, ok := s.reg.BindUDP(sess, src, now); !ok {
+	_, firstBind, ok := s.reg.BindUDP(sess, src, now)
+	if !ok {
 		return
+	}
+	if firstBind {
+		s.markInterestDirty()
 	}
 	sess.touchUDP(now)
 
@@ -173,6 +177,27 @@ func (s *Server) handleAudioTx(pc net.PacketConn, sess *VoiceSession, payload []
 		}
 		_, _ = pc.WriteTo(pkt, addr)
 	}
+
+	// Mesh AudioRelay after local route (KD-16: no registry lock across enqueue).
+	if s.mesh == nil {
+		return
+	}
+	isATC, radios := s.reg.snapshotTXForMesh(sess, at.Transceivers)
+	if len(radios) == 0 {
+		return
+	}
+	audioCopy := append([]byte(nil), at.Audio...)
+	relay := AudioRelay{
+		OriginNode:      s.mesh.NodeID(),
+		Callsign:        sess.Callsign,
+		SequenceCounter: at.SequenceCounter,
+		LastPacket:      at.LastPacket,
+		IsATC:           isATC,
+		IsXC:            false, // until PR-9
+		Audio:           audioCopy,
+		TxRadios:        radios,
+	}
+	s.mesh.EnqueueAudioRelay(relay)
 }
 
 // LocalUDPAddr returns the bound UDP address string (for tests).

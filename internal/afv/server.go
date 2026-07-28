@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/renorris/openfsd/internal/db"
@@ -28,6 +29,11 @@ type Server struct {
 	// apiAddr is the actual bound HTTP address (set after listen; :0 safe).
 	apiMu   sync.RWMutex
 	apiAddr string
+
+	// Mesh (nil when cluster disabled). Set via SetMesh before Run (tests).
+	mesh          Mesh
+	remote        *remoteDir
+	interestDirty atomic.Bool
 }
 
 // New constructs an AFV server from already-opened dependencies (tests + NewDefault).
@@ -62,7 +68,11 @@ func (s *Server) Run(ctx context.Context) error {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
-	errCh := make(chan error, 3)
+	nSubs := 3
+	if s.mesh != nil {
+		nSubs = 4
+	}
+	errCh := make(chan error, nSubs)
 	var wg sync.WaitGroup
 
 	// HTTP
@@ -123,8 +133,28 @@ func (s *Server) Run(ctx context.Context) error {
 		errCh <- nil
 	}()
 
+	// Mesh sibling (directory + AT relay)
+	if s.mesh != nil {
+		s.registerMeshCallbacks()
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			meshCtx, meshCancel := context.WithCancel(runCtx)
+			defer meshCancel()
+			go s.runInterestLoop(meshCtx)
+			if err := s.mesh.Start(meshCtx); err != nil && runCtx.Err() == nil {
+				errCh <- err
+				cancel()
+				return
+			}
+			<-meshCtx.Done()
+			_ = s.mesh.Stop()
+			errCh <- nil
+		}()
+	}
+
 	var first error
-	for i := 0; i < 3; i++ {
+	for i := 0; i < nSubs; i++ {
 		if err := <-errCh; err != nil && first == nil {
 			first = err
 			cancel()

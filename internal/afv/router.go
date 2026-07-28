@@ -97,3 +97,80 @@ func (r *Registry) routeAT(tx *VoiceSession, at afvprotocol.AudioTx) []routeReci
 func callsignMatch(a, b string) bool {
 	return strings.EqualFold(strings.TrimSpace(a), strings.TrimSpace(b))
 }
+
+// routeSyntheticTX routes as if a remote transmitter at the given radios sent
+// audio. Does not require a local *VoiceSession for the TX.
+// isATC is the remote session class from AudioRelay.IsATC — used exactly like
+// tx.IsATC in routeAT: ClassifyRange(radio.FreqHz, isATC).
+// Callsign is only for AR labeling; skip local recipients with matching callsign
+// (dual-login guard). Do NOT recompute IsATC from callsign or len(radios).
+func (r *Registry) routeSyntheticTX(callsign string, isATC bool, radios []RelayTxRadio) []routeRecipient {
+	if r == nil || len(radios) == 0 {
+		return nil
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	type accKey struct {
+		sess *VoiceSession
+	}
+	acc := make(map[*VoiceSession][]afvprotocol.RxTransceiver)
+
+	edge := float64(0.1)
+	if r.cfg != nil {
+		edge = r.cfg.EdgeRatio()
+	}
+
+	for _, radio := range radios {
+		class := ClassifyRange(radio.FreqHz, isATC)
+		maxNM := float64(40)
+		if r.cfg != nil {
+			maxNM = r.cfg.MaxRangeNM(class)
+		} else {
+			maxNM = (&Config{}).MaxRangeNM(class)
+		}
+		maxM := NMToMeters(maxNM)
+		cands := r.index.candidates(radio.FreqHz, radio.LatDeg, radio.LonDeg, maxM)
+		for _, c := range cands {
+			if c.session == nil || !c.session.Bound || c.session.UDPAddr == nil {
+				continue
+			}
+			// Dual-login guard: skip local recipient with same callsign.
+			if callsignMatch(c.session.Callsign, callsign) {
+				continue
+			}
+			dist := SlantRangeM(radio.LatDeg, radio.LonDeg, c.lat, c.lon)
+			ratio, ok := DistanceRatio(dist, maxM, edge)
+			if !ok {
+				continue
+			}
+			acc[c.session] = append(acc[c.session], afvprotocol.RxTransceiver{
+				ID:            c.trxID,
+				Frequency:     c.freqHz,
+				DistanceRatio: ratio,
+			})
+		}
+	}
+
+	out := make([]routeRecipient, 0, len(acc))
+	for sess, rxs := range acc {
+		seen := make(map[uint16]struct{}, len(rxs))
+		uniq := make([]afvprotocol.RxTransceiver, 0, len(rxs))
+		for _, rx := range rxs {
+			if _, ok := seen[rx.ID]; ok {
+				continue
+			}
+			seen[rx.ID] = struct{}{}
+			uniq = append(uniq, rx)
+		}
+		out = append(out, routeRecipient{
+			sess:  sess,
+			udp:   sess.UDPAddr,
+			rx:    uniq,
+			rxKey: sess.ClientRxKey,
+			txKey: sess.ClientTxKey,
+			tag:   sess.ChannelTag,
+		})
+	}
+	return out
+}

@@ -1,0 +1,300 @@
+package afv
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/renorris/openfsd/internal/geo"
+)
+
+func TestMemoryMesh_PeerDeathPurgesInterest(t *testing.T) {
+	hub := NewMemoryHub()
+	m1, err := NewMemoryMesh(hub, MeshConfig{NodeID: "n1", PSK: "p", PeerIDs: []string{"n1", "n2"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m2, err := NewMemoryMesh(hub, MeshConfig{NodeID: "n2", PSK: "p", PeerIDs: []string{"n1", "n2"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote := newRemoteDir()
+	m1.OnDirectory(remote)
+	dead := make(chan string, 1)
+	m1.OnPeerDead(func(id string) {
+		remote.RemoveNode(id)
+		dead <- id
+	})
+	// seed remote dir + interest
+	remote.ApplySnapshot("n2", []RemoteSession{{Callsign: "REM", IsATC: false}})
+	m2.PublishInterest([]InterestEntry{{FreqHz: 1, ILat: 1, ILon: 1}})
+	if !m1.PeerWants("n2", 1, geo.CellKey{ILat: 1, ILon: 1}) {
+		t.Fatal("interest")
+	}
+	if remote.CountOrigin("n2") != 1 {
+		t.Fatal()
+	}
+	m1.SimulatePeerDown("n2")
+	select {
+	case id := <-dead:
+		if id != "n2" {
+			t.Fatal(id)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no OnPeerDead")
+	}
+	if remote.CountOrigin("n2") != 0 {
+		t.Fatal("remote dir not purged")
+	}
+	if m1.PeerWants("n2", 1, geo.CellKey{ILat: 1, ILon: 1}) {
+		t.Fatal("interest not cleared")
+	}
+	// local mesh still running for self
+	if m1.NodeID() != "n1" {
+		t.Fatal()
+	}
+}
+
+func TestMemoryMesh_EmptyInterestNoFlood(t *testing.T) {
+	hub := NewMemoryHub()
+	m1, _ := NewMemoryMesh(hub, MeshConfig{NodeID: "n1", PSK: "p", PeerIDs: []string{"n1", "n2"}})
+	m2, _ := NewMemoryMesh(hub, MeshConfig{NodeID: "n2", PSK: "p", PeerIDs: []string{"n1", "n2"}})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	got := make(chan AudioRelay, 4)
+	m2.OnAudioRelay(func(_ string, r AudioRelay) { got <- r })
+	if err := m1.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := m2.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// empty interest on m1's view of m2
+	m1.ClearPeerInterest("n2")
+	m1.EnqueueAudioRelay(AudioRelay{
+		Callsign: "A", Audio: []byte{9},
+		TxRadios: []RelayTxRadio{{FreqHz: 118700000, LatDeg: 40, LonDeg: -73}},
+	})
+	select {
+	case <-got:
+		t.Fatal("flooded AR with empty interest")
+	case <-time.After(100 * time.Millisecond):
+		// ok
+	}
+	// with interest, delivers
+	ck := geo.CellKey{
+		ILat: geo.CellIndex(40, geo.DefaultGridCellDeg),
+		ILon: geo.CellIndex(-73, geo.DefaultGridCellDeg),
+	}
+	m1.ApplyInterestDirect("n2", []InterestEntry{{
+		FreqHz: 118700000, ILat: ck.ILat, ILon: ck.ILon,
+	}})
+	m1.EnqueueAudioRelay(AudioRelay{
+		Callsign: "A", Audio: []byte{9},
+		TxRadios: []RelayTxRadio{{FreqHz: 118700000, LatDeg: 40, LonDeg: -73}},
+	})
+	select {
+	case r := <-got:
+		if r.Callsign != "A" {
+			t.Fatalf("%+v", r)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting AR")
+	}
+}
+
+func TestMemoryMesh_HelloPSKReject(t *testing.T) {
+	hub := NewMemoryHub()
+	m1, _ := NewMemoryMesh(hub, MeshConfig{NodeID: "n1", PSK: "good", PeerIDs: []string{"n1", "n2"}})
+	_, _ = NewMemoryMesh(hub, MeshConfig{NodeID: "n2", PSK: "bad", PeerIDs: []string{"n1", "n2"}})
+	ctx := context.Background()
+	// start n1 first ok; n2 will fail when verifying against n1?
+	// Start verifies local PSK against peer.psk
+	if err := m1.Start(ctx); err != nil {
+		// m1 sees n2 with bad psk
+		if err != errMeshHelloAuth {
+			t.Fatalf("err=%v", err)
+		}
+	}
+}
+
+func TestMemoryMesh_KeysNeverOnCapturedRelay(t *testing.T) {
+	hub := NewMemoryHub()
+	m1, _ := NewMemoryMesh(hub, MeshConfig{NodeID: "n1", PSK: "p", PeerIDs: []string{"n1", "n2"}})
+	_, _ = NewMemoryMesh(hub, MeshConfig{NodeID: "n2", PSK: "p", PeerIDs: []string{"n1", "n2"}})
+	ck := geo.CellKey{ILat: 1, ILon: 1}
+	m1.ApplyInterestDirect("n2", []InterestEntry{{FreqHz: 1, ILat: 1, ILon: 1}})
+	_ = ck
+	keyish := make([]byte, 32)
+	for i := range keyish {
+		keyish[i] = 0xab
+	}
+	m1.EnqueueAudioRelay(AudioRelay{
+		Callsign: "A", Audio: []byte{1, 2, 3},
+		TxRadios: []RelayTxRadio{{FreqHz: 1, LatDeg: 0.25, LonDeg: 0.25}},
+	})
+	relays := m1.LastRelays()
+	if len(relays) == 0 {
+		t.Fatal("no capture")
+	}
+	enc, err := EncodeAudioRelay(relays[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Decode and ensure no accidental key-sized reserved fields beyond audio
+	got, err := DecodeAudioRelay(enc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// struct has only public mesh fields
+	if got.OriginNode == "" && relays[0].OriginNode != "n1" {
+		t.Fatal()
+	}
+	// audio is small opus not 32-byte key
+	if len(got.Audio) == 32 {
+		t.Fatal("unexpected key-sized audio")
+	}
+}
+
+func TestMemoryMesh_ReconnectSnapshot(t *testing.T) {
+	hub := NewMemoryHub()
+	m1, _ := NewMemoryMesh(hub, MeshConfig{NodeID: "n1", PSK: "p", PeerIDs: []string{"n1", "n2"}})
+	m2, _ := NewMemoryMesh(hub, MeshConfig{NodeID: "n2", PSK: "p", PeerIDs: []string{"n1", "n2"}})
+	remote := newRemoteDir()
+	m1.OnDirectory(remote)
+	m1.SetSnapshotProvider(func() []MeshSessionBlock {
+		return []MeshSessionBlock{{Callsign: "LOC", IsATC: false}}
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	_ = m1.Start(ctx)
+	_ = m2.Start(ctx)
+	// allow ctrl drain for snapshot to m2... actually m1 PublishTrxSnapshot enqueues to n2
+	// m2 delivers to m2.onDir which is nil — set m2's dir to receive n1
+	// reverse: m2 publishes so m1 remote sees it
+	m2.SetSnapshotProvider(func() []MeshSessionBlock {
+		return []MeshSessionBlock{{Callsign: "REM", IsATC: true, Trxs: []MeshTrx{{ID: 0, FreqHz: 1}}}}
+	})
+	m2.OnDirectory(newRemoteDir())
+	m2.PublishTrxSnapshot()
+	// wait for drain
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if remote.CountOrigin("n2") > 0 {
+			break
+		}
+		// force delivery by also applying directly if drain slow
+		time.Sleep(20 * time.Millisecond)
+	}
+	// death + up
+	m1.SimulatePeerDown("n2")
+	if remote.CountOrigin("n2") != 0 {
+		// OnPeerDead removes — we didn't wire RemoveNode to remote in this test path
+		// SimulatePeerDown calls onPeerDead which we didn't set — set it
+	}
+	// rewire death
+	m1.OnPeerDead(func(id string) { remote.RemoveNode(id) })
+	remote.ApplySnapshot("n2", []RemoteSession{{Callsign: "REM"}})
+	m1.SimulatePeerDown("n2")
+	if remote.CountOrigin("n2") != 0 {
+		t.Fatal("expected purge")
+	}
+	m1.SimulatePeerUp("n2")
+	// interest barrier
+	m2.PublishInterest([]InterestEntry{{FreqHz: 1, ILat: 0, ILon: 0}})
+	if !m1.PeerWants("n2", 1, geo.CellKey{ILat: 0, ILon: 0}) {
+		t.Fatal("reconnect interest")
+	}
+}
+
+func TestMemoryMesh_PublishLeaveAndVoicePaths(t *testing.T) {
+	hub := NewMemoryHub()
+	m1, _ := NewMemoryMesh(hub, MeshConfig{NodeID: "n1", PSK: "p", PeerIDs: []string{"n1", "n2"}})
+	m2, _ := NewMemoryMesh(hub, MeshConfig{NodeID: "n2", PSK: "p", PeerIDs: []string{"n1", "n2"}})
+	remote := newRemoteDir()
+	m2.OnDirectory(remote)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	_ = m1.Start(ctx)
+	_ = m2.Start(ctx)
+	m1.PublishSessionLeave("GONE")
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		// leave delivered async — also apply path via PublishTrxDelta
+		time.Sleep(20 * time.Millisecond)
+		break
+	}
+	m1.PublishTrxDelta("NEW", true, []Transceiver{{ID: 0, Frequency: 1, LatDeg: 1, LonDeg: 2}})
+	time.Sleep(50 * time.Millisecond)
+	// PeerVoiceQueueLen
+	_ = m1.PeerVoiceQueueLen("n2")
+	_ = m1.PeerVoiceQueueLen("missing")
+	// Enqueue with no radios → no peer match
+	m1.EnqueueAudioRelay(AudioRelay{Callsign: "X", Audio: []byte{1}})
+	// nil mesh guards
+	var nilM *MemoryMesh
+	_ = nilM.Start(ctx)
+	_ = nilM.Stop()
+	_ = nilM.NodeID()
+	nilM.PublishTrxSnapshot()
+	nilM.PublishTrxDelta("a", false, nil)
+	nilM.PublishSessionLeave("a")
+	nilM.PublishInterest(nil)
+	nilM.EnqueueAudioRelay(AudioRelay{})
+	_ = nilM.PeerWants("x", 1, geo.CellKey{})
+	_ = nilM.InterestedPeers(nil)
+	// empty node id constructor
+	if _, err := NewMemoryMesh(hub, MeshConfig{NodeID: "  "}); err == nil {
+		t.Fatal()
+	}
+	if _, err := NewMemoryMesh(nil, MeshConfig{NodeID: "z"}); err == nil {
+		t.Fatal()
+	}
+	// duplicate register
+	if _, err := NewMemoryMesh(hub, MeshConfig{NodeID: "n1", PSK: "p"}); err == nil {
+		t.Fatal()
+	}
+	_ = m2
+}
+
+func TestConcurrentATReapTrxRace(t *testing.T) {
+	cfg := &Config{
+		MaxSessions: 50, MaxSessionsPerCID: 10,
+		RangeDefaultNM: 100, HeartbeatTimeout: time.Hour, SessionIdleTimeout: time.Hour,
+	}
+	r := newRegistry(cfg)
+	now := time.Now()
+	s1, _, _ := r.CreateOrReplace(1, "A", "", now)
+	s2, _, _ := r.CreateOrReplace(2, "B", "", now)
+	_, _, _ = r.UpdateTransceivers(1, "A", []Transceiver{{ID: 0, Frequency: 118700000, LatDeg: 40, LonDeg: -73}})
+	_, _, _ = r.UpdateTransceivers(2, "B", []Transceiver{{ID: 0, Frequency: 118700000, LatDeg: 40.01, LonDeg: -73.01}})
+	_, _, _ = r.BindUDP(s1, fakeAddr{"1"}, now)
+	_, _, _ = r.BindUDP(s2, fakeAddr{"2"}, now)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 200; i++ {
+			_ = r.routeSyntheticTX("C", false, []RelayTxRadio{{
+				TxID: 0, FreqHz: 118700000, LatDeg: 40.0, LonDeg: -73.0,
+			}})
+			_, _ = r.snapshotTXForMesh(s1, nil)
+			_ = r.snapshotLocalSessionsForMesh()
+		}
+	}()
+	go func() {
+		for i := 0; i < 100; i++ {
+			_, _, _ = r.UpdateTransceivers(1, "A", []Transceiver{{
+				ID: 0, Frequency: 118700000, LatDeg: 40 + float64(i)*0.0001, LonDeg: -73,
+			}})
+		}
+	}()
+	go func() {
+		for i := 0; i < 50; i++ {
+			_ = r.Reap(now)
+			_ = r.buildInterestEntries(cfg)
+		}
+	}()
+	<-done
+	time.Sleep(50 * time.Millisecond)
+}

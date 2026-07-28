@@ -158,7 +158,7 @@ func (s *Server) handlePostCallsign(w http.ResponseWriter, r *http.Request, clai
 		return
 	}
 
-	sess, err := s.reg.CreateOrReplace(claims.CID, callsign, "", time.Now())
+	sess, replaced, err := s.reg.CreateOrReplace(claims.CID, callsign, "", time.Now())
 	if err != nil {
 		if errors.Is(err, errCallsignInUse) {
 			http.Error(w, "callsign in use", http.StatusConflict)
@@ -171,6 +171,10 @@ func (s *Server) handlePostCallsign(w http.ResponseWriter, r *http.Request, clai
 		slog.Error("AFV create session", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
+	}
+	// Mesh leave for replaced session after unlock (no Delta until trx POST).
+	if replaced != "" {
+		s.meshPublishLeaves([]string{replaced})
 	}
 
 	resp := PostCallsignResponse{
@@ -196,7 +200,9 @@ func (s *Server) handleDeleteCallsign(w http.ResponseWriter, r *http.Request, cl
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	_ = s.reg.Remove(claims.CID, callsign)
+	if left, err := s.reg.Remove(claims.CID, callsign); err == nil && left != "" {
+		s.meshPublishLeaves([]string{left})
+	}
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -217,7 +223,8 @@ func (s *Server) handlePostTransceivers(w http.ResponseWriter, r *http.Request, 
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	if err := s.reg.UpdateTransceivers(claims.CID, callsign, trxs); err != nil {
+	isATC, trxsCopy, err := s.reg.UpdateTransceivers(claims.CID, callsign, trxs)
+	if err != nil {
 		if errors.Is(err, errNotFound) {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
@@ -225,6 +232,7 @@ func (s *Server) handlePostTransceivers(w http.ResponseWriter, r *http.Request, 
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	s.meshPublishDelta(callsign, isATC, trxsCopy)
 	w.WriteHeader(http.StatusOK)
 }
 

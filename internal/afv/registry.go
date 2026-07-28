@@ -42,21 +42,24 @@ func newRegistry(cfg *Config) *Registry {
 // CreateOrReplace creates a new voice session. If callsign is held:
 //   - strict mode → errCallsignInUse
 //   - default → replace (tear down old, new keys/tag)
-func (r *Registry) CreateOrReplace(cid int, callsign, clientName string, now time.Time) (*VoiceSession, error) {
+//
+// replacedCallsign is the upper callsign key when an existing session was replaced
+// (for mesh SessionLeave after unlock); empty otherwise.
+func (r *Registry) CreateOrReplace(cid int, callsign, clientName string, now time.Time) (sess *VoiceSession, replacedCallsign string, err error) {
 	if r == nil {
-		return nil, errNotFound
+		return nil, "", errNotFound
 	}
 	csKey := strings.ToUpper(strings.TrimSpace(callsign))
 	if csKey == "" {
-		return nil, errors.New("afv: empty callsign")
+		return nil, "", errors.New("afv: empty callsign")
 	}
 
 	var rxKey, txKey [afvprotocol.KeySize]byte
 	if _, err := rand.Read(rxKey[:]); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if _, err := rand.Read(txKey[:]); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	tag := uuid.NewString()
 
@@ -65,9 +68,10 @@ func (r *Registry) CreateOrReplace(cid int, callsign, clientName string, now tim
 
 	if existing, ok := r.byCallsign[csKey]; ok {
 		if r.cfg != nil && r.cfg.CallsignStrict {
-			return nil, errCallsignInUse
+			return nil, "", errCallsignInUse
 		}
 		r.removeLocked(existing)
+		replacedCallsign = csKey
 	}
 
 	// Global and per-CID limits (after possible replace free a slot).
@@ -82,13 +86,13 @@ func (r *Registry) CreateOrReplace(cid int, callsign, clientName string, now tim
 		}
 	}
 	if len(r.byTag) >= maxSess {
-		return nil, errSessionLimit
+		return nil, "", errSessionLimit
 	}
 	if len(r.byCID[cid]) >= maxPerCID {
-		return nil, errCIDSessionLimit
+		return nil, "", errCIDSessionLimit
 	}
 
-	sess := &VoiceSession{
+	sess = &VoiceSession{
 		ChannelTag:  tag,
 		CID:         cid,
 		Callsign:    callsign,
@@ -107,30 +111,32 @@ func (r *Registry) CreateOrReplace(cid int, callsign, clientName string, now tim
 		r.byCID[cid] = make(map[string]*VoiceSession)
 	}
 	r.byCID[cid][csKey] = sess
-	return sess, nil
+	return sess, replacedCallsign, nil
 }
 
 // Remove deletes a session by cid+callsign.
-func (r *Registry) Remove(cid int, callsign string) error {
+// leftCallsign is the upper key when a session was removed (mesh leave after unlock).
+func (r *Registry) Remove(cid int, callsign string) (leftCallsign string, err error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	csKey := strings.ToUpper(strings.TrimSpace(callsign))
 	sess := r.byCallsign[csKey]
 	if sess == nil || sess.CID != cid {
-		return errNotFound
+		return "", errNotFound
 	}
 	r.removeLocked(sess)
-	return nil
+	return csKey, nil
 }
 
 // UpdateTransceivers replaces the transceiver list and rebuilds index entries.
-func (r *Registry) UpdateTransceivers(cid int, callsign string, trxs []Transceiver) error {
+// Returns session IsATC and a copy of trxs for mesh TrxDelta after unlock.
+func (r *Registry) UpdateTransceivers(cid int, callsign string, trxs []Transceiver) (isATC bool, trxsCopy []Transceiver, err error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	csKey := strings.ToUpper(strings.TrimSpace(callsign))
 	sess := r.byCallsign[csKey]
 	if sess == nil || sess.CID != cid {
-		return errNotFound
+		return false, nil, errNotFound
 	}
 	r.index.removeSession(sess)
 	// copy slice
@@ -139,7 +145,9 @@ func (r *Registry) UpdateTransceivers(cid int, callsign string, trxs []Transceiv
 	sess.Transceivers = cp
 	sess.IsATC = IsATC(sess.Callsign, len(cp))
 	r.index.addSession(sess)
-	return nil
+	out := make([]Transceiver, len(cp))
+	copy(out, cp)
+	return sess.IsATC, out, nil
 }
 
 // LookupByTag returns the session for a channel tag (RLock).
@@ -164,28 +172,29 @@ func (r *Registry) AllowUDPSource(sess *VoiceSession, addr netAddrStringer) bool
 }
 
 // BindUDP binds the first valid UDP source. Returns false if already bound to another addr.
-func (r *Registry) BindUDP(sess *VoiceSession, addr netAddrStringer, now time.Time) (bound bool, ok bool) {
+// firstBind is true only on the !Bound → Bound transition (M-15 interest dirty).
+func (r *Registry) BindUDP(sess *VoiceSession, addr netAddrStringer, now time.Time) (bound, firstBind, ok bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if sess == nil {
-		return false, false
+		return false, false, false
 	}
 	// re-check still registered
 	if r.byTag[sess.ChannelTag] != sess {
-		return false, false
+		return false, false, false
 	}
 	if !sess.Bound {
 		sess.UDPAddr = addr
 		sess.Bound = true
 		sess.touchUDP(now)
-		return true, true
+		return true, true, true
 	}
 	if sess.UDPAddr != nil && sess.UDPAddr.String() == addr.String() {
 		sess.touchUDP(now)
-		return true, true
+		return true, false, true
 	}
 	// no rebind P0
-	return false, false
+	return false, false, false
 }
 
 // netAddrStringer is satisfied by net.Addr.
@@ -220,8 +229,8 @@ func (r *Registry) removeLocked(sess *VoiceSession) {
 	}
 }
 
-// Reap removes timed-out sessions. Returns number removed.
-func (r *Registry) Reap(now time.Time) int {
+// Reap removes timed-out sessions. Returns upper callsign keys removed (mesh leave).
+func (r *Registry) Reap(now time.Time) (leaves []string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	hbTO := 10 * time.Second
@@ -248,9 +257,10 @@ func (r *Registry) Reap(now time.Time) int {
 		}
 	}
 	for _, s := range dead {
+		leaves = append(leaves, s.CallsignKey)
 		r.removeLocked(s)
 	}
-	return len(dead)
+	return leaves
 }
 
 // Count returns session count.
