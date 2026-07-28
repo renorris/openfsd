@@ -27,7 +27,7 @@ docker compose up -d
 3. **Configure Server** — see [Configuration](Configuration.md)
 4. Connect a client — [Client Connection](Client-Connection.md)
 
-Images: **`ghcr.io/renorris/openfsd`** (`:latest`, `:dev`, `sha-*`) published by CI on pushes to `main` and `dev`.
+Images: **`ghcr.io/renorris/openfsd`** — CI publishes `:latest` from **`main` only**, `:dev` from **`dev`** (unstable), plus `sha-*` / branch tags.
 
 ### Service selection
 

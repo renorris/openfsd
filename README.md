@@ -99,7 +99,7 @@ Colocated mode (default) uses the shared DB and in-process service HTTP. For `-w
 
 Preferred for operators. See the [Deployment Wiki](https://github.com/renorris/openfsd/wiki/Deployment) (source: [`wiki/`](wiki/)).
 
-Images: **`ghcr.io/renorris/openfsd`** (`:latest`, `:dev`, `sha-*`) published by CI on every push to `main` and `dev`.
+Images: **`ghcr.io/renorris/openfsd`** — CI publishes `:latest` from **`main` only**, `:dev` from **`dev`** (unstable), plus `sha-*` / branch tags.
 
 **Upgrading from PostgreSQL?** Use [`openfsd-migrate-to-sqlite`](cmd/openfsd-migrate-to-sqlite) and [Migrating from PostgreSQL](wiki/Migrating-from-PostgreSQL.md). Optional multi-node: rqlite + mesh (`CLUSTER_ENABLED`, see [wiki/Deployment](wiki/Deployment.md) and `docs/design/distributed-openfsd.md`).
 

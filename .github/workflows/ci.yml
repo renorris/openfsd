@@ -73,11 +73,9 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            # Always publish branch tip tags; main also updates :latest.
+            # :latest is stable (main only). Dev pushes get :dev only — not :latest.
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
             type=raw,value=dev,enable=${{ github.ref == 'refs/heads/dev' }}
-            # While primary work is on dev, keep :latest in sync with dev too.
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/dev' }}
             type=sha,prefix=sha-
             type=ref,event=branch
             type=ref,event=pr
