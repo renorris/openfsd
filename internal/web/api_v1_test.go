@@ -486,3 +486,155 @@ func TestDataServersJSONUnauthenticated(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "OPENFSD")
 	assert.Contains(t, w.Body.String(), "localhost")
 }
+
+// TestBearerActorRevalidation covers KD-18: Bearer tokens on dual-accept resource
+// groups revalidate against the DB so demotion / soft-delete / hard-delete take effect.
+func TestBearerActorRevalidation(t *testing.T) {
+	setRating := func(t *testing.T, env *testAPIEnv, cid, rating int) {
+		t.Helper()
+		u, err := env.server.dbRepo.UserRepo.GetUserByCID(cid)
+		require.NoError(t, err)
+		u.NetworkRating = rating
+		u.Password = ""
+		require.NoError(t, env.server.dbRepo.UserRepo.UpdateUser(u))
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(t *testing.T, env *testAPIEnv)
+		method string
+		path   string
+		body   any
+		// loadOtherCID: when path is /user/load and body is nil, load observer instead of self.
+		loadOtherCID  bool
+		wantStatus    int
+		wantErrSubstr string
+	}{
+		{
+			name:       "valid_bearer_still_works",
+			method:     http.MethodPost,
+			path:       "/api/v1/user/load",
+			body:       nil, // filled with self CID after login
+			wantStatus: http.StatusOK,
+		},
+		{
+			name: "soft_deleted_inactive_401",
+			mutate: func(t *testing.T, env *testAPIEnv) {
+				setRating(t, env, env.admin.CID, int(protocol.NetworkRatingInactive))
+			},
+			method:        http.MethodPost,
+			path:          "/api/v1/user/load",
+			wantStatus:    http.StatusUnauthorized,
+			wantErrSubstr: "unauthorized",
+		},
+		{
+			name: "suspended_401",
+			mutate: func(t *testing.T, env *testAPIEnv) {
+				setRating(t, env, env.admin.CID, int(protocol.NetworkRatingSuspended))
+			},
+			method:        http.MethodPost,
+			path:          "/api/v1/user/load",
+			wantStatus:    http.StatusUnauthorized,
+			wantErrSubstr: "unauthorized",
+		},
+		{
+			name: "hard_deleted_401",
+			mutate: func(t *testing.T, env *testAPIEnv) {
+				require.NoError(t, env.server.dbRepo.UserRepo.DeleteUser(env.admin.CID))
+			},
+			method:        http.MethodPost,
+			path:          "/api/v1/user/load",
+			wantStatus:    http.StatusUnauthorized,
+			wantErrSubstr: "unauthorized",
+		},
+		{
+			name: "demoted_admin_config_forbidden",
+			mutate: func(t *testing.T, env *testAPIEnv) {
+				// Still active, but no longer Administrator — authz ceiling from DB overlay.
+				setRating(t, env, env.admin.CID, int(protocol.NetworkRatingObserver))
+			},
+			method:        http.MethodGet,
+			path:          "/api/v1/config/load",
+			body:          nil,
+			wantStatus:    http.StatusForbidden,
+			wantErrSubstr: "forbidden",
+		},
+		{
+			name: "demoted_admin_can_load_self",
+			mutate: func(t *testing.T, env *testAPIEnv) {
+				setRating(t, env, env.admin.CID, int(protocol.NetworkRatingObserver))
+			},
+			method:     http.MethodPost,
+			path:       "/api/v1/user/load",
+			wantStatus: http.StatusOK,
+		},
+		{
+			name: "demoted_admin_cannot_load_other",
+			mutate: func(t *testing.T, env *testAPIEnv) {
+				setRating(t, env, env.admin.CID, int(protocol.NetworkRatingObserver))
+			},
+			method:        http.MethodPost,
+			path:          "/api/v1/user/load",
+			loadOtherCID:  true,
+			wantStatus:    http.StatusForbidden,
+			wantErrSubstr: "forbidden",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := setupTestAPI(t)
+			access, _ := env.login(t, env.admin.CID, env.adminPass)
+
+			if tt.mutate != nil {
+				tt.mutate(t, env)
+			}
+
+			body := tt.body
+			if tt.path == "/api/v1/user/load" && body == nil {
+				cid := env.admin.CID
+				if tt.loadOtherCID {
+					cid = env.observer.CID
+				}
+				body = map[string]any{"cid": cid}
+			}
+
+			w := env.doJSON(t, tt.method, tt.path, body, access)
+			assert.Equal(t, tt.wantStatus, w.Code, w.Body.String())
+			if tt.wantErrSubstr != "" {
+				res := decodeAPIV1(t, w)
+				require.NotNil(t, res.Err, w.Body.String())
+				assert.Contains(t, *res.Err, tt.wantErrSubstr)
+			}
+		})
+	}
+}
+
+// TestBearerActorRevalidationSessionUnaffected ensures cookie dual-accept still works
+// when revalidateBearerActor is on the chain (session path already revalidated; middleware skips).
+func TestBearerActorRevalidationSessionUnaffected(t *testing.T) {
+	ts := newTestServer(t)
+	user := createTestUser(t, ts, "sess-ok1", int(protocol.NetworkRatingSupervisor))
+	cookies := formLogin(t, ts, user.CID, "sess-ok1")
+
+	// Refresh CSRF cookie from an authed HTML page (same pattern as TestAPICookieAuthRequiresCSRF).
+	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	req.Header.Set("Cookie", cookieHeader(cookies))
+	w := httptest.NewRecorder()
+	ts.engine.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	cookies = mergeCookies(cookies, w.Result())
+	csrf := csrfFromCookies(cookies)
+	require.NotEmpty(t, csrf, "csrf cookie after dashboard")
+
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/user/load",
+		strings.NewReader(fmt.Sprintf(`{"cid":%d}`, user.CID)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Cookie", cookieHeader(cookies))
+	req.Header.Set(csrfHeaderName, csrf)
+	w = httptest.NewRecorder()
+	ts.engine.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	res := decodeAPIV1(t, w)
+	require.Nil(t, res.Err)
+}

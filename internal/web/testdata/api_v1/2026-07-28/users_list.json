@@ -1,0 +1,19 @@
+{
+  "version": "v1",
+  "err": null,
+  "data": {
+    "items": [
+      {
+        "cid": 0,
+        "first_name": "Obs",
+        "last_name": "Server",
+        "network_rating": 1,
+        "pilot_rating": 0
+      }
+    ],
+    "total": 1,
+    "page": 1,
+    "page_size": 10,
+    "pages": 1
+  }
+}

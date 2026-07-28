@@ -270,14 +270,22 @@ func TestSweatboxCommandEmptyRedirectsErrorFlash(t *testing.T) {
 
 // sweatboxMock tracks FSD service HTTP interactions for instructor UI tests.
 type sweatboxMock struct {
-	paused          bool
-	lastCommand     serviceapi.SweatboxCommandRequest
-	airportBody     string
-	airportPath     string
-	scenarioBody    string
-	commandSoftFail bool
-	airportConflict bool
-	scenarioBadJSON bool
+	paused              bool
+	lastCommand         serviceapi.SweatboxCommandRequest
+	airportBody         string
+	airportPath         string
+	airportContentType  string
+	scenarioBody        string
+	scenarioContentType string
+	commandSoftFail     bool
+	airportConflict     bool
+	airportTooLarge     bool // FSD 413
+	airportBadJSON      bool // FSD 200 with non-JSON body
+	scenarioConflict    bool
+	scenarioBadJSON     bool
+	commandConflict     bool
+	deleteNotFound      bool
+	deleteAllNotFound   bool
 }
 
 func (m *sweatboxMock) handler() http.Handler {
@@ -311,8 +319,13 @@ func (m *sweatboxMock) handler() http.Handler {
 	})
 	mux.HandleFunc("/sweatbox/airport", func(w http.ResponseWriter, r *http.Request) {
 		m.airportPath = r.URL.RequestURI()
+		m.airportContentType = r.Header.Get("Content-Type")
 		b, _ := io.ReadAll(r.Body)
 		m.airportBody = string(b)
+		if m.airportTooLarge {
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return
+		}
 		if m.airportConflict {
 			w.WriteHeader(http.StatusConflict)
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -320,11 +333,25 @@ func (m *sweatboxMock) handler() http.Handler {
 			})
 			return
 		}
+		if m.airportBadJSON {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("not-json"))
+			return
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"icao": "KBTV", "surfaces": 3, "errors": []string{}})
 	})
 	mux.HandleFunc("/sweatbox/scenario", func(w http.ResponseWriter, r *http.Request) {
+		m.scenarioContentType = r.Header.Get("Content-Type")
 		b, _ := io.ReadAll(r.Body)
 		m.scenarioBody = string(b)
+		if m.scenarioConflict {
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(serviceapi.SweatboxScenarioResponse{
+				Loaded: 0,
+				Errors: []string{"No airport loaded."},
+			})
+			return
+		}
 		if m.scenarioBadJSON {
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("not-json"))
@@ -337,6 +364,14 @@ func (m *sweatboxMock) handler() http.Handler {
 	})
 	mux.HandleFunc("/sweatbox/command", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&m.lastCommand)
+		if m.commandConflict {
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(serviceapi.SweatboxCommandResponse{
+				OK:      false,
+				Message: "No airport loaded",
+			})
+			return
+		}
 		if m.commandSoftFail {
 			_ = json.NewEncoder(w).Encode(serviceapi.SweatboxCommandResponse{
 				OK:      false,
@@ -359,6 +394,10 @@ func (m *sweatboxMock) handler() http.Handler {
 	})
 	mux.HandleFunc("/sweatbox/aircraft/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodDelete {
+			if m.deleteNotFound {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
@@ -366,6 +405,10 @@ func (m *sweatboxMock) handler() http.Handler {
 	})
 	mux.HandleFunc("/sweatbox/aircraft", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodDelete {
+			if m.deleteAllNotFound {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}

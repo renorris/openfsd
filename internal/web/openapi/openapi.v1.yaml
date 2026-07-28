@@ -1,0 +1,1286 @@
+openapi: 3.0.3
+info:
+  title: openfsd Operator REST API
+  description: |
+    JSON control surface for **operator automation** against an openfsd deployment.
+
+    **Blast radius:** Admin-minted API tokens currently carry Administrator-equivalent
+    network rating claims. Treat tokens as full operator credentials until fine-grained
+    scopes exist. Prefer short TTLs (max 90 days) and rotate via secret reset when needed.
+
+    **Versioning:** URL major is `/api/v1`. Rare breaking changes use the
+    `OpenFSD-API-Version` date microversion header (`YYYY-MM-DD`). Production clients
+    MUST send a supported pin. When omitted, the server defaults to `max_version` and
+    sets `OpenFSD-API-Version-Defaulted: true`. Discovery (`GET /api/v1` and
+    `GET /api/v1/versions`) and OpenAPI are version-agnostic (never reject on pin).
+
+    Envelope for JSON resources: `{ "version": "v1", "err": string|null, "data": … }`.
+    Body `version` is the major only; microversion appears only in response headers.
+  version: "1.0.0"
+  x-openfsd-api-micro-min: "2026-07-28"
+  x-openfsd-api-micro-max: "2026-07-28"
+
+servers:
+  - url: /api/v1
+    description: Relative to the openfsd web listener
+
+tags:
+  - name: Account
+    description: |
+      Self-service password change and account delete (Provisional).
+      Any OBS+ dual-accept actor; self only. Shape may change without a
+      microversion bump until promoted to Stable (post-release sign-off).
+  - name: Discovery
+    description: Version-agnostic discovery and machine-readable schema
+  - name: Auth
+    description: Password login / refresh (discouraged for automation; mint API tokens instead)
+  - name: User
+    description: User load/create/update and directory list (Stable)
+  - name: Config
+    description: Server configuration and API tokens (Stable; admin)
+  - name: FSDConn
+    description: Active FSD connection control (Stable)
+  - name: Editor
+    description: APT/AIR validate (Stable; Instructor1+)
+  - name: Sweatbox
+    description: |
+      Instructor1+ sweatbox control plane proxies.
+      GET /state and /ops are raw FSD bodies for PE polls (outside envelope goldens).
+      Mutations and GET /session use the APIV1 envelope (Stable; design §D status mapping).
+  # Data feeds (/data/*) are public and outside microversion reject; documented in
+  # internal/web/README.md. Not listed here until a full inventory is needed.
+
+paths:
+  /:
+    get:
+      tags: [Discovery]
+      summary: API discovery
+      operationId: getDiscovery
+      x-openfsd-stability: stable
+      security: []
+      responses:
+        "200":
+          description: Discovery payload (same as /versions)
+          headers:
+            OpenFSD-API-Version:
+              schema: { type: string }
+            OpenFSD-API-Min-Version:
+              schema: { type: string }
+            OpenFSD-API-Max-Version:
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1EnvelopeDiscovery"
+
+  /versions:
+    get:
+      tags: [Discovery]
+      summary: Supported microversions (same payload as GET /)
+      operationId: getVersions
+      x-openfsd-stability: stable
+      security: []
+      responses:
+        "200":
+          description: Discovery payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1EnvelopeDiscovery"
+
+  /openapi.json:
+    get:
+      tags: [Discovery]
+      summary: OpenAPI 3 document (JSON)
+      operationId: getOpenAPIJSON
+      x-openfsd-stability: stable
+      security: []
+      responses:
+        "200":
+          description: OpenAPI document
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /openapi.yaml:
+    get:
+      tags: [Discovery]
+      summary: OpenAPI 3 document (YAML source)
+      operationId: getOpenAPIYAML
+      x-openfsd-stability: stable
+      security: []
+      responses:
+        "200":
+          description: OpenAPI YAML
+          content:
+            application/yaml:
+              schema:
+                type: string
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Password login (not for production automation)
+      operationId: postAuthLogin
+      x-openfsd-stability: stable
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [cid, password]
+              properties:
+                cid: { type: integer, minimum: 1 }
+                password: { type: string }
+                remember_me: { type: boolean }
+      responses:
+        "200":
+          description: Access + refresh tokens
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Refresh access token (not for production automation)
+      operationId: postAuthRefresh
+      x-openfsd-stability: stable
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token: { type: string }
+      responses:
+        "200":
+          description: New access token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+
+  /fsd-jwt:
+    post:
+      tags: [Auth]
+      summary: FSD JWT (VATSIM-shaped; outside envelope / microversion reject)
+      operationId: postFsdJwt
+      x-openfsd-stability: stable
+      security: []
+      responses:
+        "200":
+          description: VATSIM-shaped success body
+
+  /user/load:
+    post:
+      tags: [User]
+      summary: Load user by CID
+      operationId: postUserLoad
+      x-openfsd-stability: stable
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OpenFSDAPIVersion"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [cid]
+              properties:
+                cid: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: User record
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+        "400":
+          $ref: "#/components/responses/BadAPIVersion"
+
+  /user/update:
+    patch:
+      tags: [User]
+      summary: Update user (Supervisor+)
+      operationId: patchUserUpdate
+      x-openfsd-stability: stable
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OpenFSDAPIVersion"
+      responses:
+        "200":
+          description: Updated user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+        "400":
+          $ref: "#/components/responses/BadAPIVersion"
+
+  /user/create:
+    post:
+      tags: [User]
+      summary: Create user (Supervisor+)
+      operationId: postUserCreate
+      x-openfsd-stability: stable
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OpenFSDAPIVersion"
+      responses:
+        "201":
+          description: Created user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+        "400":
+          $ref: "#/components/responses/BadAPIVersion"
+
+  /users:
+    get:
+      tags: [User]
+      summary: List users (directory; Supervisor+)
+      description: |
+        Operator automation for the HTML user directory. Query/pagination semantics
+        match `parseUserDirectoryQuery` / `clampDirectoryPage` (1-based page, default
+        page_size 50, clamp [1,200], invalid sort/rating never 500, page past end
+        clamps to last page). No password hashes in items.
+      operationId: getUsers
+      x-openfsd-stability: stable
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OpenFSDAPIVersion"
+        - name: q
+          in: query
+          required: false
+          description: Free-text filter (CID substring or name); empty = all
+          schema: { type: string }
+        - name: rating
+          in: query
+          required: false
+          description: |
+            Exact network rating filter (−1…12). Server coerces invalid/out-of-range
+            values to "all ratings" (does not 400; never 500).
+          schema: { type: integer }
+        - name: sort
+          in: query
+          required: false
+          description: |
+            cid | name | rating (default cid). Server coerces unknown values to cid
+            (does not 400).
+          schema: { type: string, default: cid }
+        - name: dir
+          in: query
+          required: false
+          description: |
+            asc | desc (default asc). Server coerces unknown values to asc (does not 400).
+          schema: { type: string, default: asc }
+        - name: page
+          in: query
+          required: false
+          description: |
+            1-based page (default 1). Server coerces non-int or &lt;1 → 1; clamps past last
+            page after count (does not 400).
+          schema: { type: integer, default: 1 }
+        - name: page_size
+          in: query
+          required: false
+          description: |
+            Page size (default 50). Server coerces ≤0/non-int → 50 and clamps to [1, 200]
+            (does not 400). JSON API only; HTML directory is fixed at 50.
+          schema: { type: integer, default: 50 }
+      responses:
+        "200":
+          description: Directory page (effective page / page_size / pages / total after clamp)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1EnvelopeUserList"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+        "403":
+          description: Forbidden (Supervisor+ required)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+        "400":
+          $ref: "#/components/responses/BadAPIVersion"
+
+  /users/{cid}:
+    get:
+      tags: [User]
+      summary: Get user by CID (self or Supervisor+)
+      description: |
+        Same public fields as POST /user/load. Self always allowed; other CIDs require Supervisor+.
+      operationId: getUserByCID
+      x-openfsd-stability: stable
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OpenFSDAPIVersion"
+        - name: cid
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: User record
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1EnvelopeUser"
+        "400":
+          $ref: "#/components/responses/BadAPIVersion"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+        "403":
+          description: Forbidden (non-self without Supervisor+)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+        "404":
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+
+  /config/load:
+    get:
+      tags: [Config]
+      summary: Load editable config keys (Administrator)
+      operationId: getConfigLoad
+      x-openfsd-stability: stable
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OpenFSDAPIVersion"
+      responses:
+        "200":
+          description: Key/value pairs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+        "400":
+          $ref: "#/components/responses/BadAPIVersion"
+
+  /config/update:
+    post:
+      tags: [Config]
+      summary: Update config keys (Administrator)
+      operationId: postConfigUpdate
+      x-openfsd-stability: stable
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OpenFSDAPIVersion"
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+        "400":
+          $ref: "#/components/responses/BadAPIVersion"
+
+  /config/resetsecretkey:
+    post:
+      tags: [Config]
+      summary: Rotate JWT secret (invalidates all tokens)
+      operationId: postConfigResetSecretKey
+      x-openfsd-stability: stable
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OpenFSDAPIVersion"
+      responses:
+        "200":
+          description: Secret rotated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+        "400":
+          $ref: "#/components/responses/BadAPIVersion"
+
+  /config/createtoken:
+    post:
+      tags: [Config]
+      summary: Mint long-lived admin API access token (max 90 days)
+      description: |
+        Returns a Bearer access JWT with Administrator rating claim plus recommended
+        microversion fields. **Operator-automation blast radius:** treat as full admin
+        credential. Production clients should send `OpenFSD-API-Version` equal to
+        `recommended_api_version`.
+      operationId: postConfigCreateToken
+      x-openfsd-stability: stable
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OpenFSDAPIVersion"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expiry_date_time]
+              properties:
+                expiry_date_time:
+                  type: string
+                  format: date-time
+      responses:
+        "201":
+          description: Token minted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1EnvelopeCreateToken"
+        "400":
+          $ref: "#/components/responses/BadAPIVersion"
+
+  /fsdconn/kickuser:
+    post:
+      tags: [FSDConn]
+      summary: Kick active connection by callsign (Supervisor+)
+      operationId: postFsdconnKickuser
+      x-openfsd-stability: stable
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OpenFSDAPIVersion"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [callsign]
+              properties:
+                callsign: { type: string }
+      responses:
+        "200":
+          description: Kicked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+        "400":
+          $ref: "#/components/responses/BadAPIVersion"
+
+  /editor/validate-apt:
+    post:
+      tags: [Editor]
+      summary: Validate APT text (Instructor1+)
+      operationId: postEditorValidateApt
+      x-openfsd-stability: stable
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OpenFSDAPIVersion"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text: { type: string }
+      responses:
+        "200":
+          description: Soft validation result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+        "400":
+          $ref: "#/components/responses/BadAPIVersion"
+
+  /editor/validate-air:
+    post:
+      tags: [Editor]
+      summary: Validate AIR text (Instructor1+)
+      operationId: postEditorValidateAir
+      x-openfsd-stability: stable
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OpenFSDAPIVersion"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text: { type: string }
+      responses:
+        "200":
+          description: Soft validation result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+        "400":
+          $ref: "#/components/responses/BadAPIVersion"
+
+  /sweatbox/state:
+    get:
+      tags: [Sweatbox]
+      summary: Raw FSD sweatbox state (PE poll; non-envelope)
+      operationId: getSweatboxState
+      x-openfsd-stability: stable
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OpenFSDAPIVersion"
+      responses:
+        "200":
+          description: Raw FSD JSON body
+        "400":
+          $ref: "#/components/responses/BadAPIVersion"
+
+  /sweatbox/ops:
+    get:
+      tags: [Sweatbox]
+      summary: Raw FSD sweatbox ops (PE poll; non-envelope)
+      operationId: getSweatboxOps
+      x-openfsd-stability: stable
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OpenFSDAPIVersion"
+      responses:
+        "200":
+          description: Raw FSD JSON body
+        "400":
+          $ref: "#/components/responses/BadAPIVersion"
+
+  /sweatbox/session:
+    get:
+      tags: [Sweatbox]
+      summary: Enveloped sweatbox state (operator / third-party)
+      description: |
+        Parallel of GET /sweatbox/state with APIV1 envelope.
+        `data` is serviceapi.SweatboxStateJSON. Instructor1+.
+      operationId: getSweatboxSession
+      x-openfsd-stability: stable
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OpenFSDAPIVersion"
+      responses:
+        "200":
+          description: Envelope with session state (serviceapi.SweatboxStateJSON)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1EnvelopeSweatboxSession"
+        "403":
+          description: Below Instructor1
+        "404":
+          description: Sweatbox disabled on FSD
+        "400":
+          $ref: "#/components/responses/BadAPIVersion"
+        "502":
+          description: FSD service unreachable or unexpected
+
+  /sweatbox/airport:
+    post:
+      tags: [Sweatbox]
+      summary: Load airport (.apt) into sweatbox
+      description: |
+        Public JSON `{"text","replace"}`. Proxied to FSD as text/plain of `text`
+        with optional `?replace=1`. Max body 2 MiB. Instructor1+.
+      operationId: postSweatboxAirport
+      x-openfsd-stability: stable
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OpenFSDAPIVersion"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text: { type: string, description: Full .apt file text }
+                replace: { type: boolean, default: false }
+      responses:
+        "200":
+          description: Airport loaded (serviceapi.SweatboxAirportLoadResponse)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1EnvelopeSweatboxAirport"
+        "400":
+          $ref: "#/components/responses/BadAPIVersion"
+        "403":
+          description: Below Instructor1
+        "404":
+          description: Sweatbox disabled
+        "409":
+          description: Aircraft present without replace
+        "413":
+          description: Payload too large
+        "502":
+          description: FSD unreachable / unexpected
+
+  /sweatbox/scenario:
+    post:
+      tags: [Sweatbox]
+      summary: Load scenario (.air) into sweatbox
+      description: |
+        Public JSON `{"text"}`. Proxied to FSD as text/plain. Max 2 MiB. Instructor1+.
+      operationId: postSweatboxScenario
+      x-openfsd-stability: stable
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OpenFSDAPIVersion"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text: { type: string, description: Full .air file text }
+      responses:
+        "200":
+          description: Scenario load result (serviceapi.SweatboxScenarioResponse)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1EnvelopeSweatboxScenario"
+        "400":
+          $ref: "#/components/responses/BadAPIVersion"
+        "403":
+          description: Below Instructor1
+        "404":
+          description: Sweatbox disabled
+        "409":
+          description: No airport loaded
+        "413":
+          description: Payload too large
+        "502":
+          description: FSD unreachable / unexpected
+
+  /sweatbox/command:
+    post:
+      tags: [Sweatbox]
+      summary: Run instructor command
+      description: |
+        Soft validation failures return HTTP 200 with `data.ok=false` (TWRTrainer-style).
+        Do not treat ok:false as a 4xx. Instructor1+.
+      operationId: postSweatboxCommand
+      x-openfsd-stability: stable
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OpenFSDAPIVersion"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [command]
+              properties:
+                callsign: { type: string }
+                command: { type: string }
+      responses:
+        "200":
+          description: |
+            Command processed (serviceapi.SweatboxCommandResponse).
+            Soft-fail: data.ok=false still HTTP 200, envelope err null.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1EnvelopeSweatboxCommand"
+        "400":
+          $ref: "#/components/responses/BadAPIVersion"
+        "403":
+          description: Below Instructor1
+        "404":
+          description: Sweatbox disabled
+        "409":
+          description: No airport / conflict
+        "502":
+          description: FSD unreachable / unexpected
+
+  /sweatbox/pause:
+    post:
+      tags: [Sweatbox]
+      summary: Pause simulation
+      description: FSD 204 is mapped to public 200 envelope with data null. Instructor1+.
+      operationId: postSweatboxPause
+      x-openfsd-stability: stable
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OpenFSDAPIVersion"
+      responses:
+        "200":
+          description: Paused (data null)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+        "400":
+          $ref: "#/components/responses/BadAPIVersion"
+        "403":
+          description: Below Instructor1
+        "404":
+          description: Sweatbox disabled
+        "502":
+          description: FSD unreachable / unexpected
+
+  /sweatbox/unpause:
+    post:
+      tags: [Sweatbox]
+      summary: Unpause simulation
+      description: FSD 204 is mapped to public 200 envelope with data null. Instructor1+.
+      operationId: postSweatboxUnpause
+      x-openfsd-stability: stable
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OpenFSDAPIVersion"
+      responses:
+        "200":
+          description: Unpaused (data null)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+        "400":
+          $ref: "#/components/responses/BadAPIVersion"
+        "403":
+          description: Below Instructor1
+        "404":
+          description: Sweatbox disabled
+        "502":
+          description: FSD unreachable / unexpected
+
+  /sweatbox/aircraft/{callsign}:
+    delete:
+      tags: [Sweatbox]
+      summary: Delete one sweatbox aircraft
+      description: FSD 204 → public 200 envelope. Instructor1+.
+      operationId: deleteSweatboxAircraft
+      x-openfsd-stability: stable
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OpenFSDAPIVersion"
+        - name: callsign
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Deleted (data null)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+        "400":
+          $ref: "#/components/responses/BadAPIVersion"
+        "403":
+          description: Below Instructor1
+        "404":
+          description: Aircraft not found or sweatbox disabled
+        "502":
+          description: FSD unreachable / unexpected
+
+  /sweatbox/aircraft:
+    delete:
+      tags: [Sweatbox]
+      summary: Delete all sweatbox aircraft
+      description: |
+        Requires confirmation via JSON `{"confirm":true}` or query `confirm=1`.
+        FSD 204 → public 200 envelope. Instructor1+.
+      operationId: deleteSweatboxAllAircraft
+      x-openfsd-stability: stable
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OpenFSDAPIVersion"
+        - name: confirm
+          in: query
+          required: false
+          schema: { type: string, enum: ["1", "true", "yes", "on"] }
+          description: Alternative to JSON body confirm
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                confirm: { type: boolean }
+      responses:
+        "200":
+          description: All deleted (data null)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+        "400":
+          $ref: "#/components/responses/BadAPIVersion"
+        "403":
+          description: Below Instructor1
+        "404":
+          description: Sweatbox disabled
+        "502":
+          description: FSD unreachable / unexpected
+
+  /account/password:
+    post:
+      tags: [Account]
+      summary: Change own password (self-service)
+      description: |
+        Change the authenticated actor's password. Validation parity with the
+        HTML `/account/password` form (`validateNewPassword`, confirm match,
+        new ≠ current).
+
+        **Stability: Provisional** — request/response shape may change without a
+        microversion bump until maintainer sign-off promotes this route to Stable.
+
+        **Auth side effects:** Bearer success does **not** set or clear session
+        cookies. Cookie dual-accept may re-issue a 24h session cookie and clear
+        CSRF (parity with HTML).
+      operationId: postAccountPassword
+      x-openfsd-stability: provisional
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OpenFSDAPIVersion"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AccountPasswordRequest"
+      responses:
+        "200":
+          description: Password updated (`data` is null)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+        "400":
+          $ref: "#/components/responses/BadAPIVersion"
+        "401":
+          description: Missing/invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+
+  /account/delete:
+    post:
+      tags: [Account]
+      summary: Soft- or hard-delete own account
+      description: |
+        Delete the authenticated actor's account after password step-up and
+        `confirm_cid` match.
+
+        - Default / `permanent: false`: soft-delete (`network_rating = Inactive`).
+        - `permanent: true` and `ALLOW_PERMANENT_ACCOUNT_DELETE=true`: hard-delete row.
+        - **`permanent: true` when hard-delete is disabled → 400**
+          `"permanent delete is disabled"` and **no mutation**.
+
+        **Intentional JSON divergence from HTML:** the HTML form falls back to
+        soft-delete and redirects with `permanent=disabled` when permanent was
+        requested but disabled. Automation must not silently receive a different
+        delete mode than requested — retry with `permanent: false` for soft-delete,
+        or enable hard-delete server-side.
+
+        **Stability: Provisional.** Bearer success does not clear cookies (client
+        drops the token). Cookie dual-accept clears session + CSRF like HTML.
+        After success, clients must drop credentials.
+      operationId: postAccountDelete
+      x-openfsd-stability: provisional
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OpenFSDAPIVersion"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AccountDeleteRequest"
+      responses:
+        "200":
+          description: Account deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1EnvelopeAccountDelete"
+        "400":
+          $ref: "#/components/responses/BadAPIVersion"
+        "401":
+          description: Missing/invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+
+components:
+  responses:
+    BadAPIVersion:
+      description: |
+        HTTP 400 envelope on a dual-accept resource group. Common causes:
+        invalid or unsupported `OpenFSD-API-Version`; invalid JSON / request body;
+        route-specific validation failures (check `err` text).
+
+        Recovery for version pins: call version-agnostic `GET /api/v1/versions`
+        (never rejects on pin) and upgrade the client pin.
+      headers:
+        OpenFSD-API-Version:
+          schema: { type: string }
+          description: Echo of current max (or registry effective)
+        OpenFSD-API-Min-Version:
+          schema: { type: string }
+        OpenFSD-API-Max-Version:
+          schema: { type: string }
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/APIV1Envelope"
+          examples:
+            invalid:
+              summary: Malformed pin
+              value:
+                version: v1
+                err: invalid OpenFSD-API-Version
+                data: null
+            unsupported:
+              summary: Unknown or sunset pin
+              value:
+                version: v1
+                err: 'unsupported OpenFSD-API-Version "2020-01-01"; min=2026-07-28 max=2026-07-28'
+                data: null
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Access JWT (admin-minted API token or short-lived access). No CSRF required.
+        Admin-minted tokens are Administrator-equivalent until scopes exist (operator
+        automation blast radius).
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: openfsd_session
+      description: First-party session cookie; mutations require CSRF synchronizer.
+
+  parameters:
+    OpenFSDAPIVersion:
+      name: OpenFSD-API-Version
+      in: header
+      required: false
+      description: |
+        Date microversion pin (`YYYY-MM-DD` or `1.YYYYMMDD` or `latest`).
+        Production clients MUST send a supported pin. Omitted → max + Defaulted header.
+      schema:
+        type: string
+        example: "2026-07-28"
+
+  schemas:
+    APIV1Envelope:
+      type: object
+      required: [version, err, data]
+      properties:
+        version:
+          type: string
+          enum: [v1]
+          description: URL major only; microversion is header-only
+        err:
+          type: string
+          nullable: true
+        data:
+          nullable: true
+
+    DiscoveryData:
+      type: object
+      required: [major, min_version, max_version, versions, header, default, openapi]
+      properties:
+        major: { type: string, example: v1 }
+        min_version: { type: string, example: "2026-07-28" }
+        max_version: { type: string, example: "2026-07-28" }
+        versions:
+          type: array
+          items: { type: string }
+        header: { type: string, example: OpenFSD-API-Version }
+        default: { type: string, example: max }
+        openapi: { type: string, example: /api/v1/openapi.json }
+
+    APIV1EnvelopeDiscovery:
+      allOf:
+        - $ref: "#/components/schemas/APIV1Envelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/DiscoveryData"
+
+    CreateTokenData:
+      type: object
+      required: [token, recommended_api_version, api_version_min, api_version_max]
+      properties:
+        token: { type: string }
+        recommended_api_version: { type: string, example: "2026-07-28" }
+        api_version_min: { type: string, example: "2026-07-28" }
+        api_version_max: { type: string, example: "2026-07-28" }
+
+    APIV1EnvelopeCreateToken:
+      allOf:
+        - $ref: "#/components/schemas/APIV1Envelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/CreateTokenData"
+
+    UserRecord:
+      type: object
+      required: [cid, first_name, last_name, network_rating, pilot_rating]
+      properties:
+        cid: { type: integer, minimum: 1 }
+        first_name: { type: string }
+        last_name: { type: string }
+        network_rating: { type: integer, minimum: -1, maximum: 12 }
+        pilot_rating: { type: integer, minimum: 0, maximum: 63 }
+
+    UserListData:
+      type: object
+      required: [items, total, page, page_size, pages]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/UserRecord"
+        total: { type: integer, minimum: 0 }
+        page: { type: integer, minimum: 1 }
+        page_size: { type: integer, minimum: 1, maximum: 200 }
+        pages: { type: integer, minimum: 1 }
+
+    APIV1EnvelopeUser:
+      allOf:
+        - $ref: "#/components/schemas/APIV1Envelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/UserRecord"
+
+    APIV1EnvelopeUserList:
+      allOf:
+        - $ref: "#/components/schemas/APIV1Envelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/UserListData"
+
+    AccountPasswordRequest:
+      type: object
+      required: [current_password, new_password, confirm_password]
+      properties:
+        current_password:
+          type: string
+          description: Existing password (required; incorrect → 400 "incorrect password")
+        new_password:
+          type: string
+          description: Min 8 characters; must not contain ":"; must differ from current
+        confirm_password:
+          type: string
+          description: Must equal new_password (required for JSON parity with HTML)
+
+    AccountDeleteRequest:
+      type: object
+      required: [current_password, confirm_cid]
+      properties:
+        current_password:
+          type: string
+        confirm_cid:
+          type: integer
+          description: Must equal the actor CID
+          minimum: 1
+        permanent:
+          type: boolean
+          default: false
+          description: |
+            When true and ALLOW_PERMANENT_ACCOUNT_DELETE is enabled, hard-delete.
+            When true and hard-delete is disabled, 400 fail-closed (no mutation).
+
+    AccountDeleteData:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [soft_deleted, hard_deleted]
+
+    APIV1EnvelopeAccountDelete:
+      allOf:
+        - $ref: "#/components/schemas/APIV1Envelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/AccountDeleteData"
+
+    SweatboxAirportLoadData:
+      type: object
+      required: [icao, surfaces, errors]
+      description: serviceapi.SweatboxAirportLoadResponse
+      properties:
+        icao: { type: string }
+        surfaces: { type: integer }
+        errors:
+          type: array
+          items: { type: string }
+
+    APIV1EnvelopeSweatboxAirport:
+      allOf:
+        - $ref: "#/components/schemas/APIV1Envelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/SweatboxAirportLoadData"
+
+    SweatboxScenarioData:
+      type: object
+      required: [loaded, errors]
+      description: serviceapi.SweatboxScenarioResponse
+      properties:
+        loaded: { type: integer }
+        errors:
+          type: array
+          items: { type: string }
+
+    APIV1EnvelopeSweatboxScenario:
+      allOf:
+        - $ref: "#/components/schemas/APIV1Envelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/SweatboxScenarioData"
+
+    SweatboxCommandData:
+      type: object
+      required: [ok, message]
+      description: serviceapi.SweatboxCommandResponse (soft-fail keeps HTTP 200)
+      properties:
+        ok: { type: boolean }
+        message: { type: string }
+
+    APIV1EnvelopeSweatboxCommand:
+      allOf:
+        - $ref: "#/components/schemas/APIV1Envelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/SweatboxCommandData"
+
+    SweatboxAircraft:
+      type: object
+      description: serviceapi.SweatboxAircraftJSON
+      properties:
+        callsign: { type: string }
+        type: { type: string }
+        rules: { type: string }
+        squawk: { type: string }
+        xpdr_mode: { type: string }
+        lat: { type: number }
+        lon: { type: number }
+        alt: { type: number }
+        speed: { type: number }
+        heading: { type: number }
+        status: { type: string }
+        instruction: { type: string }
+        flight_plan: { type: string }
+        dep: { type: string }
+        arr: { type: string }
+        cruise_alt: { type: integer }
+        route: { type: string }
+        remarks: { type: string }
+
+    SweatboxSessionData:
+      type: object
+      description: serviceapi.SweatboxStateJSON (enveloped GET /sweatbox/session)
+      required: [icao, paused, elapsed_sec, arr_count, dep_count, aircraft]
+      properties:
+        icao: { type: string }
+        paused: { type: boolean }
+        elapsed_sec: { type: number }
+        arr_count: { type: integer }
+        dep_count: { type: integer }
+        aircraft:
+          type: array
+          items:
+            $ref: "#/components/schemas/SweatboxAircraft"
+
+    APIV1EnvelopeSweatboxSession:
+      allOf:
+        - $ref: "#/components/schemas/APIV1Envelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/SweatboxSessionData"
