@@ -20,9 +20,10 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          # Node 20 is EOL on GHA runners; pin current Actions default (24).
+          node-version: "24"
       - name: gofmt
         run: test -z "$(gofmt -l .)"
       - name: Hygiene (no panic/reflect/fmt.Print in library code)

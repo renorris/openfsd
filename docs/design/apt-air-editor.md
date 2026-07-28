@@ -997,7 +997,7 @@ cd "$(dirname "$0")/../webjs"
 node --test airport-editor/**/*.test.js
 ```
 
-- Pin **Node 20 LTS** in CI (`actions/setup-node@v4` with `node-version: "20"`).
+- Pin **Node 24** in CI (`actions/setup-node@v7` with `node-version: "24"`; local floor ≥20).
 - Prefer **zero npm deps** for unit tests (`node:test` only). If `package.json` scripts only, `npm test` can invoke node without `node_modules`.
 - Add `node_modules/` to `.gitignore` if any package is ever added.
 - Update `Agents.md` §9 and CI workflow in **PR 4**.

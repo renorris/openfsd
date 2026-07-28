@@ -6,7 +6,7 @@ import via relative paths into the go:embed tree.
 
 ## Requirements
 
-- Node.js **≥ 20** (CI pins Node 20 LTS)
+- Node.js **≥ 20** (CI pins Node 24; floor remains ≥20)
 - Zero production npm dependencies for unit tests (`node:test` / `node:assert/strict`)
 
 ## Run
