@@ -44,7 +44,8 @@ The **airport editor** (`/airport-editor`) is a second complexity-gate exception
 - `POST /logout` clears the session cookie
 - Cookie-authenticated API mutations require a CSRF synchronizer token (`csrf_token` form field or `X-CSRF-Token` header matching the `openfsd_csrf` cookie)
 - Suspended/inactive ratings cannot open a web session (same as FSD policy)
-- **Session cookies are revalidated against the DB on every use** (HTML + dual-accept API): missing or inactive/suspended certificates clear cookies and are rejected; claims (network rating + names) are overlaid from the DB so demotions take effect immediately. Residual window after soft-delete is **Bearer access tokens only** (15m TTL).
+- **Session cookies are revalidated against the DB on every use** (HTML + dual-accept API): missing or inactive/suspended certificates clear cookies and are rejected; claims (network rating + names) are overlaid from the DB so demotions take effect immediately.
+- **Bearer access tokens on dual-accept resource groups** (`/api/v1/user|config|fsdconn|sweatbox|editor/*`) are revalidated the same way (KD-18): demotion, suspension, and soft-delete take effect on the next request. Login/refresh/fsd-jwt remain credential-based and are outside this middleware.
 
 ### Cookie `Secure` flag (`COOKIE_SECURE`)
 | Condition | Secure |
@@ -66,6 +67,7 @@ Authorization: Bearer <access_token>
 - `createtoken` responses include additive `recommended_api_version`, `api_version_min`, and `api_version_max` so clients can pin the microversion header.
 - Bearer-authenticated clients do **not** need CSRF (CSRF applies only when the request is authenticated via the session cookie).
 - Dual-accept: a **valid** Bearer token wins over a session cookie; a garbage Bearer header does **not** disable CSRF if the session cookie is what authenticates the request.
+- Bearer actors are **revalidated against the DB** on every protected resource request (rating/names overlay; inactive/deleted → 401).
 - **Operator automation:** prefer minted API tokens over `/auth/login` or `/auth/refresh`. Tokens are admin-equivalent until scopes exist—store as secrets; rotate on compromise via secret reset.
 
 ---

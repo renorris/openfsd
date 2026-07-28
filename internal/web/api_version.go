@@ -117,13 +117,14 @@ func shapeFor[T any, D any](effective string, adapters []shapeAdapter[T, D], dom
 	return adapters[0].shape(domain)
 }
 
-// useAPIV1Protected attaches dual-accept auth + CSRF + API microversion middleware.
-// PR-2 will add Bearer actor revalidation here.
+// useAPIV1Protected attaches dual-accept auth + CSRF + API microversion +
+// Bearer actor revalidation middleware (KD-18).
 func (s *Server) useAPIV1Protected(g *gin.RouterGroup) {
 	g.Use(
 		s.jwtBearerMiddleware,
 		s.csrfIfCookieSession,
 		s.apiVersionMiddleware,
+		s.revalidateBearerActor, // DB overlay / reject inactive for Bearer (KD-18)
 	)
 }
 

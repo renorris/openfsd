@@ -299,6 +299,7 @@ const dbUserContextKey = "db_user"
 // inactive/suspended certificates, and overlays NetworkRating + names from the DB.
 // Handlers and requireMinRatingHTML keep reading claims.NetworkRating safely only
 // because this overlay is mandatory after session cookie parse.
+// Also used by revalidateBearerActor for dual-accept Bearer resource requests (KD-18).
 func (s *Server) revalidateSessionFromDB(claims *auth.CustomClaims) (*auth.CustomClaims, *db.User, error) {
 	user, err := s.dbRepo.UserRepo.GetUserByCID(claims.CID)
 	if err != nil {
@@ -321,6 +322,44 @@ func (s *Server) revalidateSessionFromDB(claims *auth.CustomClaims) (*auth.Custo
 	claims.FirstName = safeStr(user.FirstName)
 	claims.LastName = safeStr(user.LastName)
 	return claims, user, nil
+}
+
+// revalidateBearerActor loads the actor from the DB for Bearer-authenticated
+// dual-accept API requests (KD-18). Missing / inactive / suspended → 401.
+// Overlays NetworkRating + names so demotions take effect immediately.
+// Session cookie path already revalidated in trySessionAuth — skipped here.
+func (s *Server) revalidateBearerActor(c *gin.Context) {
+	method, _ := c.Get(authMethodContextKey)
+	if method != authMethodBearer {
+		c.Next()
+		return
+	}
+
+	claims := getJwtContext(c)
+	if claims == nil {
+		res := newAPIV1Failure("unauthorized")
+		writeAPIV1Response(c, http.StatusUnauthorized, &res)
+		c.Abort()
+		return
+	}
+
+	cid := claims.CID
+	claims, user, err := s.revalidateSessionFromDB(claims)
+	if err != nil {
+		slog.Debug("bearer actor revalidation rejected",
+			"cid", cid,
+			"event", "bearer_rejected_inactive",
+			"err", err.Error(),
+		)
+		res := newAPIV1Failure("unauthorized")
+		writeAPIV1Response(c, http.StatusUnauthorized, &res)
+		c.Abort()
+		return
+	}
+
+	setJwtContext(c, claims)
+	c.Set(dbUserContextKey, user)
+	c.Next()
 }
 
 // trySessionAuth parses the signed session cookie, revalidates against the DB,
