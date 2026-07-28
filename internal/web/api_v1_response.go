@@ -12,11 +12,11 @@ type APIV1Response struct {
 	Data    any     `json:"data"`
 }
 
-const v1Version = "v1"
+// Envelope body major version uses apiMajorVersion (api_version.go) as single source of truth.
 
 func newAPIV1Success(data any) APIV1Response {
 	return APIV1Response{
-		Version: v1Version,
+		Version: apiMajorVersion,
 		Err:     nil,
 		Data:    data,
 	}
@@ -24,7 +24,7 @@ func newAPIV1Success(data any) APIV1Response {
 
 func newAPIV1Failure(err string) APIV1Response {
 	return APIV1Response{
-		Version: v1Version,
+		Version: apiMajorVersion,
 		Err:     &err,
 		Data:    nil,
 	}

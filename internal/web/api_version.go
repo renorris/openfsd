@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"strings"
@@ -37,8 +38,7 @@ var knownMicroversions = []string{
 }
 
 var (
-	errAPIVersionInvalid     = errors.New("invalid OpenFSD-API-Version")
-	errAPIVersionUnsupported = errors.New("unsupported OpenFSD-API-Version")
+	errAPIVersionInvalid = errors.New("invalid OpenFSD-API-Version")
 
 	reAPIVersionDate  = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 	reAPIVersionAlias = regexp.MustCompile(`^1\.(\d{8})$`)
@@ -146,7 +146,12 @@ func (s *Server) apiVersionMiddleware(c *gin.Context) {
 
 	canonical, err := normalizeAPIVersion(trimmed, apiMicroMax)
 	if err != nil {
-		setAPIVersionHeadersExplicit(c, apiMicroMax, true /* still show registry */)
+		setAPIVersionHeadersExplicit(c, apiMicroMax)
+		slog.Warn("invalid OpenFSD-API-Version",
+			"path", c.Request.URL.Path,
+			"raw", trimmed,
+			"cid", apiVersionLogCID(c),
+		)
 		res := newAPIV1Failure("invalid OpenFSD-API-Version")
 		writeAPIV1Response(c, http.StatusBadRequest, &res)
 		c.Abort()
@@ -154,7 +159,13 @@ func (s *Server) apiVersionMiddleware(c *gin.Context) {
 	}
 
 	if !isKnownMicroversion(canonical) {
-		setAPIVersionHeadersExplicit(c, apiMicroMax, true)
+		setAPIVersionHeadersExplicit(c, apiMicroMax)
+		slog.Warn("unsupported OpenFSD-API-Version",
+			"path", c.Request.URL.Path,
+			"raw", trimmed,
+			"canonical", canonical,
+			"cid", apiVersionLogCID(c),
+		)
 		msg := fmt.Sprintf("unsupported OpenFSD-API-Version %q; min=%s max=%s",
 			canonical, apiMicroMin, apiMicroMax)
 		res := newAPIV1Failure(msg)
@@ -201,7 +212,7 @@ func setAPIVersionHeaders(c *gin.Context) {
 
 // setAPIVersionHeadersExplicit sets registry headers with a chosen effective pin
 // (used when rejecting a bad pin before context is stored).
-func setAPIVersionHeadersExplicit(c *gin.Context, effective string, _ bool) {
+func setAPIVersionHeadersExplicit(c *gin.Context, effective string) {
 	setAPIVersionHeadersValues(c, effective, false)
 }
 
@@ -213,11 +224,35 @@ func setAPIVersionHeadersValues(c *gin.Context, effective string, defaulted bool
 	h.Set(headerAPIVersion, effective)
 	h.Set(headerAPIMinVersion, apiMicroMin)
 	h.Set(headerAPIMaxVersion, apiMicroMax)
-	// Caches must vary on the client pin.
-	h.Set("Vary", headerAPIVersion)
+	// Caches must vary on the client pin; merge if other middleware already set Vary.
+	appendVary(h, headerAPIVersion)
 	if defaulted {
 		h.Set(headerAPIVersionDefaulted, "true")
 	}
+}
+
+// appendVary adds value to the Vary header without duplicating an existing token.
+func appendVary(h http.Header, value string) {
+	existing := h.Get("Vary")
+	if existing == "" {
+		h.Set("Vary", value)
+		return
+	}
+	for _, part := range strings.Split(existing, ",") {
+		if strings.EqualFold(strings.TrimSpace(part), value) {
+			return
+		}
+	}
+	h.Set("Vary", existing+", "+value)
+}
+
+// apiVersionLogCID returns the authenticated CID when jwt middleware already ran, else 0.
+// Never logs tokens.
+func apiVersionLogCID(c *gin.Context) int {
+	if claims := getJwtContext(c); claims != nil {
+		return claims.CID
+	}
+	return 0
 }
 
 // discoveryData is the public version-discovery payload (KD-20).

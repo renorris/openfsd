@@ -3,6 +3,7 @@ package web
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +15,30 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestAPIVersionRegistryInvariants(t *testing.T) {
+	require.NotEmpty(t, knownMicroversions, "knownMicroversions must not be empty")
+	assert.Equal(t, knownMicroversions[0], apiMicroMin, "apiMicroMin must equal first known pin")
+	assert.Equal(t, knownMicroversions[len(knownMicroversions)-1], apiMicroMax, "apiMicroMax must equal last known pin")
+
+	for i, pin := range knownMicroversions {
+		// Valid calendar YYYY-MM-DD after normalize (identity).
+		canonical, err := normalizeAPIVersion(pin, apiMicroMax)
+		require.NoError(t, err, "known pin %q must normalize", pin)
+		assert.Equal(t, pin, canonical)
+		assert.True(t, reAPIVersionDate.MatchString(pin), "pin %q must be YYYY-MM-DD", pin)
+
+		if i > 0 {
+			assert.True(t, knownMicroversions[i-1] < pin,
+				"knownMicroversions must be ascending ISO: %q then %q", knownMicroversions[i-1], pin)
+		}
+	}
+
+	// Constants must themselves be known pins.
+	assert.True(t, isKnownMicroversion(apiMicroMin))
+	assert.True(t, isKnownMicroversion(apiMicroMax))
+	assert.Equal(t, "v1", apiMajorVersion)
+}
 
 func TestNormalizeAPIVersion(t *testing.T) {
 	const max = "2026-07-28"
@@ -193,11 +218,10 @@ func TestAPIVersionMiddleware_InvalidPin400(t *testing.T) {
 func TestAPIDiscovery_VersionAgnostic(t *testing.T) {
 	env := setupTestAPI(t)
 
-	paths := []string{"/api/v1", "/api/v1/", "/api/v1/versions"}
-	// Gin may normalize trailing slash — hit both discovery routes + bad pin.
+	// Bad pin would 400 on resource groups; discovery must ignore it.
 	for _, path := range []string{"/api/v1", "/api/v1/versions"} {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
-		req.Header.Set(headerAPIVersion, "2020-01-01") // would 400 on resource groups
+		req.Header.Set(headerAPIVersion, "2020-01-01")
 		w := httptest.NewRecorder()
 		env.router.ServeHTTP(w, req)
 
@@ -206,12 +230,74 @@ func TestAPIDiscovery_VersionAgnostic(t *testing.T) {
 		require.Nil(t, res.Err)
 		assert.Equal(t, "v1", res.Version)
 
-		// Never 400 for pin on discovery.
 		assert.Equal(t, apiMicroMax, w.Header().Get(headerAPIVersion))
 		assert.Equal(t, apiMicroMin, w.Header().Get(headerAPIMinVersion))
 		assert.Equal(t, apiMicroMax, w.Header().Get(headerAPIMaxVersion))
-		_ = paths
 	}
+}
+
+// TestPublicRoutes_NoVersionReject covers KD-3: fsd-jwt, auth login/refresh never
+// hard-reject on OpenFSD-API-Version (unlike dual-accept resource groups).
+func TestPublicRoutes_NoVersionReject(t *testing.T) {
+	env := setupTestAPI(t)
+	badPins := []string{"2020-01-01", "not-a-version", "1.2026-07-28", "2026-02-30"}
+
+	t.Run("fsd-jwt", func(t *testing.T) {
+		for _, pin := range badPins {
+			body := fmt.Sprintf(`{"cid":"%d","password":%q}`, env.admin.CID, env.adminPass)
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/fsd-jwt", bytes.NewReader([]byte(body)))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set(headerAPIVersion, pin)
+			w := httptest.NewRecorder()
+			env.router.ServeHTTP(w, req)
+			// Success path — never version 400.
+			require.Equal(t, http.StatusOK, w.Code, "pin=%s body=%s", pin, w.Body.String())
+			assert.NotContains(t, w.Body.String(), "OpenFSD-API-Version")
+		}
+	})
+
+	t.Run("auth_login", func(t *testing.T) {
+		for _, pin := range badPins {
+			body := fmt.Sprintf(`{"cid":%d,"password":%q}`, env.admin.CID, env.adminPass)
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader([]byte(body)))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set(headerAPIVersion, pin)
+			w := httptest.NewRecorder()
+			env.router.ServeHTTP(w, req)
+			require.Equal(t, http.StatusOK, w.Code, "pin=%s body=%s", pin, w.Body.String())
+			res := decodeAPIV1(t, w)
+			require.Nil(t, res.Err, "pin must not produce version err; got %v", res.Err)
+		}
+	})
+
+	t.Run("auth_refresh", func(t *testing.T) {
+		_, refresh := env.login(t, env.observer.CID, env.observerPass)
+		for _, pin := range badPins {
+			body, err := json.Marshal(map[string]string{"refresh_token": refresh})
+			require.NoError(t, err)
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/refresh", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set(headerAPIVersion, pin)
+			w := httptest.NewRecorder()
+			env.router.ServeHTTP(w, req)
+			require.Equal(t, http.StatusOK, w.Code, "pin=%s body=%s", pin, w.Body.String())
+			res := decodeAPIV1(t, w)
+			require.Nil(t, res.Err)
+		}
+	})
+}
+
+func TestAppendVary(t *testing.T) {
+	h := http.Header{}
+	appendVary(h, headerAPIVersion)
+	assert.Equal(t, headerAPIVersion, h.Get("Vary"))
+	// Idempotent.
+	appendVary(h, headerAPIVersion)
+	assert.Equal(t, headerAPIVersion, h.Get("Vary"))
+	// Merge with existing.
+	h.Set("Vary", "Accept-Encoding")
+	appendVary(h, headerAPIVersion)
+	assert.Equal(t, "Accept-Encoding, "+headerAPIVersion, h.Get("Vary"))
 }
 
 func TestAPIDiscovery_PayloadGolden(t *testing.T) {

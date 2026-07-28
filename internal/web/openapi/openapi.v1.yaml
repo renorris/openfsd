@@ -39,8 +39,8 @@ tags:
     description: APT/AIR validate (Stable; Instructor1+)
   - name: Sweatbox
     description: Read-only PE proxies (raw; outside envelope goldens)
-  - name: Data
-    description: Public data feeds (outside microversion reject)
+  # Data feeds (/data/*) are public and outside microversion reject; documented in
+  # internal/web/README.md. Not listed here until a full inventory is needed.
 
 paths:
   /:
@@ -198,6 +198,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/APIV1Envelope"
+        "400":
+          $ref: "#/components/responses/BadAPIVersion"
 
   /user/update:
     patch:
@@ -217,6 +219,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/APIV1Envelope"
+        "400":
+          $ref: "#/components/responses/BadAPIVersion"
 
   /user/create:
     post:
@@ -236,6 +240,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/APIV1Envelope"
+        "400":
+          $ref: "#/components/responses/BadAPIVersion"
 
   /config/load:
     get:
@@ -255,6 +261,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/APIV1Envelope"
+        "400":
+          $ref: "#/components/responses/BadAPIVersion"
 
   /config/update:
     post:
@@ -274,6 +282,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/APIV1Envelope"
+        "400":
+          $ref: "#/components/responses/BadAPIVersion"
 
   /config/resetsecretkey:
     post:
@@ -293,6 +303,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/APIV1Envelope"
+        "400":
+          $ref: "#/components/responses/BadAPIVersion"
 
   /config/createtoken:
     post:
@@ -328,6 +340,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/APIV1EnvelopeCreateToken"
+        "400":
+          $ref: "#/components/responses/BadAPIVersion"
 
   /fsdconn/kickuser:
     post:
@@ -356,6 +370,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/APIV1Envelope"
+        "400":
+          $ref: "#/components/responses/BadAPIVersion"
 
   /editor/validate-apt:
     post:
@@ -384,6 +400,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/APIV1Envelope"
+        "400":
+          $ref: "#/components/responses/BadAPIVersion"
 
   /editor/validate-air:
     post:
@@ -412,6 +430,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/APIV1Envelope"
+        "400":
+          $ref: "#/components/responses/BadAPIVersion"
 
   /sweatbox/state:
     get:
@@ -427,6 +447,8 @@ paths:
       responses:
         "200":
           description: Raw FSD JSON body
+        "400":
+          $ref: "#/components/responses/BadAPIVersion"
 
   /sweatbox/ops:
     get:
@@ -442,8 +464,45 @@ paths:
       responses:
         "200":
           description: Raw FSD JSON body
+        "400":
+          $ref: "#/components/responses/BadAPIVersion"
 
 components:
+  responses:
+    BadAPIVersion:
+      description: |
+        Invalid or unsupported `OpenFSD-API-Version` on a dual-accept resource group
+        (HTTP 400 envelope). Also used when the request body is invalid JSON on
+        some routes — check `err` text.
+
+        Recovery: call version-agnostic `GET /api/v1/versions` (never rejects on pin)
+        and upgrade the client pin.
+      headers:
+        OpenFSD-API-Version:
+          schema: { type: string }
+          description: Echo of current max (or registry effective)
+        OpenFSD-API-Min-Version:
+          schema: { type: string }
+        OpenFSD-API-Max-Version:
+          schema: { type: string }
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/APIV1Envelope"
+          examples:
+            invalid:
+              summary: Malformed pin
+              value:
+                version: v1
+                err: invalid OpenFSD-API-Version
+                data: null
+            unsupported:
+              summary: Unknown or sunset pin
+              value:
+                version: v1
+                err: 'unsupported OpenFSD-API-Version "2020-01-01"; min=2026-07-28 max=2026-07-28'
+                data: null
+
   securitySchemes:
     bearerAuth:
       type: http
