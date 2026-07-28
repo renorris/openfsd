@@ -500,11 +500,13 @@ func TestBearerActorRevalidation(t *testing.T) {
 	}
 
 	tests := []struct {
-		name          string
-		mutate        func(t *testing.T, env *testAPIEnv)
-		method        string
-		path          string
-		body          any
+		name   string
+		mutate func(t *testing.T, env *testAPIEnv)
+		method string
+		path   string
+		body   any
+		// loadOtherCID: when path is /user/load and body is nil, load observer instead of self.
+		loadOtherCID  bool
 		wantStatus    int
 		wantErrSubstr string
 	}{
@@ -571,9 +573,9 @@ func TestBearerActorRevalidation(t *testing.T) {
 			mutate: func(t *testing.T, env *testAPIEnv) {
 				setRating(t, env, env.admin.CID, int(protocol.NetworkRatingObserver))
 			},
-			method: http.MethodPost,
-			path:   "/api/v1/user/load",
-			// body set to observer CID in loop
+			method:        http.MethodPost,
+			path:          "/api/v1/user/load",
+			loadOtherCID:  true,
 			wantStatus:    http.StatusForbidden,
 			wantErrSubstr: "forbidden",
 		},
@@ -590,9 +592,8 @@ func TestBearerActorRevalidation(t *testing.T) {
 
 			body := tt.body
 			if tt.path == "/api/v1/user/load" && body == nil {
-				// Default: load self; demoted-cannot-load-other overrides to other CID.
 				cid := env.admin.CID
-				if tt.name == "demoted_admin_cannot_load_other" {
+				if tt.loadOtherCID {
 					cid = env.observer.CID
 				}
 				body = map[string]any{"cid": cid}

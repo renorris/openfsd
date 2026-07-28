@@ -403,7 +403,8 @@ func (s *Server) requireSessionHTML(c *gin.Context) {
 	c.Next()
 }
 
-// getDBUser returns the *db.User stashed by requireSessionHTML / trySessionAuth.
+// getDBUser returns the *db.User stashed by requireSessionHTML, trySessionAuth,
+// or revalidateBearerActor (dual-accept Bearer resource path).
 func getDBUser(c *gin.Context) *db.User {
 	val, exists := c.Get(dbUserContextKey)
 	if !exists {
