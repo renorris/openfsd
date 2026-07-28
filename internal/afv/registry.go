@@ -149,6 +149,20 @@ func (r *Registry) LookupByTag(tag string) *VoiceSession {
 	return r.byTag[tag]
 }
 
+// AllowUDPSource reports whether src may talk for this session (unbound or matching bind).
+// Does not advance sequence or bind.
+func (r *Registry) AllowUDPSource(sess *VoiceSession, addr netAddrStringer) bool {
+	if r == nil || sess == nil || addr == nil {
+		return false
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if !sess.Bound || sess.UDPAddr == nil {
+		return true
+	}
+	return sess.UDPAddr.String() == addr.String()
+}
+
 // BindUDP binds the first valid UDP source. Returns false if already bound to another addr.
 func (r *Registry) BindUDP(sess *VoiceSession, addr netAddrStringer, now time.Time) (bound bool, ok bool) {
 	r.mu.Lock()
@@ -186,7 +200,8 @@ type routeRecipient struct {
 	sess  *VoiceSession
 	udp   netAddrStringer
 	rx    []afvprotocol.RxTransceiver
-	rxKey [afvprotocol.KeySize]byte
+	rxKey [afvprotocol.KeySize]byte // aeadReceiveKey — encrypt AR
+	txKey [afvprotocol.KeySize]byte // aeadTransmitKey — ServerChannel API fidelity
 	tag   string
 }
 

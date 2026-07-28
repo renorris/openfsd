@@ -68,6 +68,11 @@ func NewDefault(ctx context.Context) (*Server, error) {
 	if cfg.UDPAdvertiseIPv4 == "" {
 		return nil, fmt.Errorf("AFV_UDP_ADVERTISE_IPV4 is required when starting AFV")
 	}
+	// P0: FSD online gate is not wired yet (PR-7). Refuse to start if operators
+	// enable the flag so it cannot silently imply protection that is absent.
+	if cfg.RequireFSDOnline {
+		return nil, fmt.Errorf("AFV_REQUIRE_FSD_ONLINE=true is not implemented in P0; leave false until the FSD online gate lands")
+	}
 
 	return New(cfg, repos.UserRepo, repos.ConfigRepo, jwtSecret), nil
 }

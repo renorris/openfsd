@@ -86,6 +86,7 @@ func (r *Registry) routeAT(tx *VoiceSession, at afvprotocol.AudioTx) []routeReci
 			udp:   sess.UDPAddr,
 			rx:    uniq,
 			rxKey: sess.ClientRxKey,
+			txKey: sess.ClientTxKey,
 			tag:   sess.ChannelTag,
 		})
 	}

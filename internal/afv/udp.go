@@ -35,7 +35,8 @@ func (s *Server) runUDP(ctx context.Context) error {
 	if maxDG <= 0 {
 		maxDG = 8192
 	}
-	buf := make([]byte, maxDG)
+	// Read into maxDG+1 so oversized datagrams are detected (not silently truncated).
+	buf := make([]byte, maxDG+1)
 
 	for {
 		select {
@@ -58,6 +59,7 @@ func (s *Server) runUDP(ctx context.Context) error {
 			}
 		}
 		if n > maxDG {
+			// Explicit drop: larger than AFV_MAX_DATAGRAM (no decrypt).
 			continue
 		}
 		pkt := make([]byte, n)
@@ -88,16 +90,19 @@ func (s *Server) handleUDP(pc net.PacketConn, pkt []byte, src net.Addr) {
 		return
 	}
 
-	if sess.acceptSeq(hdr.Sequence) == afvprotocol.ReceiveBefore {
-		return
-	}
-
 	dtoName, payload, err := afvprotocol.ParseBody(body)
 	if err != nil {
 		return
 	}
 
 	now := time.Now()
+	// Reject wrong source for already-bound sessions before consuming sequence.
+	if !s.reg.AllowUDPSource(sess, src) {
+		return
+	}
+	if sess.acceptSeq(hdr.Sequence) == afvprotocol.ReceiveBefore {
+		return
+	}
 	if _, ok := s.reg.BindUDP(sess, src, now); !ok {
 		return
 	}
@@ -152,8 +157,8 @@ func (s *Server) handleAudioTx(pc net.PacketConn, sess *VoiceSession, payload []
 			LastPacket:      at.LastPacket,
 			Transceivers:    rec.rx,
 		}
-		// Encrypt AR with recipient aeadReceiveKey (ClientRxKey).
-		ch, err := afvprotocol.ServerChannel(rec.tag, rec.rxKey[:], rec.rxKey[:])
+		// Encrypt AR with recipient aeadReceiveKey (ClientRxKey); pass true tx key for API fidelity.
+		ch, err := afvprotocol.ServerChannel(rec.tag, rec.rxKey[:], rec.txKey[:])
 		if err != nil {
 			continue
 		}

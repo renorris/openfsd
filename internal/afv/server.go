@@ -46,10 +46,14 @@ func New(cfg *Config, users db.UserRepository, configKV db.ConfigRepository, jwt
 }
 
 // Run starts HTTP API, UDP voice, and reaper until ctx is cancelled.
+// If any subsystem fails early, siblings are cancelled so Run returns.
 func (s *Server) Run(ctx context.Context) error {
 	if s.cfg.UDPAdvertiseIPv4 == "" {
 		return fmt.Errorf("AFV_UDP_ADVERTISE_IPV4 is required")
 	}
+
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
 	mux := s.routes()
 	s.httpServer = &http.Server{
@@ -68,6 +72,7 @@ func (s *Server) Run(ctx context.Context) error {
 		ln, err := net.Listen("tcp", s.cfg.APIListen)
 		if err != nil {
 			errCh <- fmt.Errorf("afv api listen: %w", err)
+			cancel()
 			return
 		}
 		bound := ln.Addr().String()
@@ -77,9 +82,9 @@ func (s *Server) Run(ctx context.Context) error {
 		s.apiMu.Unlock()
 
 		go func() {
-			<-ctx.Done()
-			shctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
+			<-runCtx.Done()
+			shctx, shCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer shCancel()
 			_ = s.httpServer.Shutdown(shctx)
 		}()
 
@@ -91,6 +96,7 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 		if serveErr != nil && serveErr != http.ErrServerClosed {
 			errCh <- serveErr
+			cancel()
 			return
 		}
 		errCh <- nil
@@ -100,9 +106,10 @@ func (s *Server) Run(ctx context.Context) error {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		err := s.runUDP(ctx)
-		if err != nil && ctx.Err() == nil {
+		err := s.runUDP(runCtx)
+		if err != nil && runCtx.Err() == nil {
 			errCh <- err
+			cancel()
 			return
 		}
 		errCh <- nil
@@ -112,7 +119,7 @@ func (s *Server) Run(ctx context.Context) error {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		s.runReaper(ctx)
+		s.runReaper(runCtx)
 		errCh <- nil
 	}()
 
@@ -120,8 +127,15 @@ func (s *Server) Run(ctx context.Context) error {
 	for i := 0; i < 3; i++ {
 		if err := <-errCh; err != nil && first == nil {
 			first = err
+			cancel()
 		}
 	}
+	// Ensure UDP is closed if still open (reaper/http already exit on cancel).
+	s.udpMu.Lock()
+	if s.udpConn != nil {
+		_ = s.udpConn.Close()
+	}
+	s.udpMu.Unlock()
 	wg.Wait()
 	return first
 }

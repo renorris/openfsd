@@ -667,9 +667,9 @@ Port AFV-Native `SequenceTest` outcomes explicitly:
 
 | Outcome | Meaning | Server action |
 |---------|---------|---------------|
-| `OK` | in-window new sequence | accept; advance window |
-| `Before` | duplicate or too old | **drop** |
-| `Overflow` | in-window but skips gaps | **accept**; advance past gaps |
+| `OK` | in-window new sequence (including gap-fill inside window) | accept; advance window |
+| `Before` | duplicate or too old (before window min) | **drop** |
+| `Overflow` | sequence **beyond** window (forced window jump) | **accept**; advance/jump window |
 
 **Window size (normative):** server RX window = **64** (= `sizeof(uint64_t)*8` bitfield maximum used by AFV-Native `sequence_bitfield_t`).  
 
