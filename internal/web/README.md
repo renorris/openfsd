@@ -6,7 +6,116 @@ Part of the single `openfsd` binary (`cmd/openfsd -web`; default runs FSD + web)
 
 JSON under `/api/v1` for **operator automation** and map polling. First-party UI is a progressive-enhancement MPA: form login sets a signed **HttpOnly session cookie**; `/api/v1` dual-accepts that cookie **or** a Bearer access token. Operators automating the same workflows as the UI should use **Bearer API tokens** (not browser session cookies).
 
-**Blast radius:** Admin-minted API tokens currently carry an **Administrator-equivalent** network rating claim and full config/token power. Treat them as operator credentials with admin blast radius until fine-grained scopes exist—not as multi-tenant “third-party app” keys.
+**Blast radius (KD-16):** Admin-minted API tokens currently carry an **Administrator-equivalent** network rating claim and full config/token power (user create, kick, secret reset, sweatbox control, etc.). Treat them as **operator credentials with admin blast radius** until fine-grained scopes exist—not as multi-tenant “third-party app” keys. Prefer short TTLs; store tokens as secrets; rotate via `POST /api/v1/config/resetsecretkey` on compromise.
+
+**Design contract:** [`docs/design/rest-api-versioning.md`](../../docs/design/rest-api-versioning.md) (**Accepted**). Canonical OpenAPI: `internal/web/openapi/openapi.v1.yaml` (embedded; no `docs/openapi/` mirror).
+
+---
+
+## Operator REST guide
+
+Quick start for scripts and tools automating the same privileged workflows as the first-party UI. Full per-route detail is under [Endpoints](#endpoints).
+
+### 1. Mint a token and pin the API version
+
+Tokens are **Administrator-only** to create (UI **Configure Server** or JSON below). Max TTL **90 days**. Response includes pin hints.
+
+```bash
+# Requires an existing admin Bearer (or cookie+CSRF). Prefer minting once via the UI.
+BASE=https://openfsd.example
+ADMIN_TOKEN=…   # existing admin access JWT
+
+curl -sS -X POST "$BASE/api/v1/config/createtoken" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "OpenFSD-API-Version: 2026-07-28" \
+  -H "Content-Type: application/json" \
+  -d '{"expiry_date_time":"2026-10-01T00:00:00.000Z"}'
+# → data.token, data.recommended_api_version, data.api_version_min, data.api_version_max
+```
+
+On every subsequent resource call, send both headers:
+
+```bash
+TOKEN=…          # from createtoken
+PIN=2026-07-28   # use recommended_api_version from mint (or discovery max)
+
+curl -sS "$BASE/api/v1/users?page=1&page_size=50" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "OpenFSD-API-Version: $PIN"
+```
+
+| Rule | Detail |
+|------|--------|
+| Production clients | **MUST** send `OpenFSD-API-Version: YYYY-MM-DD` |
+| Omitted pin | Defaults to **max**; response sets `OpenFSD-API-Version-Defaulted: true` |
+| Alias forms | `1.YYYYMMDD` and `latest` (→ max) also accepted |
+| Do not use | `/auth/login` or `/auth/refresh` for long-lived automation |
+
+### 2. Discovery (version-agnostic)
+
+These paths **never** return 400 for a bad pin—use them to recover after an unsupported-version error:
+
+```bash
+curl -sS "$BASE/api/v1/versions"
+# same payload: curl -sS "$BASE/api/v1"
+
+curl -sS "$BASE/api/v1/openapi.json"   # machine-readable
+curl -sS "$BASE/api/v1/openapi.yaml"   # canonical embed source
+```
+
+| Method | Path | Notes |
+|--------|------|-------|
+| GET | `/api/v1` | Same discovery payload as `/versions` |
+| GET | `/api/v1/versions` | `min_version`, `max_version`, `versions[]`, `openapi` |
+| GET | `/api/v1/openapi.json` | OpenAPI 3 (YAML→JSON at serve time) |
+| GET | `/api/v1/openapi.yaml` | Embedded YAML |
+
+### 3. Stability tiers
+
+| Tier | Wire compatibility | First-train examples |
+|------|--------------------|----------------------|
+| **Stable** | Additive free; breaks require microversion + deprecation | Discovery/OpenAPI; user/users/config/fsdconn/editor; sweatbox mutations + `/session` |
+| **Provisional** | May change request/response shape **without** microversion while Provisional (release notes); authz must not silently tighten | **Account** `POST /api/v1/account/password` and `/delete` |
+
+Account remains **Provisional** until a tagged `v*` release ships it **and** explicit maintainer sign-off (not time-only auto-promote). See design open-question #6.
+
+### 4. Authz matrix (JSON `/api/v1`)
+
+| Capability | Min rating | Routes (representative) |
+|------------|------------|-------------------------|
+| Public | — | Discovery, OpenAPI, `/data/*`, `/fsd-jwt`, `/auth/*` |
+| Self (OBS+) | Observer+ | `POST /user/load` (self), `GET /users/:cid` (self), `POST /account/*` (Provisional) |
+| Instructor1+ | 8 | `/sweatbox/*` (mutations + session), `/editor/validate-*` |
+| Supervisor+ | 11 | `GET /users`, user create/update, `POST /fsdconn/kickuser`, load others |
+| Administrator | 12 | `/config/*`, `createtoken`, `resetsecretkey` |
+
+Dual-accept: **Bearer** (no CSRF) or **session cookie + CSRF** on mutations. Bearer actors are **revalidated against the DB** on protected resource groups (`/user`, `/users`, `/config`, `/fsdconn`, `/sweatbox`, `/editor`, `/account`).
+
+### 5. Client checklist
+
+From design Appendix A:
+
+1. Obtain admin API token; note `recommended_api_version` from the response.
+2. Send `Authorization: Bearer …` on every call.
+3. Send `OpenFSD-API-Version: <pin>` on every resource call (production).
+4. Treat unknown JSON fields as ignorable (additive evolution).
+5. On **400** unsupported version, call version-agnostic `GET /api/v1/versions` and upgrade the pin.
+6. On **401**, rotate token; check demotion/delete/secret reset.
+7. Prefer additive fields; watch `Deprecation` / `Sunset` when present.
+8. Understand **admin-equivalent blast radius** until scopes exist.
+9. Do **not** use session cookies for non-browser automation.
+
+### 6. First-train surface (summary)
+
+| Area | Stability | Paths |
+|------|-----------|-------|
+| Versioning / OpenAPI | Stable | `GET /api/v1`, `/versions`, `/openapi.json`, `/openapi.yaml` |
+| Users directory | Stable | `GET /users`, `GET /users/:cid` (+ legacy `POST /user/*`) |
+| Sweatbox control | Stable | Mutations + `GET /session` (raw `/state`/`/ops` for PE) |
+| Account self-service | **Provisional** | `POST /account/password`, `POST /account/delete` |
+| Config / tokens | Stable | `GET/POST /config/*`, `createtoken` |
+
+---
 
 ### First-party HTML pages (no-JS primary path)
 | Page | Routes | Authz |
@@ -45,7 +154,7 @@ The **airport editor** (`/airport-editor`) is a second complexity-gate exception
 - Cookie-authenticated API mutations require a CSRF synchronizer token (`csrf_token` form field or `X-CSRF-Token` header matching the `openfsd_csrf` cookie)
 - Suspended/inactive ratings cannot open a web session (same as FSD policy)
 - **Session cookies are revalidated against the DB on every use** (HTML + dual-accept API): missing or inactive/suspended certificates clear cookies and are rejected; claims (network rating + names) are overlaid from the DB so demotions take effect immediately.
-- **Bearer access tokens on dual-accept resource groups** (`/api/v1/user|config|fsdconn|sweatbox|editor|account/*`) are revalidated the same way (KD-18): demotion, suspension, and soft-delete take effect on the next request. Login/refresh/fsd-jwt remain credential-based and are outside this middleware.
+- **Bearer access tokens on dual-accept resource groups** (`/api/v1/user|users|config|fsdconn|sweatbox|editor|account/*`) are revalidated the same way (KD-18): demotion, suspension, and soft-delete take effect on the next request. Login/refresh/fsd-jwt remain credential-based and are outside this middleware.
 
 ### Cookie `Secure` flag (`COOKIE_SECURE`)
 | Condition | Secure |
@@ -101,7 +210,9 @@ OpenFSD-API-Version: 2026-07-28
 
 Canonical OpenAPI file: `internal/web/openapi/openapi.v1.yaml` (`//go:embed`). No mirrored copy under `docs/`.
 
-**Stability tiers:** enveloped user/users/config/fsdconn/editor routes and sweatbox mutations/`session` are **Stable** (goldens under `testdata/api_v1/<pin>/`). Account JSON (`/api/v1/account/*`) is **Provisional**. Design: `docs/design/rest-api-versioning.md`.
+**Outside microversion reject:** `/api/v1/data/*`, `/api/v1/fsd-jwt`, auth login/refresh, discovery, OpenAPI. Resource groups (`/user`, `/users`, `/config`, `/fsdconn`, `/sweatbox`, `/editor`, `/account`) reject unknown/invalid pins with **400** envelope.
+
+**Stability tiers:** see [Operator REST guide §3](#3-stability-tiers). Enveloped user/users/config/fsdconn/editor + sweatbox mutations/`session` are **Stable** (goldens under `testdata/api_v1/<pin>/`). Account JSON is **Provisional** until post-release maintainer sign-off. Design: [`docs/design/rest-api-versioning.md`](../../docs/design/rest-api-versioning.md) (Accepted).
 
 Baseline pin (first supported): **`2026-07-28`**.
 
@@ -124,7 +235,12 @@ Instructor1+ dual-accept (Bearer API token recommended for automation; cookie + 
 
 Max body for airport/scenario: **2 MiB**. Status mapping is locked in `docs/design/rest-api-versioning.md` §D (404 disabled, 409 conflict, 413 too large, 502 unreachable).
 
-**Blast radius:** admin-minted API tokens are Administrator-equivalent until scopes exist. Prefer short TTLs; store tokens as secrets.
+```bash
+# Example: pause sim with pinned operator token
+curl -sS -X POST "$BASE/api/v1/sweatbox/pause" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "OpenFSD-API-Version: $PIN"
+```
 
 ---
 
