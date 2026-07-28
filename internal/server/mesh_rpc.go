@@ -37,18 +37,15 @@ func (s *Server) meshHomeRPC(client *session.Session, callsign string, op cluste
 			onOK(resp)
 		}
 	}
-	if s.authPool == nil {
-		if onErr != nil {
-			onErr(cluster.ErrMeshNotStarted)
-		}
+	enqueued, shutDown := s.tryAuthPool(job)
+	if enqueued {
 		return
 	}
-	select {
-	case s.authPool <- job:
-		return
-	default:
-		// Fail closed — do not block gnet (R3-8).
-		if onErr != nil {
+	// Pool full or shut down — fail closed; do not block gnet (R3-8).
+	if onErr != nil {
+		if shutDown {
+			onErr(cluster.ErrMeshNotStarted)
+		} else {
 			onErr(cluster.ErrHomeRPCTimeout)
 		}
 	}

@@ -52,7 +52,9 @@ type Server struct {
 	// mesh is optional cluster fabric (nil when CLUSTER_ENABLED=false).
 	mesh cluster.Mesh
 	// authPool runs login auth + ClaimReserve + HomeRPC off the gnet loop.
+	// authMu guards close/nil of authPool vs concurrent tryAuthPool sends (race fix).
 	authPool   chan func()
+	authMu     sync.Mutex
 	authPoolWG sync.WaitGroup
 	// nodeID for online_users / datafeed (empty when single-node).
 	nodeID string
@@ -110,11 +112,13 @@ func New(d Deps) (*Server, error) {
 		nodeID:     d.Config.ClusterNodeID,
 	}
 	// Auth/HomeRPC worker pool (off gnet loop). Closed in shutdownCluster.
+	// Capture the channel in locals so workers never race with s.authPool = nil.
+	authCh := s.authPool
 	s.authPoolWG.Add(4)
 	for i := 0; i < 4; i++ {
 		go func() {
 			defer s.authPoolWG.Done()
-			for fn := range s.authPool {
+			for fn := range authCh {
 				if fn != nil {
 					fn()
 				}
@@ -351,10 +355,33 @@ func (s *Server) shutdownCluster() {
 	if s.mesh != nil {
 		_ = s.mesh.Stop()
 	}
-	if s.authPool != nil {
-		close(s.authPool)
+	// Close auth pool under authMu so concurrent tryAuthPool never sends on a closed channel.
+	s.authMu.Lock()
+	pool := s.authPool
+	s.authPool = nil
+	if pool != nil {
+		close(pool)
+	}
+	s.authMu.Unlock()
+	if pool != nil {
 		s.authPoolWG.Wait()
-		s.authPool = nil
+	}
+}
+
+// tryAuthPool enqueues fn on the auth worker pool.
+// Returns (true, false) if enqueued, (false, false) if the pool is full,
+// (false, true) if the pool is shut down. Concurrent-safe with shutdownCluster.
+func (s *Server) tryAuthPool(fn func()) (enqueued, closed bool) {
+	s.authMu.Lock()
+	defer s.authMu.Unlock()
+	if s.authPool == nil {
+		return false, true
+	}
+	select {
+	case s.authPool <- fn:
+		return true, false
+	default:
+		return false, false
 	}
 }
 
