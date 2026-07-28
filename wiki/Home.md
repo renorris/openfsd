@@ -23,5 +23,5 @@ Operator documentation for [openfsd](https://github.com/renorris/openfsd).
 
 ## Quick links
 
-- Images: `ghcr.io/renorris/openfsd` (`:latest`, `:dev`, `sha-*`)
+- Images: `ghcr.io/renorris/openfsd` (`:latest` = main, `:dev` = unstable tip, `sha-*`)
 - Protocol notes: repository `docs/`
