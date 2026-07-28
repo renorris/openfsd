@@ -38,7 +38,10 @@ tags:
   - name: Editor
     description: APT/AIR validate (Stable; Instructor1+)
   - name: Sweatbox
-    description: Read-only PE proxies (raw; outside envelope goldens)
+    description: |
+      Instructor1+ sweatbox control plane proxies.
+      GET /state and /ops are raw FSD bodies for PE polls (outside envelope goldens).
+      Mutations and GET /session use the APIV1 envelope (Stable; design §D status mapping).
   # Data feeds (/data/*) are public and outside microversion reject; documented in
   # internal/web/README.md. Not listed here until a full inventory is needed.
 
@@ -466,6 +469,291 @@ paths:
           description: Raw FSD JSON body
         "400":
           $ref: "#/components/responses/BadAPIVersion"
+
+  /sweatbox/session:
+    get:
+      tags: [Sweatbox]
+      summary: Enveloped sweatbox state (operator / third-party)
+      description: |
+        Parallel of GET /sweatbox/state with APIV1 envelope.
+        `data` is serviceapi.SweatboxStateJSON. Instructor1+.
+      operationId: getSweatboxSession
+      x-openfsd-stability: stable
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OpenFSDAPIVersion"
+      responses:
+        "200":
+          description: Envelope with session state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+        "403":
+          description: Below Instructor1
+        "404":
+          description: Sweatbox disabled on FSD
+        "400":
+          $ref: "#/components/responses/BadAPIVersion"
+        "502":
+          description: FSD service unreachable or unexpected
+
+  /sweatbox/airport:
+    post:
+      tags: [Sweatbox]
+      summary: Load airport (.apt) into sweatbox
+      description: |
+        Public JSON `{"text","replace"}`. Proxied to FSD as text/plain of `text`
+        with optional `?replace=1`. Max body 2 MiB. Instructor1+.
+      operationId: postSweatboxAirport
+      x-openfsd-stability: stable
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OpenFSDAPIVersion"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text: { type: string, description: Full .apt file text }
+                replace: { type: boolean, default: false }
+      responses:
+        "200":
+          description: Airport loaded (data = SweatboxAirportLoadResponse)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+        "400":
+          description: Invalid JSON, empty text, or invalid airport
+        "403":
+          description: Below Instructor1
+        "404":
+          description: Sweatbox disabled
+        "409":
+          description: Aircraft present without replace
+        "413":
+          description: Payload too large
+        "502":
+          description: FSD unreachable / unexpected
+
+  /sweatbox/scenario:
+    post:
+      tags: [Sweatbox]
+      summary: Load scenario (.air) into sweatbox
+      description: |
+        Public JSON `{"text"}`. Proxied to FSD as text/plain. Max 2 MiB. Instructor1+.
+      operationId: postSweatboxScenario
+      x-openfsd-stability: stable
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OpenFSDAPIVersion"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text: { type: string, description: Full .air file text }
+      responses:
+        "200":
+          description: Scenario load result (data = SweatboxScenarioResponse)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+        "400":
+          description: Invalid JSON, empty text, or invalid scenario
+        "403":
+          description: Below Instructor1
+        "404":
+          description: Sweatbox disabled
+        "409":
+          description: No airport loaded
+        "413":
+          description: Payload too large
+        "502":
+          description: FSD unreachable / unexpected
+
+  /sweatbox/command:
+    post:
+      tags: [Sweatbox]
+      summary: Run instructor command
+      description: |
+        Soft validation failures return HTTP 200 with `data.ok=false` (TWRTrainer-style).
+        Do not treat ok:false as a 4xx. Instructor1+.
+      operationId: postSweatboxCommand
+      x-openfsd-stability: stable
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OpenFSDAPIVersion"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [command]
+              properties:
+                callsign: { type: string }
+                command: { type: string }
+      responses:
+        "200":
+          description: |
+            Command processed. `data` is SweatboxCommandResponse with ok/message.
+            Soft-fail: ok=false still HTTP 200, envelope err null.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+        "400":
+          description: Invalid JSON or empty command
+        "403":
+          description: Below Instructor1
+        "404":
+          description: Sweatbox disabled
+        "409":
+          description: No airport / conflict
+        "502":
+          description: FSD unreachable / unexpected
+
+  /sweatbox/pause:
+    post:
+      tags: [Sweatbox]
+      summary: Pause simulation
+      description: FSD 204 is mapped to public 200 envelope with data null. Instructor1+.
+      operationId: postSweatboxPause
+      x-openfsd-stability: stable
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OpenFSDAPIVersion"
+      responses:
+        "200":
+          description: Paused (data null)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+        "403":
+          description: Below Instructor1
+        "404":
+          description: Sweatbox disabled
+        "502":
+          description: FSD unreachable / unexpected
+
+  /sweatbox/unpause:
+    post:
+      tags: [Sweatbox]
+      summary: Unpause simulation
+      description: FSD 204 is mapped to public 200 envelope with data null. Instructor1+.
+      operationId: postSweatboxUnpause
+      x-openfsd-stability: stable
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OpenFSDAPIVersion"
+      responses:
+        "200":
+          description: Unpaused (data null)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+        "403":
+          description: Below Instructor1
+        "404":
+          description: Sweatbox disabled
+        "502":
+          description: FSD unreachable / unexpected
+
+  /sweatbox/aircraft/{callsign}:
+    delete:
+      tags: [Sweatbox]
+      summary: Delete one sweatbox aircraft
+      description: FSD 204 → public 200 envelope. Instructor1+.
+      operationId: deleteSweatboxAircraft
+      x-openfsd-stability: stable
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OpenFSDAPIVersion"
+        - name: callsign
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Deleted (data null)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+        "403":
+          description: Below Instructor1
+        "404":
+          description: Aircraft not found or sweatbox disabled
+        "502":
+          description: FSD unreachable / unexpected
+
+  /sweatbox/aircraft:
+    delete:
+      tags: [Sweatbox]
+      summary: Delete all sweatbox aircraft
+      description: |
+        Requires confirmation via JSON `{"confirm":true}` or query `confirm=1`.
+        FSD 204 → public 200 envelope. Instructor1+.
+      operationId: deleteSweatboxAllAircraft
+      x-openfsd-stability: stable
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OpenFSDAPIVersion"
+        - name: confirm
+          in: query
+          required: false
+          schema: { type: string, enum: ["1", "true", "yes", "on"] }
+          description: Alternative to JSON body confirm
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                confirm: { type: boolean }
+      responses:
+        "200":
+          description: All deleted (data null)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIV1Envelope"
+        "400":
+          description: confirm required / invalid JSON
+        "403":
+          description: Below Instructor1
+        "404":
+          description: Sweatbox disabled
+        "502":
+          description: FSD unreachable / unexpected
 
 components:
   responses:

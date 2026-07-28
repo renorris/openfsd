@@ -21,6 +21,14 @@ type SweatboxScenarioResponse struct {
 	Errors []string `json:"errors"`
 }
 
+// SweatboxAirportLoadResponse is the public/FSD airport load result shape
+// (POST /api/v1/sweatbox/airport envelope data and FSD POST /sweatbox/airport body).
+type SweatboxAirportLoadResponse struct {
+	ICAO     string   `json:"icao"`
+	Surfaces int      `json:"surfaces"`
+	Errors   []string `json:"errors"`
+}
+
 // SweatboxOpsJSON is returned for GET /sweatbox/ops.
 type SweatboxOpsJSON struct {
 	ElapsedSec float64 `json:"elapsed_sec"`

@@ -16,7 +16,7 @@ JSON under `/api/v1` for **operator automation** and map polling. First-party UI
 | Account | `GET /account`, `POST /account/password`, `POST /account/delete` | any session; change password (current required) + soft-delete account (optional hard-delete via `ALLOW_PERMANENT_ACCOUNT_DELETE`, default false). CSRF; password step-up on delete |
 | Users (directory) | `GET /usereditor[?q&rating&sort&dir&page&cid&new&flash]`, `POST /usereditor/create`, `POST /usereditor/update` | **Supervisor+**; create + name/password + ratings (network ceiling ≤ actor; full pilot scale). CSRF; URL-owned filters; `dir_*` on POST for PRG |
 | Config editor | `GET/POST /configeditor`, `POST /configeditor/create-token`, `POST /configeditor/reset-secret` | Administrator; CSRF on mutations |
-| Sweatbox | `GET /sweatbox`, form POSTs under `/sweatbox/*` | **Instructor1+**; CSRF on mutations; proxies FSD service HTTP |
+| Sweatbox | `GET /sweatbox`, form POSTs under `/sweatbox/*` | **Instructor1+**; CSRF on mutations; proxies FSD service HTTP. Operator JSON: `/api/v1/sweatbox/*` (mutations + `/session`) |
 | Airport editor | `GET /airport-editor`, `POST /airport-editor/download-apt`, `POST /airport-editor/download-air` | **Instructor1+**; CSRF on download; **echo-only** (no disk/DB persistence of `.apt`/`.air`). Validate API: `POST /api/v1/editor/validate-*` also I1+ |
 
 JSON under `/api/v1` remains for external consumers and map polling. Session dual-accept mutations work with **cookie + CSRF only** (no `Authorization` header required).
@@ -103,9 +103,30 @@ Canonical OpenAPI file: `internal/web/openapi/openapi.v1.yaml` (`//go:embed`). N
 
 **Outside microversion reject:** `/api/v1/data/*`, `/api/v1/fsd-jwt`, auth login/refresh, discovery, OpenAPI. Resource groups (`/user`, `/config`, `/fsdconn`, `/sweatbox`, `/editor`) reject unknown/invalid pins with **400** envelope.
 
-**Stability tiers:** existing enveloped user/config/fsdconn/editor routes are **Stable** (goldens under `testdata/api_v1/<pin>/`). New expansion routes may ship **Provisional** (shape may change without a microversion bump while Provisional). Design: `docs/design/rest-api-versioning.md`.
+**Stability tiers:** existing enveloped user/config/fsdconn/editor routes and sweatbox mutations/`session` are **Stable** (goldens under `testdata/api_v1/<pin>/`). New expansion routes may ship **Provisional** (shape may change without a microversion bump while Provisional). Design: `docs/design/rest-api-versioning.md`.
 
 Baseline pin (first supported): **`2026-07-28`**.
+
+### Sweatbox operator JSON (Stable)
+
+Instructor1+ dual-accept (Bearer API token recommended for automation; cookie + CSRF for browser). Proxies FSD service HTTP only — web never imports `internal/sweatbox` / `internal/server`.
+
+| Method | Path | Notes |
+|--------|------|-------|
+| GET | `/api/v1/sweatbox/state` | **Raw** FSD body (PE poll; non-envelope) |
+| GET | `/api/v1/sweatbox/ops` | **Raw** FSD body (PE; non-envelope) |
+| GET | `/api/v1/sweatbox/session` | **Envelope**; `data` = state snapshot |
+| POST | `/api/v1/sweatbox/airport` | JSON `{"text":"…","replace":false}` → FSD `text/plain` + optional `?replace=1` |
+| POST | `/api/v1/sweatbox/scenario` | JSON `{"text":"…"}` → FSD `text/plain` |
+| POST | `/api/v1/sweatbox/command` | JSON `{callsign,command}`; soft-fail stays **200** + `data.ok=false` |
+| POST | `/api/v1/sweatbox/pause` | FSD 204 → public **200** envelope `data: null` |
+| POST | `/api/v1/sweatbox/unpause` | same |
+| DELETE | `/api/v1/sweatbox/aircraft/:callsign` | FSD 204 → public **200** |
+| DELETE | `/api/v1/sweatbox/aircraft` | requires `confirm=true` (JSON body or query `confirm=1`) |
+
+Max body for airport/scenario: **2 MiB**. Status mapping is locked in `docs/design/rest-api-versioning.md` §D (404 disabled, 409 conflict, 413 too large, 502 unreachable).
+
+**Blast radius:** admin-minted API tokens are Administrator-equivalent until scopes exist. Prefer short TTLs; store tokens as secrets.
 
 ---
 
@@ -645,6 +666,9 @@ Retrieve all servers in JSON format (same as openfsd-servers.json).
 **Permissions**: None (public endpoint).
 
 ---
+
+#### GET /api/v1/sweatbox/session
+Instructor1+ enveloped state snapshot (`data` = same fields as raw `/state`). Prefer this over raw `/state` for third-party clients. See **Sweatbox operator JSON** above for mutations and status mapping.
 
 #### GET /api/v1/data/openfsd-data.json
 Retrieve cached datafeed of online pilots and ATC.

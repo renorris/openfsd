@@ -270,14 +270,16 @@ func TestSweatboxCommandEmptyRedirectsErrorFlash(t *testing.T) {
 
 // sweatboxMock tracks FSD service HTTP interactions for instructor UI tests.
 type sweatboxMock struct {
-	paused          bool
-	lastCommand     serviceapi.SweatboxCommandRequest
-	airportBody     string
-	airportPath     string
-	scenarioBody    string
-	commandSoftFail bool
-	airportConflict bool
-	scenarioBadJSON bool
+	paused              bool
+	lastCommand         serviceapi.SweatboxCommandRequest
+	airportBody         string
+	airportPath         string
+	airportContentType  string
+	scenarioBody        string
+	scenarioContentType string
+	commandSoftFail     bool
+	airportConflict     bool
+	scenarioBadJSON     bool
 }
 
 func (m *sweatboxMock) handler() http.Handler {
@@ -311,6 +313,7 @@ func (m *sweatboxMock) handler() http.Handler {
 	})
 	mux.HandleFunc("/sweatbox/airport", func(w http.ResponseWriter, r *http.Request) {
 		m.airportPath = r.URL.RequestURI()
+		m.airportContentType = r.Header.Get("Content-Type")
 		b, _ := io.ReadAll(r.Body)
 		m.airportBody = string(b)
 		if m.airportConflict {
@@ -323,6 +326,7 @@ func (m *sweatboxMock) handler() http.Handler {
 		_ = json.NewEncoder(w).Encode(map[string]any{"icao": "KBTV", "surfaces": 3, "errors": []string{}})
 	})
 	mux.HandleFunc("/sweatbox/scenario", func(w http.ResponseWriter, r *http.Request) {
+		m.scenarioContentType = r.Header.Get("Content-Type")
 		b, _ := io.ReadAll(r.Body)
 		m.scenarioBody = string(b)
 		if m.scenarioBadJSON {

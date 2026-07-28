@@ -228,3 +228,306 @@ func TestSweatboxPageNoPEScriptWhenUnavailable(t *testing.T) {
 		t.Fatal("should not load sweatbox.js when control plane unavailable")
 	}
 }
+
+func createInstructor1(t *testing.T, env *testAPIEnv) (cid int, access string) {
+	t.Helper()
+	pass := "i1pass123"
+	u := &db.User{
+		Password:      pass,
+		FirstName:     strPtr("Inst"),
+		LastName:      strPtr("One"),
+		NetworkRating: int(protocol.NetworkRatingInstructor1),
+	}
+	require.NoError(t, env.server.dbRepo.UserRepo.CreateUser(u))
+	access, _ = env.login(t, u.CID, pass)
+	return u.CID, access
+}
+
+func TestAPISweatboxSessionEnveloped(t *testing.T) {
+	m := &sweatboxMock{}
+	fsd := httptest.NewServer(m.handler())
+	t.Cleanup(fsd.Close)
+
+	env := setupTestAPI(t)
+	env.server.cfg.FsdHttpServiceAddress = fsd.URL
+	_, access := createInstructor1(t, env)
+
+	w := env.doJSON(t, http.MethodGet, "/api/v1/sweatbox/session", nil, access)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var res APIV1Response
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &res))
+	require.Nil(t, res.Err)
+	require.Equal(t, "v1", res.Version)
+
+	data, err := json.Marshal(res.Data)
+	require.NoError(t, err)
+	var st serviceapi.SweatboxStateJSON
+	require.NoError(t, json.Unmarshal(data, &st))
+	assert.Equal(t, "KBTV", st.ICAO)
+	require.Len(t, st.Aircraft, 1)
+	assert.Equal(t, "AAL123", st.Aircraft[0].Callsign)
+
+	assertGoldenJSON(t, "2026-07-28/sweatbox_session_ok.json", w.Body.Bytes())
+}
+
+func TestAPISweatboxSessionDisabled404(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	})
+	fsd := httptest.NewServer(mux)
+	t.Cleanup(fsd.Close)
+
+	env := setupTestAPI(t)
+	env.server.cfg.FsdHttpServiceAddress = fsd.URL
+	access, _ := env.login(t, env.admin.CID, env.adminPass)
+
+	w := env.doJSON(t, http.MethodGet, "/api/v1/sweatbox/session", nil, access)
+	require.Equal(t, http.StatusNotFound, w.Code, w.Body.String())
+	var res APIV1Response
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &res))
+	require.NotNil(t, res.Err)
+	assert.Contains(t, *res.Err, "not enabled")
+}
+
+func TestAPISweatboxSessionForbiddenForObserver(t *testing.T) {
+	env := setupTestAPI(t)
+	access, _ := env.login(t, env.observer.CID, env.observerPass)
+	w := env.doJSON(t, http.MethodGet, "/api/v1/sweatbox/session", nil, access)
+	require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
+}
+
+func TestAPISweatboxAirportJSONProxiesTextPlain(t *testing.T) {
+	m := &sweatboxMock{}
+	fsd := httptest.NewServer(m.handler())
+	t.Cleanup(fsd.Close)
+
+	env := setupTestAPI(t)
+	env.server.cfg.FsdHttpServiceAddress = fsd.URL
+	_, access := createInstructor1(t, env)
+
+	apt := "icao=KBTV\n//test apt"
+	w := env.doJSON(t, http.MethodPost, "/api/v1/sweatbox/airport", map[string]any{
+		"text":    apt,
+		"replace": true,
+	}, access)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	// FSD received text/plain body and replace query
+	assert.Equal(t, apt, m.airportBody)
+	assert.Contains(t, m.airportPath, "replace=1")
+	assert.Equal(t, "text/plain; charset=utf-8", m.airportContentType)
+
+	var res APIV1Response
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &res))
+	require.Nil(t, res.Err)
+	data, err := json.Marshal(res.Data)
+	require.NoError(t, err)
+	var loaded serviceapi.SweatboxAirportLoadResponse
+	require.NoError(t, json.Unmarshal(data, &loaded))
+	assert.Equal(t, "KBTV", loaded.ICAO)
+	assert.Equal(t, 3, loaded.Surfaces)
+	assertGoldenJSON(t, "2026-07-28/sweatbox_airport_ok.json", w.Body.Bytes())
+}
+
+func TestAPISweatboxAirportConflict409(t *testing.T) {
+	m := &sweatboxMock{airportConflict: true}
+	fsd := httptest.NewServer(m.handler())
+	t.Cleanup(fsd.Close)
+
+	env := setupTestAPI(t)
+	env.server.cfg.FsdHttpServiceAddress = fsd.URL
+	access, _ := env.login(t, env.admin.CID, env.adminPass)
+
+	w := env.doJSON(t, http.MethodPost, "/api/v1/sweatbox/airport", map[string]any{
+		"text": "icao=KBTV\n",
+	}, access)
+	require.Equal(t, http.StatusConflict, w.Code, w.Body.String())
+	var res APIV1Response
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &res))
+	require.NotNil(t, res.Err)
+	assert.Contains(t, *res.Err, "aircraft")
+}
+
+func TestAPISweatboxAirportEmptyText400(t *testing.T) {
+	env := setupTestAPI(t)
+	access, _ := env.login(t, env.admin.CID, env.adminPass)
+	w := env.doJSON(t, http.MethodPost, "/api/v1/sweatbox/airport", map[string]any{
+		"text": "   ",
+	}, access)
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+}
+
+func TestAPISweatboxScenarioOK(t *testing.T) {
+	m := &sweatboxMock{}
+	fsd := httptest.NewServer(m.handler())
+	t.Cleanup(fsd.Close)
+
+	env := setupTestAPI(t)
+	env.server.cfg.FsdHttpServiceAddress = fsd.URL
+	access, _ := env.login(t, env.admin.CID, env.adminPass)
+
+	air := "AAL123 B738 ..."
+	w := env.doJSON(t, http.MethodPost, "/api/v1/sweatbox/scenario", map[string]any{
+		"text": air,
+	}, access)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Equal(t, air, m.scenarioBody)
+	assert.Equal(t, "text/plain; charset=utf-8", m.scenarioContentType)
+
+	var res APIV1Response
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &res))
+	require.Nil(t, res.Err)
+	assertGoldenJSON(t, "2026-07-28/sweatbox_scenario_ok.json", w.Body.Bytes())
+}
+
+func TestAPISweatboxCommandSoftFailStays200(t *testing.T) {
+	m := &sweatboxMock{commandSoftFail: true}
+	fsd := httptest.NewServer(m.handler())
+	t.Cleanup(fsd.Close)
+
+	env := setupTestAPI(t)
+	env.server.cfg.FsdHttpServiceAddress = fsd.URL
+	access, _ := env.login(t, env.admin.CID, env.adminPass)
+
+	w := env.doJSON(t, http.MethodPost, "/api/v1/sweatbox/command", map[string]any{
+		"callsign": "AAL123",
+		"command":  "xyz",
+	}, access)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var res APIV1Response
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &res))
+	require.Nil(t, res.Err, "soft-fail must not set envelope err")
+	data, err := json.Marshal(res.Data)
+	require.NoError(t, err)
+	var cmd serviceapi.SweatboxCommandResponse
+	require.NoError(t, json.Unmarshal(data, &cmd))
+	assert.False(t, cmd.OK)
+	assert.Contains(t, cmd.Message, "Unknown command")
+	assertGoldenJSON(t, "2026-07-28/sweatbox_command_softfail.json", w.Body.Bytes())
+}
+
+func TestAPISweatboxCommandOK(t *testing.T) {
+	m := &sweatboxMock{}
+	fsd := httptest.NewServer(m.handler())
+	t.Cleanup(fsd.Close)
+
+	env := setupTestAPI(t)
+	env.server.cfg.FsdHttpServiceAddress = fsd.URL
+	access, _ := env.login(t, env.admin.CID, env.adminPass)
+
+	w := env.doJSON(t, http.MethodPost, "/api/v1/sweatbox/command", map[string]any{
+		"callsign": "AAL123",
+		"command":  "taxi A",
+	}, access)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Equal(t, "AAL123", m.lastCommand.Callsign)
+	assert.Equal(t, "taxi A", m.lastCommand.Command)
+
+	var res APIV1Response
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &res))
+	require.Nil(t, res.Err)
+	assertGoldenJSON(t, "2026-07-28/sweatbox_command_ok.json", w.Body.Bytes())
+}
+
+func TestAPISweatboxCommandMissing400(t *testing.T) {
+	env := setupTestAPI(t)
+	access, _ := env.login(t, env.admin.CID, env.adminPass)
+	w := env.doJSON(t, http.MethodPost, "/api/v1/sweatbox/command", map[string]any{
+		"callsign": "AAL123",
+		"command":  "  ",
+	}, access)
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+}
+
+func TestAPISweatboxPauseUnpause204To200(t *testing.T) {
+	m := &sweatboxMock{}
+	fsd := httptest.NewServer(m.handler())
+	t.Cleanup(fsd.Close)
+
+	env := setupTestAPI(t)
+	env.server.cfg.FsdHttpServiceAddress = fsd.URL
+	access, _ := env.login(t, env.admin.CID, env.adminPass)
+
+	w := env.doJSON(t, http.MethodPost, "/api/v1/sweatbox/pause", nil, access)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.True(t, m.paused)
+	assertGoldenJSON(t, "2026-07-28/sweatbox_pause_ok.json", w.Body.Bytes())
+
+	w = env.doJSON(t, http.MethodPost, "/api/v1/sweatbox/unpause", nil, access)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.False(t, m.paused)
+	assertGoldenJSON(t, "2026-07-28/sweatbox_unpause_ok.json", w.Body.Bytes())
+}
+
+func TestAPISweatboxDeleteAircraft(t *testing.T) {
+	m := &sweatboxMock{}
+	fsd := httptest.NewServer(m.handler())
+	t.Cleanup(fsd.Close)
+
+	env := setupTestAPI(t)
+	env.server.cfg.FsdHttpServiceAddress = fsd.URL
+	access, _ := env.login(t, env.admin.CID, env.adminPass)
+
+	w := env.doJSON(t, http.MethodDelete, "/api/v1/sweatbox/aircraft/AAL123", nil, access)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assertGoldenJSON(t, "2026-07-28/sweatbox_delete_ok.json", w.Body.Bytes())
+}
+
+func TestAPISweatboxDeleteAllRequiresConfirm(t *testing.T) {
+	m := &sweatboxMock{}
+	fsd := httptest.NewServer(m.handler())
+	t.Cleanup(fsd.Close)
+
+	env := setupTestAPI(t)
+	env.server.cfg.FsdHttpServiceAddress = fsd.URL
+	access, _ := env.login(t, env.admin.CID, env.adminPass)
+
+	// Missing confirm → 400
+	w := env.doJSON(t, http.MethodDelete, "/api/v1/sweatbox/aircraft", nil, access)
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+	var res APIV1Response
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &res))
+	require.NotNil(t, res.Err)
+	assert.Contains(t, *res.Err, "confirm")
+
+	// JSON confirm
+	w = env.doJSON(t, http.MethodDelete, "/api/v1/sweatbox/aircraft", map[string]any{
+		"confirm": true,
+	}, access)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assertGoldenJSON(t, "2026-07-28/sweatbox_delete_all_ok.json", w.Body.Bytes())
+}
+
+func TestAPISweatboxDeleteAllQueryConfirm(t *testing.T) {
+	m := &sweatboxMock{}
+	fsd := httptest.NewServer(m.handler())
+	t.Cleanup(fsd.Close)
+
+	env := setupTestAPI(t)
+	env.server.cfg.FsdHttpServiceAddress = fsd.URL
+	access, _ := env.login(t, env.admin.CID, env.adminPass)
+
+	w := env.doJSON(t, http.MethodDelete, "/api/v1/sweatbox/aircraft?confirm=1", nil, access)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+}
+
+func TestAPISweatboxMutationsUnreachable502(t *testing.T) {
+	env := setupTestAPI(t)
+	access, _ := env.login(t, env.admin.CID, env.adminPass)
+
+	w := env.doJSON(t, http.MethodPost, "/api/v1/sweatbox/pause", nil, access)
+	require.Equal(t, http.StatusBadGateway, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), "unreachable")
+}
+
+func TestAPISweatboxAirportForbiddenForObserver(t *testing.T) {
+	env := setupTestAPI(t)
+	access, _ := env.login(t, env.observer.CID, env.observerPass)
+	w := env.doJSON(t, http.MethodPost, "/api/v1/sweatbox/airport", map[string]any{
+		"text": "icao=KBTV\n",
+	}, access)
+	require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
+}

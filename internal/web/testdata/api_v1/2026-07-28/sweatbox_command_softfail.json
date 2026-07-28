@@ -1,0 +1,8 @@
+{
+  "version": "v1",
+  "err": null,
+  "data": {
+    "ok": false,
+    "message": "Unknown command: xyz"
+  }
+}

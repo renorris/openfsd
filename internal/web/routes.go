@@ -93,14 +93,28 @@ func (s *Server) setupFsdConnRoutes(parent *gin.RouterGroup) {
 	fsdConnGroup.POST("/kickuser", s.handleKickActiveConnection)
 }
 
-// setupSweatboxAPIRoutes mounts read-only PE proxies under /api/v1/sweatbox.
-// Mutations stay on HTML form POSTs (CSRF + PRG) — not on this JSON surface.
-// Raw GET bodies are outside envelope goldens; microversion middleware still applies.
+// setupSweatboxAPIRoutes mounts /api/v1/sweatbox (Instructor1+ dual-accept).
+//
+// Raw GET /state and /ops stay non-envelope for PE polls. Mutations and GET
+// /session use the APIV1 envelope with the design §D FSD status mapping.
+// HTML form POSTs under /sweatbox/* remain for the MPA (CSRF + PRG).
 func (s *Server) setupSweatboxAPIRoutes(parent *gin.RouterGroup) {
 	g := parent.Group("/sweatbox")
 	s.useAPIV1Protected(g)
+
+	// Raw PE reads (non-envelope)
 	g.GET("/state", s.handleAPISweatboxState)
 	g.GET("/ops", s.handleAPISweatboxOps)
+
+	// Enveloped operator surface (Stable; design §D)
+	g.GET("/session", s.handleAPISweatboxSession)
+	g.POST("/airport", s.handleAPISweatboxAirport)
+	g.POST("/scenario", s.handleAPISweatboxScenario)
+	g.POST("/command", s.handleAPISweatboxCommand)
+	g.POST("/pause", s.handleAPISweatboxPause)
+	g.POST("/unpause", s.handleAPISweatboxUnpause)
+	g.DELETE("/aircraft/:callsign", s.handleAPISweatboxDeleteAircraft)
+	g.DELETE("/aircraft", s.handleAPISweatboxDeleteAllAircraft)
 }
 
 func (s *Server) setupDataRoutes(parent *gin.RouterGroup) {

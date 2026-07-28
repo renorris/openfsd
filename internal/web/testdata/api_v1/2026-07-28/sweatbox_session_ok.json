@@ -1,0 +1,33 @@
+{
+  "version": "v1",
+  "err": null,
+  "data": {
+    "icao": "KBTV",
+    "paused": false,
+    "elapsed_sec": 65,
+    "arr_count": 1,
+    "dep_count": 2,
+    "aircraft": [
+      {
+        "callsign": "AAL123",
+        "type": "B738",
+        "rules": "I",
+        "squawk": "2200",
+        "xpdr_mode": "",
+        "lat": 0,
+        "lon": 0,
+        "alt": 335,
+        "speed": 0,
+        "heading": 360,
+        "status": "parked",
+        "instruction": "",
+        "flight_plan": "",
+        "dep": "",
+        "arr": "",
+        "cruise_alt": 0,
+        "route": "",
+        "remarks": ""
+      }
+    ]
+  }
+}
