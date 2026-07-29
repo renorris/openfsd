@@ -18,6 +18,13 @@ type ClientSlot struct {
 // is merged as Enabled and removed from the "coming soon" presentation.
 //
 // This is a product catalog, not a layout special-case on a single client_id.
+//
+// Research / fingerprint mirrors (Apply still disabled until re-verify gates):
+//
+//	xpilot     — prior art xpilot-3.0.1 (PE padded_string); adapter not in tree yet
+//	euroscope  — docs/client-injector/research/euroscope-3.2.9.md
+//	vatsys     — docs/client-injector/research/vatsys-1.4.19.md
+//	trackaudio — docs/client-injector/research/trackaudio.md (docs only; no PE offsets)
 var FutureClientCatalog = []ClientSlot{
 	{ID: "xpilot", DisplayName: "xPilot", Enabled: false, ComingSoonLabel: "Coming soon"},
 	{ID: "euroscope", DisplayName: "Euroscope", Enabled: false, ComingSoonLabel: "Coming soon"},

@@ -1,0 +1,58 @@
+# openfsd client profile — metadata / fingerprint mirror only.
+# Do NOT ship Euroscope binaries. Users install from the vendor.
+# Offsets and Apply strategy: docs/client-injector/research/euroscope-3.2.9.md
+# Prior art: openfsd-client-patch-utility example_patchfiles/euroscope/euroscope-3.2.9.yaml
+#
+# Apply status: DISABLED (Coming soon). Re-verify stock PE sha1 before enabling.
+
+client_id: euroscope
+display_name: Euroscope
+vendor: Gergely Csernak / Euroscope community
+license_note: Proprietary; not redistributable by openfsd
+profile_version: "1"
+supported_client_version: "3.2.9"
+download_page: ""  # vendor download; confirm at re-verify time
+apply_ready: false
+research_notes: docs/client-injector/research/euroscope-3.2.9.md
+
+primary_binary:
+  relative_path: Euroscope.exe
+  default_install_globs:
+    windows:
+      - "%ProgramFiles(x86)%\\Euroscope\\Euroscope.exe"
+      - "%ProgramFiles%\\Euroscope\\Euroscope.exe"
+  # SHA-1 from prior-art expected_sum — re-verify before Apply.
+  sha1: dfb1caf3d73e897b2a04964dc35867b4059bc537
+  sha256: ""  # capture on re-verify
+  size_bytes: 0
+  pe:
+    clr: false
+    architecture: x86  # confirm on re-verify
+
+# Prior-art section map (VA → file: raw + (va - virtual_start))
+sections:
+  - name: section1
+    raw_offset: 0x400
+    virtual_start: 0x401000
+  - name: section2
+    raw_offset: 0x25AA00
+    virtual_start: 0x65C000
+
+# Computed file offsets for future schema-v2 embed (see research notes).
+prior_art_sites:
+  disable_fsd_version_check:
+    kind: raw_overwrite
+    file_offset: 0x1AD41A
+    new_bytes: [0xEB]
+  retarget_fsd_jwt_ptr:
+    kind: raw_overwrite
+    file_offset: 0x638E3
+    new_bytes: [0x58, 0xDE, 0x65]
+  write_fsd_jwt_url:
+    kind: padded_string
+    file_offset: 0x25C858
+    available_bytes: 0x76
+    encoding: utf8
+    template: "{{.JWTURL}}"
+
+prior_art_profile: euroscope-3.2.9

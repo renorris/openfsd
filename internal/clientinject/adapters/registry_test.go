@@ -15,6 +15,12 @@ func TestDefaultAdapters(t *testing.T) {
 	ids := map[string]bool{}
 	for _, a := range as {
 		ids[a.ClientID()] = true
+		// PR-11 scaffold: do not register euroscope/vatsys/trackaudio Apply
+		// adapters until stock PE re-verify gates pass.
+		switch a.ClientID() {
+		case "euroscope", "vatsys", "trackaudio":
+			t.Fatalf("unexpected Apply-enabled adapter %q (must stay Coming soon)", a.ClientID())
+		}
 	}
 	if !ids["vpilot"] || !ids["xpilot"] {
 		t.Fatalf("ids=%v", ids)
@@ -41,5 +47,12 @@ func TestDefaultEngine(t *testing.T) {
 	// Multi-client: registry is not vPilot-only.
 	if len(eng.Adapters) < 2 {
 		t.Fatalf("adapters=%d", len(eng.Adapters))
+	}
+	// No embed profiles for Coming-soon clients yet (fingerprint mirrors live
+	// under third_party/client-profiles/ only).
+	for _, id := range []string{"euroscope-3.2.9", "vatsys-1.4.19"} {
+		if _, ok := eng.Profiles.Get(id); ok {
+			t.Fatalf("unexpected embed profile %q (Apply not ready)", id)
+		}
 	}
 }

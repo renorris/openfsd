@@ -1,0 +1,75 @@
+# openfsd client profile — metadata / fingerprint mirror only.
+# Do NOT ship vatSys binaries. Users install from the vendor.
+# Offsets and Apply strategy: docs/client-injector/research/vatsys-1.4.19.md
+# Prior art: openfsd-client-patch-utility example_patchfiles/vatsys/vatsys-1.4.19.yaml
+#
+# Apply status: DISABLED (Coming soon). Re-verify stock PE sha1 + measure #US
+# budgets before enabling.
+
+client_id: vatsys
+display_name: vatSys
+vendor: Andrew Mather / vatSys
+license_note: Proprietary; not redistributable by openfsd
+profile_version: "1"
+supported_client_version: "1.4.19"
+download_page: ""  # vendor download; confirm at re-verify time
+apply_ready: false
+research_notes: docs/client-injector/research/vatsys-1.4.19.md
+
+primary_binary:
+  relative_path: vatSys.exe  # under install bin/
+  default_install_globs:
+    windows:
+      - "%ProgramFiles(x86)%\\vatSys\\bin\\vatSys.exe"
+      - "%ProgramFiles%\\vatSys\\bin\\vatSys.exe"
+  # SHA-1 from prior-art expected_sum — re-verify before Apply.
+  sha1: b8050748bc436ce4b870d95a37a2eeb20532ab30
+  sha256: ""  # capture on re-verify
+  size_bytes: 0
+  pe:
+    clr: true
+    architecture: ""  # confirm on re-verify
+
+# Prior-art section map
+sections:
+  - name: file
+    raw_offset: 0x00
+    virtual_start: 0x00
+  - name: userstring-heap
+    raw_offset: 0x12DD4C
+    virtual_start: 0x00
+
+clr:
+  us_heap:
+    file_offset: 0x12DD4C
+    size: 0  # measure on re-verify
+
+prior_art_sites:
+  ldstr_fsd_jwt:
+    kind: raw_overwrite
+    file_offset: 0x84F94
+    new_bytes: [0x72, 0xA8, 0x18, 0x00, 0x70]
+  ldstr_status_txt:
+    kind: raw_overwrite
+    file_offset: 0x8BC2E
+    new_bytes: [0x72, 0x84, 0x17, 0x01, 0x70]
+  relax_cid_length:
+    kind: raw_overwrite
+    file_offset: 0x5E761
+    new_bytes: [0x17]
+  force_server_list_reload:
+    kind: raw_overwrite
+    file_offset: 0x8451D
+    new_bytes: [0x16]
+  us_fsd_jwt:
+    kind: cil_us_string
+    us_heap_offset: 0x0018A8
+    file_offset_header: 0x12F5F4  # 0x12DD4C + 0x18A8
+    template: "{{.JWTURL}}"
+  us_status_txt:
+    kind: cil_us_string
+    us_heap_offset: 0x011784
+    file_offset_header: 0x13F4D0  # 0x12DD4C + 0x11784
+    template: "{{.StatusURL}}"
+
+prior_art_profile: vatsys-1.4.19
