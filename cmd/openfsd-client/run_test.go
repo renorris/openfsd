@@ -63,3 +63,23 @@ func TestRun_Detect(t *testing.T) {
 	}
 	// May find zero installs on this machine; just ensure no crash.
 }
+
+func TestRun_HelpMentionsEphemeral(t *testing.T) {
+	var out, errBuf bytes.Buffer
+	code := Run([]string{"help"}, &out, &errBuf)
+	if code != ExitOK {
+		t.Fatalf("code=%d err=%s", code, errBuf.String())
+	}
+	if !strings.Contains(out.String(), "--ephemeral") {
+		t.Fatalf("help missing --ephemeral: %s", out.String())
+	}
+}
+
+func TestRun_LaunchDryPrintWithoutEphemeral(t *testing.T) {
+	// Missing install → usage; ensures flag parsing accepts launch without ephemeral.
+	var out, errBuf bytes.Buffer
+	code := Run([]string{"launch", "--web-base", "https://x.test", "--fsd-host", "x.test"}, &out, &errBuf)
+	if code != ExitUsage {
+		t.Fatalf("code=%d err=%s", code, errBuf.String())
+	}
+}

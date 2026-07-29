@@ -45,6 +45,11 @@ Shared flags for plan|apply|health|launch:
   --client ID             Client adapter id (default vpilot)
   --profiles-dir DIR      Optional override profile directory (YAML)
 
+Launch-only flags:
+  --ephemeral             Phase 1 hybrid shadow PE: patch a temp PE copy, cwd=install
+                          root (DLLs resolve from install); durable config rewrite
+                          remains default. Install PE stays stock.
+
 Readiness honesty:
   Default JWT path /api/v1/fsd-jwt allows max host 12 characters for in-place #US
   patch (budget 35 runes). Use --prefer-short-jwt for /j (max host 25) if the
@@ -160,6 +165,7 @@ type endpointFlags struct {
 	install         string
 	client          string
 	profilesDir     string
+	ephemeral       bool // launch --ephemeral (hybrid shadow PE)
 }
 
 func parseEndpointFlags(name string, args []string, stderr io.Writer) (*endpointFlags, []string, int) {
@@ -176,6 +182,8 @@ func parseEndpointFlags(name string, args []string, stderr io.Writer) (*endpoint
 	fs.StringVar(&ef.install, "install", "", "client install directory")
 	fs.StringVar(&ef.client, "client", "vpilot", "client id")
 	fs.StringVar(&ef.profilesDir, "profiles-dir", "", "optional profiles directory")
+	// Launch-only; harmless no-op if passed to other subcommands.
+	fs.BoolVar(&ef.ephemeral, "ephemeral", false, "hybrid shadow PE launch (temp PE, cwd=install, durable config)")
 	if err := fs.Parse(args); err != nil {
 		return nil, nil, ExitUsage
 	}
@@ -299,10 +307,40 @@ func cmdLaunch(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "no adapter for %q\n", install.ClientID)
 			return ExitUsage
 		}
+		if !ef.ephemeral {
+			launchArgs := a.LaunchArgs(install, ep)
+			pe := clientinject.AbsPrimaryPE(install)
+			fmt.Fprintf(stdout, "exec: %s %s\n", pe, strings.Join(launchArgs, " "))
+			fmt.Fprintf(stdout, "(launch is dry-print only without --ephemeral; use --ephemeral for Phase 1 hybrid shadow PE)\n")
+			return ExitOK
+		}
+
+		// Phase 1 hybrid shadow PE launch (Appendix B).
+		plan, err := eng.Plan(context.Background(), install, ep)
+		if err != nil {
+			return mapPlanErr(err, stderr)
+		}
+		printPlan(stdout, plan)
+		if len(plan.Blockers) > 0 {
+			fmt.Fprintf(stderr, "plan has blockers; refuse ephemeral launch\n")
+			return ExitPlanBlockers
+		}
 		launchArgs := a.LaunchArgs(install, ep)
-		pe := clientinject.AbsPrimaryPE(install)
-		fmt.Fprintf(stdout, "exec: %s %s\n", pe, strings.Join(launchArgs, " "))
-		fmt.Fprintf(stdout, "(launch is dry-print only in headless CLI; start the client with these args from the install directory)\n")
+		// Prefer plan launch_flag args when present.
+		if fromPlan := clientinject.LaunchArgsFromPlan(plan); len(fromPlan) > 0 {
+			launchArgs = fromPlan
+		}
+		fmt.Fprintf(stdout, "ephemeral shadow launch: cwd=%s pe=temp-copy durable_config=true\n", install.RootDir)
+		fmt.Fprintf(stdout, "launch args: %s\n", strings.Join(launchArgs, " "))
+		session, err := eng.LaunchShadow(context.Background(), plan, launchArgs, clientinject.ShadowLaunchConfig{})
+		if err != nil {
+			fmt.Fprintf(stderr, "ephemeral launch: %v\n", err)
+			return ExitApplyFailed
+		}
+		if session != nil {
+			fmt.Fprintf(stdout, "ephemeral launch finished (temp_kept=%v install_pe_stock_fp=%s)\n",
+				session.KeptTemp(), session.InstallPEFingerprint)
+		}
 		return ExitOK
 	})
 }

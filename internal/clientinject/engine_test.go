@@ -69,8 +69,12 @@ func (f *FakeAdapter) Apply(ctx context.Context, plan *Plan, w FileWriter) error
 		return errors.New("fake apply boom")
 	}
 	for _, m := range plan.Mutations {
+		// Launch flags are plan-only (no disk write), same as production adapters.
+		if m.Kind == MutLaunchFlag {
+			continue
+		}
 		path := m.TargetRel
-		if !filepath.IsAbs(path) {
+		if path != "" && !filepath.IsAbs(path) {
 			path = filepath.Join(plan.Install.RootDir, path)
 		}
 		switch d := m.Detail.(type) {
