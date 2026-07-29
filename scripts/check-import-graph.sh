@@ -227,14 +227,17 @@ check_no_imports "internal/afv" "${MODULE}/internal/afv/..." \
   "${MODULE}/internal/sweatbox" \
   "${MODULE}/internal/metar"
 
-# internal/clientinject/cilus — pure CLR #US; stdlib only
+# internal/clientinject pure packages — stdlib only (skip if missing)
 check_stdlib_only "internal/clientinject/cilus" "${MODULE}/internal/clientinject/cilus/..."
-
-# internal/clientinject/vpilotconfig — pure vPilot 3DES config; stdlib only
 check_stdlib_only "internal/clientinject/vpilotconfig" "${MODULE}/internal/clientinject/vpilotconfig/..."
+check_stdlib_only "internal/clientinject/pepatch" "${MODULE}/internal/clientinject/pepatch/..."
 
-# internal/clientinject (engine + subpackages) — must not import server/web/afv/…
-# Skips cleanly until the parent package tree has Go packages.
+# internal/clientinject root engine: stdlib + yaml.v3 + own pure subpackages only
+check_imports_allowlist "internal/clientinject" "${MODULE}/internal/clientinject" \
+  "gopkg.in/yaml.v3" \
+  "${MODULE}/internal/clientinject"
+
+# Also forbid server-side packages on all clientinject subpackages (adapters later)
 check_no_imports "internal/clientinject" "${MODULE}/internal/clientinject/..." \
   "${MODULE}/internal/server" \
   "${MODULE}/internal/web" \
@@ -249,9 +252,6 @@ check_no_imports "internal/clientinject" "${MODULE}/internal/clientinject/..." \
   "${MODULE}/internal/serviceapi"
 
 # cmd/openfsd-client — auxiliary Client Setup tool; never FSD/server internals.
-# Skips cleanly until the package lands (same pattern as other missing pkgs).
-# GUI deps (e.g. Fyne) are third-party and allowed; only hard-forbid server-side
-# packages listed below. Tighten to an allowlist when the cmd exists if needed.
 check_no_imports "cmd/openfsd-client" "${MODULE}/cmd/openfsd-client/..." \
   "${MODULE}/internal/server" \
   "${MODULE}/internal/web" \

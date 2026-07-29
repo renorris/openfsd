@@ -1,0 +1,111 @@
+# openfsd client profile — schema v2 embed skeleton.
+# Legal: user must install vPilot themselves; openfsd never redistributes it.
+# Source installer: https://vpilot.rosscarlson.dev/Assets/Files/Installers/vPilot-Setup-3.12.1.exe
+# Offsets from docs/client-injector/research/vpilot-3.12.1.md — version-pinned by PE hash.
+
+schema_version: 2
+client_id: vpilot
+display_name: vPilot
+vendor: Ross Alan Carlson
+license_note: Proprietary; not redistributable by openfsd
+profile_version: "2"
+supported_client_version: "3.12.1"
+released: "2026-02-15"
+download_page: https://vpilot.rosscarlson.dev/Download
+
+installer:
+  filename: vPilot-Setup-3.12.1.exe
+  url: https://vpilot.rosscarlson.dev/Assets/Files/Installers/vPilot-Setup-3.12.1.exe
+  size_bytes: 13984016
+  sha256: 528a51bf0e71ada11103314d18a9fc0321afac94e2706f2fb13e0fbf5bb4beaa
+  sha1: 48820cb593c6cef8325a331c763316a8b33a501b
+  format: nsis
+
+primary_binary:
+  relative_path: vPilot.exe
+  default_install_globs:
+    windows:
+      - "%LOCALAPPDATA%\\vPilot\\vPilot.exe"
+  sha1: 7d95a7110392c15728143cc30e1f00899c686eb5
+  sha256: c743f204929309db6f49e8b543db2d661ad09c32a2a7bc71fe419c685d244bff
+  size_bytes: 1236416
+  pe:
+    framework: ".NETFramework,Version=v4.7.2"
+    clr: true
+    architecture: x86
+
+config_files:
+  - relative_path: vPilotConfig.xml
+    format: xml_obfuscated_fields
+
+related_binaries:
+  - GeoVR.Client.dll
+  - GeoVR.Connection.dll
+  - GeoVR.Shared.dll
+  - RossCarlson.Vatsim.Vpilot.Plugins.dll
+
+clr:
+  us_heap:
+    file_offset: 0xA22E8
+    size: 0x15E04
+
+strings:
+  fsd_jwt:
+    stock: "https://auth.vatsim.net/api/fsd-jwt"
+    us_heap_offset: 0x1569F
+    body_file_offsets: [0xB7988]
+    ldstr_file_offsets: [0x4BDB5]
+    payload_budget_bytes: 71
+    template: "{{.JWTURL}}"
+  afv_base:
+    stock: "https://voice1.vatsim.net"
+    us_heap_offset: 0x6D8D
+    body_file_offsets: [0xA9076]
+    ldstr_file_offsets: [0x1F0A7]
+    payload_budget_bytes: 51
+    template: "{{.AFVBaseURL}}"
+  fsd_auto:
+    stock: "http://fsd.vatsim.net/"
+    us_heap_offset: 0x15751
+    body_file_offsets: [0xB7A3A]
+    ldstr_file_offsets: [0x4C0B2]
+    payload_budget_bytes: 45
+    template: ""
+
+# Populated only after research gate R1 — empty means remap unavailable
+us_free_slots: []
+
+mutations:
+  - id: config_status_servers
+    kind: vpilot_config
+    description: Rewrite NetworkStatusURL + CachedServers; clear credentials
+    fields:
+      network_status_url: "{{.StatusURL}}"
+      cached_servers:
+        - "{{.FSDServerName}}|{{.FSDAddress}}"
+      clear_network_credentials: true
+
+  - id: patch_fsd_jwt
+    kind: cil_us_or_remap
+    description: Retarget FSD JWT #US (in-place if budget allows; else remap)
+    string_ref: fsd_jwt
+    on_too_long: error
+
+  - id: patch_afv_base
+    kind: cil_us_or_remap
+    description: Retarget AFV base #US or fall back to -novoice
+    string_ref: afv_base
+    on_too_long: launch_novoice
+
+  - id: afv_disable_pe
+    kind: raw_overwrite
+    description: PE ret disable for AFV connect (offset null until research R2)
+    file_offset: null
+    new_bytes: [0x2A]
+    only_if: pe_disable_selected_and_offset_set
+
+launch:
+  server_address_flag: "-serveraddressoverride"
+  no_voice_flags:
+    - "-novoice"
+    - "/novoice"

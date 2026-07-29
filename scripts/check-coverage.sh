@@ -9,9 +9,9 @@
 #   pkg/protocol ≥98, pkg/twrfiles ≥98, pkg/afvprotocol ≥98, internal/geo ≥98,
 #   internal/auth ≥95, internal/postoffice ≥90, internal/sweatbox ≥95,
 #   internal/cluster ≥90, internal/clientinject/cilus ≥98,
-#   internal/clientinject/vpilotconfig ≥98
+#   internal/clientinject/vpilotconfig ≥98, internal/clientinject/pepatch ≥95
 # Soft / reported only:
-#   internal/web ≥80, internal/afv ≥80 (P0), overall aspirational 90
+#   internal/web ≥80, internal/afv ≥80 (P0), internal/clientinject ≥85, overall aspirational 90
 set -euo pipefail
 
 FLOOR="${1:-80}"
@@ -63,10 +63,12 @@ hard = {
     "internal/cluster": 90.0,
     "internal/clientinject/cilus": 98.0,
     "internal/clientinject/vpilotconfig": 98.0,
+    "internal/clientinject/pepatch": 95.0,
 }
 soft = {
     "internal/web": 80.0,  # aspirational PE-era floor; report only
     "internal/afv": 80.0,  # soft through P0; hard 85 later
+    "internal/clientinject": 85.0,  # engine soft until GUI/adapters mature
 }
 
 failed = False
