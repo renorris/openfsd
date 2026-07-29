@@ -34,3 +34,6 @@ apt.dat.zip
 **/apt.dat
 **/apt.dat.zip
 cover.out
+
+# Local client research downloads/extracts (never redistribute third-party binaries)
+.research/

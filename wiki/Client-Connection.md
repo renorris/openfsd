@@ -18,13 +18,19 @@ Newer versions of VRC such as 1.3.0 use the new VATSIM fsd-jwt authentication sy
 
 ## Euroscope
 
-See [here](https://github.com/renorris/openfsd-client-patch-utility).
+External prior-art patcher: [openfsd-client-patch-utility](https://github.com/renorris/openfsd-client-patch-utility).
+
+Monorepo research (hash + offsets; **Apply not enabled** yet — Coming soon in
+`openfsd-client`): [docs/client-injector/research/euroscope-3.2.9.md](../docs/client-injector/research/euroscope-3.2.9.md).
 
 Some additional 3rd party work can be found here: [github.com/Misaka-Nnnnq/openfsd-patch-for-es](https://github.com/Misaka-Nnnnq/openfsd-patch-for-es)
 
 ## vatSys
 
-TODO
+External prior-art patcher: [openfsd-client-patch-utility](https://github.com/renorris/openfsd-client-patch-utility).
+
+Monorepo research (hash + CLR `#US` / ldstr sites; **Apply not enabled** yet —
+Coming soon in `openfsd-client`): [docs/client-injector/research/vatsys-1.4.19.md](../docs/client-injector/research/vatsys-1.4.19.md).
 
 ## Swift
 
@@ -53,6 +59,9 @@ Clients such as **TrackAudio**, **xPilot**, and **VectorAudio** (AFV-Native-deri
 
 1. FSD host/port (or private-server entry) as usual
 2. A **voice base URL** pointing at the AFV REST API (`AFV_API_PUBLIC_BASE_URL` / your published HTTPS URL)
+
+TrackAudio Client Setup status: **docs only** (no PE offsets; config-only
+adapter when evidence lands) — see [docs/client-injector/research/trackaudio.md](../docs/client-injector/research/trackaudio.md).
 
 AFV authenticates against the same certificate database as FSD (CID + password). UDP voice endpoints are advertised in the AFV channel config from `AFV_UDP_ADVERTISE_IPV4` (must be reachable by clients, including through NAT).
 

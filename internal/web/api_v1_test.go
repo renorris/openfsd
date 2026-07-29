@@ -277,6 +277,76 @@ func TestFsdJwt(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
 }
 
+// TestFsdJwtShortPathAliases proves POST /j and POST /api/fsd-jwt bind
+// getFsdJwt directly (not 302/3xx redirect) so JWT POST bodies reach the
+// handler. Comparable requests match POST /api/v1/fsd-jwt behavior.
+func TestFsdJwtShortPathAliases(t *testing.T) {
+	env := setupTestAPI(t)
+
+	paths := []string{"/j", "/api/fsd-jwt", "/api/v1/fsd-jwt"}
+	goodBody := map[string]any{
+		"cid":      fmt.Sprintf("%d", env.admin.CID),
+		"password": env.adminPass,
+	}
+	badBody := map[string]any{
+		"cid":      fmt.Sprintf("%d", env.admin.CID),
+		"password": "wrong-password",
+	}
+
+	for _, path := range paths {
+		t.Run("ok_"+path, func(t *testing.T) {
+			w := env.doJSON(t, http.MethodPost, path, goodBody, "")
+			// Body must reach handler: never redirect (302 was the old /j bug).
+			assert.NotContains(t, []int{
+				http.StatusMovedPermanently,
+				http.StatusFound,
+				http.StatusTemporaryRedirect,
+				http.StatusPermanentRedirect,
+			}, w.Code, "path %s must not redirect (code %d, Location %q)", path, w.Code, w.Header().Get("Location"))
+			assert.Empty(t, w.Header().Get("Location"), "path %s must not set Location", path)
+			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+			var okBody struct {
+				Success bool   `json:"success"`
+				Token   string `json:"token"`
+			}
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &okBody))
+			assert.True(t, okBody.Success)
+			assert.NotEmpty(t, okBody.Token)
+		})
+
+		t.Run("bad_password_"+path, func(t *testing.T) {
+			w := env.doJSON(t, http.MethodPost, path, badBody, "")
+			assert.NotContains(t, []int{
+				http.StatusMovedPermanently,
+				http.StatusFound,
+				http.StatusTemporaryRedirect,
+				http.StatusPermanentRedirect,
+			}, w.Code, "path %s must not redirect", path)
+			assert.Empty(t, w.Header().Get("Location"), "path %s must not set Location", path)
+			assert.Equal(t, http.StatusUnauthorized, w.Code, w.Body.String())
+			var errBody struct {
+				Success  bool   `json:"success"`
+				ErrorMsg string `json:"error_msg"`
+			}
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &errBody))
+			assert.False(t, errBody.Success)
+			assert.Contains(t, errBody.ErrorMsg, "CID")
+		})
+
+		t.Run("bind_fail_"+path, func(t *testing.T) {
+			w := env.doJSON(t, http.MethodPost, path, map[string]any{}, "")
+			assert.NotContains(t, []int{
+				http.StatusMovedPermanently,
+				http.StatusFound,
+				http.StatusTemporaryRedirect,
+				http.StatusPermanentRedirect,
+			}, w.Code, "path %s must not redirect", path)
+			assert.Empty(t, w.Header().Get("Location"), "path %s must not set Location", path)
+			assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+		})
+	}
+}
+
 func TestUserLoadPermissions(t *testing.T) {
 	env := setupTestAPI(t)
 	obsAccess, _ := env.login(t, env.observer.CID, env.observerPass)

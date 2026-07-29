@@ -227,6 +227,44 @@ check_no_imports "internal/afv" "${MODULE}/internal/afv/..." \
   "${MODULE}/internal/sweatbox" \
   "${MODULE}/internal/metar"
 
+# internal/clientinject pure packages — stdlib only (skip if missing)
+check_stdlib_only "internal/clientinject/cilus" "${MODULE}/internal/clientinject/cilus/..."
+check_stdlib_only "internal/clientinject/vpilotconfig" "${MODULE}/internal/clientinject/vpilotconfig/..."
+check_stdlib_only "internal/clientinject/pepatch" "${MODULE}/internal/clientinject/pepatch/..."
+
+# internal/clientinject root engine: stdlib + yaml.v3 + own pure subpackages only
+check_imports_allowlist "internal/clientinject" "${MODULE}/internal/clientinject" \
+  "gopkg.in/yaml.v3" \
+  "${MODULE}/internal/clientinject"
+
+# Also forbid server-side packages on all clientinject subpackages (adapters later)
+check_no_imports "internal/clientinject" "${MODULE}/internal/clientinject/..." \
+  "${MODULE}/internal/server" \
+  "${MODULE}/internal/web" \
+  "${MODULE}/internal/afv" \
+  "${MODULE}/internal/db" \
+  "${MODULE}/internal/postoffice" \
+  "${MODULE}/internal/session" \
+  "${MODULE}/internal/cluster" \
+  "${MODULE}/internal/sweatbox" \
+  "${MODULE}/internal/metar" \
+  "${MODULE}/internal/auth" \
+  "${MODULE}/internal/serviceapi"
+
+# cmd/openfsd-client — auxiliary Client Setup tool; never FSD/server internals.
+check_no_imports "cmd/openfsd-client" "${MODULE}/cmd/openfsd-client/..." \
+  "${MODULE}/internal/server" \
+  "${MODULE}/internal/web" \
+  "${MODULE}/internal/afv" \
+  "${MODULE}/internal/db" \
+  "${MODULE}/internal/postoffice" \
+  "${MODULE}/internal/session" \
+  "${MODULE}/internal/cluster" \
+  "${MODULE}/internal/sweatbox" \
+  "${MODULE}/internal/metar" \
+  "${MODULE}/internal/auth" \
+  "${MODULE}/internal/serviceapi"
+
 if [[ "$failed" -ne 0 ]]; then
   echo
   echo "Import graph check FAILED. See AGENTS.md §2."

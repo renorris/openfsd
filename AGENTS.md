@@ -2,7 +2,7 @@
 
 Operational rules for agents and humans changing this repository. This file is the in-repo source of truth.
 
-**Layout is settled:** `pkg/*`, `internal/*`, single binary `cmd/openfsd` (FSD + web + optional AFV via CLI flags). Do not reintroduce dual entrypoints, top-level `fsd/` / `db/` / `web/` packages, or split Docker images.
+**Layout is settled:** `pkg/*`, `internal/*`, one **server** process binary `cmd/openfsd` (FSD + web + optional AFV via CLI flags; may colocate those services). Auxiliary cmds exist for migrate/client tools (`cmd/openfsd-migrate-*`, `cmd/openfsd-client`, …). Do not reintroduce dual FSD/web server entrypoints, top-level `fsd/` / `db/` / `web/` packages, or split Docker images for the server.
 
 ---
 
@@ -28,6 +28,11 @@ Operational rules for agents and humans changing this repository. This file is t
 | `internal/afv` | AFV REST API + UDP voice + radio router + session registry + optional AFV mesh | geo, db, auth, afvprotocol, serviceapi DTOs; **never** server/web/session/postoffice/cluster |
 | `cmd/openfsd` | Process entry | Binary `openfsd`; `-fsd` / `-web` (default both); `-afv` opt-in |
 | `cmd/openfsd-migrate-to-rqlite` | SQLite file → rqlite HTTP row copy | Depends on `internal/db` |
+| `cmd/openfsd-client` | Client Setup GUI/CLI | Auxiliary cmd (like migrate tools); not server process |
+| `internal/clientinject` | Engine plan/apply/revert | Must not import server/web/afv/db/postoffice/session/cluster/sweatbox/metar/auth/serviceapi |
+| `internal/clientinject/cilus` | Pure CLR `#US` encode/decode | **stdlib only** |
+| `internal/clientinject/vpilotconfig` | Pure vPilot 3DES config crypto + XML | **stdlib only** |
+| `internal/clientinject/pepatch` | PE/binary overwrite + padded string + UTF-16 scan | **stdlib only** |
 
 **Wire format:** `pkg/protocol` (FSD) and `pkg/twrfiles` (.apt/.air) — no alternate field order or marshaling in handlers/clients.
 
@@ -54,6 +59,11 @@ pkg/twrfiles      → (stdlib only)
 pkg/afvprotocol   → stdlib + golang.org/x/crypto only
 internal/auth     → protocol
 internal/session  → protocol
+internal/clientinject/cilus → (stdlib only)
+internal/clientinject/vpilotconfig → (stdlib only)
+internal/clientinject/pepatch → (stdlib only)
+internal/clientinject → cilus, vpilotconfig, pepatch, …; never server/web/afv/db/…
+cmd/openfsd-client → internal/clientinject (+ GUI); never server/web/afv/db/…
 ```
 
 ---
@@ -77,8 +87,12 @@ Enforce with `scripts/check-import-graph.sh`.
 | `internal/auth` | `server`, `session`, `web` |
 | `internal/sweatbox` | `server`, `web`, `postoffice`, `session`, `db`, `auth`, `metar`, `fsdclient`, `protocol` |
 | `internal/afv` | `server`, `session`, `postoffice`, `web`, `cluster`, `sweatbox`, `metar` |
+| `internal/clientinject` (incl. subpackages) | `server`, `web`, `afv`, `db`, `postoffice`, `session`, `cluster`, `sweatbox`, `metar`, `auth`, `serviceapi` |
+| `internal/clientinject/cilus` | Any non-stdlib import |
+| `internal/clientinject/vpilotconfig` | Any non-stdlib import |
+| `internal/clientinject/pepatch` | Any non-stdlib import |
 
-Stdlib heuristic: first path element contains no `.` (e.g. `fmt`, `net/http`). Third-party is never allowed in `pkg/protocol`, `pkg/twrfiles`, or `internal/geo`.
+Stdlib heuristic: first path element contains no `.` (e.g. `fmt`, `net/http`). Third-party is never allowed in `pkg/protocol`, `pkg/twrfiles`, `internal/geo`, `internal/clientinject/cilus`, `internal/clientinject/vpilotconfig`, or `internal/clientinject/pepatch`.
 
 **Cycle rule:** `session` never imports `postoffice`. Postoffice depends on a narrow participant/send port. Shared errors like `ErrCallsignInUse` live next to the registry, not in `pkg/protocol`.
 
@@ -178,6 +192,10 @@ Enforced by `scripts/check-coverage.sh` (CI).
 | `internal/postoffice` | ≥90% | **Hard** |
 | `internal/sweatbox` | ≥95% | **Hard** |
 | `internal/cluster` | ≥90% | **Hard** |
+| `internal/clientinject/cilus` | ≥98% | **Hard** |
+| `internal/clientinject/vpilotconfig` | ≥98% | **Hard** |
+| `internal/clientinject/pepatch` | ≥95% | **Hard** |
+| `internal/clientinject` | ≥85% | Soft (report only; hard after GUI/adapters mature) |
 | `internal/web` | ≥80% | Soft (report only) |
 | `internal/afv` | ≥80% | Soft (P0; hard ≥85 later) |
 | Overall aspirational | 90% | Soft (report only) |
@@ -235,6 +253,7 @@ Manual smoke: see root `README.md` (Docker compose / single binary).
 | No `panic(` | non-test `.go` under `pkg/`, `internal/` | `scripts/check-hygiene.sh` |
 | No `reflect` | `pkg/protocol` | `scripts/check-hygiene.sh` |
 | No `fmt.Print` / `log.Print` / `log.Fatal` / `log.Panic` | `pkg/`, `internal/` (non-test) | `scripts/check-hygiene.sh` |
+| No PE binaries / `*.exe` / `*.dll` in git | tracked files (`git ls-files`); PE magic `MZ`; no tracked `.research/` | `scripts/check-hygiene.sh` |
 | Forbidden imports | §2 | `scripts/check-import-graph.sh` |
 | gofmt | all `.go` | CI / local |
 

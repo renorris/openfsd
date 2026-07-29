@@ -1,0 +1,22 @@
+# openfsd client profile — metadata only. Do NOT ship xPilot binaries.
+# Prior art: openfsd-client-patch-utility example_patchfiles/xpilot/xpilot-3.0.1.yaml
+# Legal: user must install xPilot themselves; openfsd never redistributes it.
+
+client_id: xpilot
+display_name: xPilot
+vendor: Justin Shannon / xPilot project
+license_note: Proprietary; not redistributable by openfsd
+profile_version: "1"
+supported_client_version: "3.0.1"
+download_page: https://github.com/xpilot-project/xpilot/releases
+primary_binary:
+  relative_path: xPilot.exe
+  default_install_globs:
+    windows:
+      - "%ProgramFiles%\\xPilot\\xPilot.exe"
+      - "%ProgramFiles(x86)%\\xPilot\\xPilot.exe"
+  sha1: 1ae61e1d4a624751124a49cd992c90f948c31d37
+  pe:
+    clr: false
+    architecture: x86_64
+prior_art_profile: xpilot-3.0.1  # openfsd-client-patch-utility

@@ -236,25 +236,30 @@ func TestAPIDiscovery_VersionAgnostic(t *testing.T) {
 	}
 }
 
-// TestPublicRoutes_NoVersionReject covers KD-3: fsd-jwt, auth login/refresh never
-// hard-reject on OpenFSD-API-Version (unlike dual-accept resource groups).
+// TestPublicRoutes_NoVersionReject covers KD-3: fsd-jwt (canonical + short
+// aliases), auth login/refresh never hard-reject on OpenFSD-API-Version
+// (unlike dual-accept resource groups).
 func TestPublicRoutes_NoVersionReject(t *testing.T) {
 	env := setupTestAPI(t)
 	badPins := []string{"2020-01-01", "not-a-version", "1.2026-07-28", "2026-02-30"}
 
-	t.Run("fsd-jwt", func(t *testing.T) {
-		for _, pin := range badPins {
-			body := fmt.Sprintf(`{"cid":"%d","password":%q}`, env.admin.CID, env.adminPass)
-			req := httptest.NewRequest(http.MethodPost, "/api/v1/fsd-jwt", bytes.NewReader([]byte(body)))
-			req.Header.Set("Content-Type", "application/json")
-			req.Header.Set(headerAPIVersion, pin)
-			w := httptest.NewRecorder()
-			env.router.ServeHTTP(w, req)
-			// Success path — never version 400.
-			require.Equal(t, http.StatusOK, w.Code, "pin=%s body=%s", pin, w.Body.String())
-			assert.NotContains(t, w.Body.String(), "OpenFSD-API-Version")
-		}
-	})
+	// All FSD JWT paths (canonical + Client Setup short aliases) stay outside
+	// microversion reject — PreferShortJWTPath clients must not get envelope 400.
+	for _, path := range []string{"/j", "/api/fsd-jwt", "/api/v1/fsd-jwt"} {
+		t.Run("fsd-jwt_"+path, func(t *testing.T) {
+			for _, pin := range badPins {
+				body := fmt.Sprintf(`{"cid":"%d","password":%q}`, env.admin.CID, env.adminPass)
+				req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader([]byte(body)))
+				req.Header.Set("Content-Type", "application/json")
+				req.Header.Set(headerAPIVersion, pin)
+				w := httptest.NewRecorder()
+				env.router.ServeHTTP(w, req)
+				// Success path — never version 400.
+				require.Equal(t, http.StatusOK, w.Code, "path=%s pin=%s body=%s", path, pin, w.Body.String())
+				assert.NotContains(t, w.Body.String(), "OpenFSD-API-Version")
+			}
+		})
+	}
 
 	t.Run("auth_login", func(t *testing.T) {
 		for _, pin := range badPins {

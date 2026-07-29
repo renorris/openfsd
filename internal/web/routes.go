@@ -11,6 +11,12 @@ import (
 	"github.com/renorris/openfsd/pkg/protocol"
 )
 
+// FSD JWT short-path aliases (Client Setup #US length budget).
+// POST /j and POST /api/fsd-jwt bind getFsdJwt directly — never 302 —
+// so HTTP clients that do not re-POST bodies after redirect still work.
+// Canonical: POST /api/v1/fsd-jwt. Do not add POST /fsd-jwt: it risks
+// clashing with greedy static mounts; prefer /j + /api/fsd-jwt.
+
 //go:embed static/*
 var staticFS embed.FS
 
@@ -27,9 +33,10 @@ func (s *Server) setupRoutes() (*gin.Engine, error) {
 		e.Use(gin.Logger())
 	}
 
-	e.POST("/j", func(c *gin.Context) {
-		c.Redirect(http.StatusFound, "/api/v1/fsd-jwt")
-	})
+	// FSD JWT: canonical + short aliases for PE #US in-place URL budgets.
+	// All bind getFsdJwt directly (VATSIM-shaped body; outside microversion reject).
+	e.POST("/j", s.getFsdJwt)           // max_host 25 for in-place #US
+	e.POST("/api/fsd-jwt", s.getFsdJwt) // max_host 15; readable short alias
 
 	// API groups — dual-accept Bearer | session cookie; CSRF when cookie-authenticated.
 	apiV1Group := e.Group("/api/v1")
@@ -40,7 +47,7 @@ func (s *Server) setupRoutes() (*gin.Engine, error) {
 	apiV1Group.GET("/openapi.json", s.handleOpenAPIJSON)
 	apiV1Group.GET("/openapi.yaml", s.handleOpenAPIYAML)
 
-	apiV1Group.POST("/fsd-jwt", s.getFsdJwt) // outside microversion reject
+	apiV1Group.POST("/fsd-jwt", s.getFsdJwt) // canonical; outside microversion reject
 	s.setupAuthRoutes(apiV1Group)            // login/refresh: soft version headers only
 	s.setupDataRoutes(apiV1Group)            // never version-reject
 

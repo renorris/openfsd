@@ -146,7 +146,7 @@ docker compose up -d          # pull/build single image; FSD + web
 1. Open `http://localhost:8000`
 2. Log in with the default admin credentials (printed in container logs on first startup)
 3. **Configure Server** — see the [Configuration](https://github.com/renorris/openfsd/wiki/Configuration) wiki
-4. Connect a client — [Client Connection Wiki](https://github.com/renorris/openfsd/wiki/Client-Connection)
+4. Connect a client — [Client Connection Wiki](https://github.com/renorris/openfsd/wiki/Client-Connection). For modern pilot clients (vPilot first), use **openfsd Client Setup** (`openfsd-client`): operator guide [docs/client-injector/README.md](docs/client-injector/README.md) (Phase 0 = on-disk apply; honest JWT host limits).
 
 ### Service selection
 
@@ -213,3 +213,5 @@ mkdocs serve
 ## Operator wiki
 
 Tracked source for the GitHub wiki is under [`wiki/`](wiki/) (Deployment, Configuration, Client Connection, Postgres migration).
+
+**Client Setup:** configure user-installed third-party clients for private openfsd networks with auxiliary binary `openfsd-client` — see [docs/client-injector/README.md](docs/client-injector/README.md) and [wiki/Client-Connection.md](wiki/Client-Connection.md).
