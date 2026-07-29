@@ -5,11 +5,11 @@
 | **Document** | openfsd Client Setup — multi-client framework + vPilot 3.12.1 adapter |
 | **Author** | _(design author / implementer)_ |
 | **Date** | 2026-07-28 |
-| **Status** | **Draft** (rev 3 — re-review polish) |
+| **Status** | **Draft** (rev 3.2 — review feedback polish) |
 | **Project** | openfsd |
 | **Target land path** | `docs/design/client-runtime-injector.md` |
 | **Related** | `Agents.md`, `docs/client-injector/research/vpilot-3.12.1.md`, `third_party/client-profiles/vpilot-3.12.1.yaml`, `wiki/Client-Connection.md`, `docs/design/afv-server.md`, `docs/authentication-token.md`, `docs/design/rest-api-versioning.md`, archived `renorris/vpilot-patch-utility`, `renorris/openfsd-client-patch-utility` |
-| **Revision** | rev 3.1: fix `openfsd.example.com` host len parenthetical (19); prior rev 3 URL tables, `/j` A8, soft probe |
+| **Revision** | rev 3.2: soft-probe 3xx fail; residual HealthCheck levels; PR-1 files; rollout S\* vs R\* gates; fingerprint digests; prior rev 3.1 host-len fix; rev 3 URL tables `/j` A8 |
 
 ---
 
@@ -57,12 +57,16 @@ Wiki `wiki/Client-Connection.md` currently **defers** to external tools (`vpilot
 
 | Item | Value |
 |------|--------|
+| Installer SHA-1 | `48820cb593c6cef8325a331c763316a8b33a501b` |
 | Installer SHA-256 | `528a51bf0e71ada11103314d18a9fc0321afac94e2706f2fb13e0fbf5bb4beaa` |
 | `vPilot.exe` SHA-1 | `7d95a7110392c15728143cc30e1f00899c686eb5` |
+| `vPilot.exe` SHA-256 | `c743f204929309db6f49e8b543db2d661ad09c32a2a7bc71fe419c685d244bff` |
 | Default install | `%LOCALAPPDATA%\vPilot\` |
 | Stack | .NET Framework 4.7.2 PE32 managed; Dotfuscator on network assemblies |
 | AFV | GeoVR.* DLLs; stock base `https://voice1.vatsim.net` (confirm GeoVR does not re-hardcode — research gate) |
 | Config crypto | Base64(3DES-ECB-PKCS7); key = MD5(GUID `5575ac09-f2de-4a1e-808b-e3398e17f8bf`) \|\| first 8 of MD5 |
+
+Full digests (size, installer URL, related DLLs) live in `third_party/client-profiles/vpilot-3.12.1.yaml` + research notes.
 
 CLR `#US` (3.12.1) — heap file offset `0xA22E8`, size `0x15E04` (values live in version-pinned YAML only; Go must not hardcode except tests that load profiles):
 
@@ -455,7 +459,9 @@ type Adapter interface {
      - Write .openfsd-inject-manifest.json (status=in_progress)
 6. Apply mutations in order
    - On any error → restore all from bak; status=failed; keep bak for forensics optional
-7. HealthCheck (includes residual stock JWT scan when R3 done)
+7. HealthCheck (see HealthCheck levels below):
+     - Always: profile-listed `#US` / body offsets + written configs
+     - Residual full-PE stock JWT scan: **warn** pre-R3; **fail** post-R3 / adapter-complete (KD-20)
    - On failure → auto-revert; report
 8. status=applied
 ```
@@ -610,10 +616,12 @@ All return the same VATSIM-shaped body as today. Outside microversion reject. Do
 
 | Step | Behavior |
 |------|----------|
-| Soft probe (plan-time, optional network) | For each candidate path in order, issue **credential-free** request against `WebBaseURL+path` — prefer `OPTIONS` or `POST` with empty/`{}` body. Treat **401/400/200** with JSON body shape as “route exists”; **404/405/connection error** as missing. Do **not** send real CID/password. |
-| Probe disabled | Offline/lab: skip probe; emit **warning** “PreferShortJWTPath set without connectivity check — ensure server has fixed `/j` or A8 aliases.” |
+| Soft probe (plan-time, optional network) | For each candidate path in order, issue **credential-free** request against `WebBaseURL+path` — prefer `OPTIONS` or `POST` with empty/`{}` body. Use an HTTP client with **redirects disabled** (do not follow 3xx). Do **not** send real CID/password. |
+| Probe **success** (“route exists” for JWT POST) | Final status is **401**, **400**, or **200**, preferably with `Content-Type: application/json` (or a known openfsd error envelope). Bare non-JSON 200 is weak success — log a warning. |
+| Probe **failure** (path missing or broken for JWT) | **404**, **405**, connection error, **or any 3xx** (including **301/302/307/308**). Normative: **3xx is not success** for short JWT paths — redirects are not a safe JWT POST surface. In particular, **302 on `POST /j` means A8 is not fixed yet** (today’s stock `routes.go` still redirects to `/api/v1/fsd-jwt`); PreferShortJWTPath must **not** plan `/j` against that server. |
+| Probe disabled | Offline/lab: skip probe; emit **warning** “PreferShortJWTPath set without connectivity check — ensure server has fixed `/j` (direct handler, not 302) or A8 aliases.” |
 | Probe fails all candidates | **Warning** + plan **blocker** unless user sets override “I confirm short JWT path works.” |
-| Mis-set flag without A8/fixed `/j` | Documented operator error; soft probe is the mitigation for the footgun next to the 12-char rule. |
+| Mis-set flag without A8/fixed `/j` | Documented operator error; soft probe (incl. 3xx-as-fail) is the mitigation for the footgun next to the 12-char rule. |
 
 **KD-13 revised:** no **required** server changes for the client tool to exist; **optional** (and high-leverage) web changes: **fix `/j`**, add readable aliases. Not redistribution; not a DB migration.
 
@@ -739,13 +747,25 @@ Do **not** assume only `install/vPilotConfig.xml`.
 6. Remap ldstr when using free slots (R1).
 7. **Never** apply PE `ret` disable until profile `file_offset` non-null (R2).
 
-#### HealthCheck (strengthened)
+#### HealthCheck (strengthened; leveled)
 
-1. Decode primary `#US` slots asserted in profile.
-2. **Scan entire PE** for UTF-16 stock JWT string `https://auth.vatsim.net/api/fsd-jwt` — **fail if any remain** after JWT mutation planned (catches second site `0xBA44A` if live).
-3. Optionally scan for stock AFV base if AFV was retargeted.
-4. Decrypt all written config paths; assert status + server list.
-5. Soft: HTTP GET StatusURL (optional network).
+**Always (Phase 0 / pre-R3 and later):**
+
+1. Decode primary `#US` slots asserted in profile (planned JWT / AFV mutations).
+2. Assert every profile-listed `body_file_offsets` entry for a planned mutation matches the expected post-patch payload (not stock).
+3. Decrypt all written config paths; assert status + server list.
+4. Soft: HTTP GET StatusURL (optional network).
+
+**Residual full-PE stock JWT scan** (UTF-16 `https://auth.vatsim.net/api/fsd-jwt` anywhere in the PE, including sites not yet in the profile — e.g. second body `0xBA44A`):
+
+| Maturity | Residual hit after planned JWT mutation | Rationale |
+|----------|------------------------------------------|-----------|
+| **Phase 0 / pre-R3** (short-host lab, profile lists primary site only) | **Warn** in plan/report; do **not** fail Apply solely for extra residual hits | Second site may be dead resource data; always-fail would block Phase 0 forever until R3 |
+| **Adapter-complete / post-R3** (KD-20) | **Fail** HealthCheck (auto-revert) if any residual stock JWT remains | Multi-site patch closed; “no residual VATSIM JWT” is the guarantee |
+
+**AFV residual (optional):** if AFV was retargeted, optionally scan for stock AFV base; same warn-then-fail maturity pattern once R5/profile list is complete.
+
+Engine orchestration step 7 must use these levels — never treat residual full-PE fail as mandatory before R3.
 
 #### CLI launch
 
@@ -973,16 +993,18 @@ Gates are tracked under `docs/client-injector/research/`; profiles gain offsets 
 
 ## Rollout Plan
 
+**Naming:** rollout uses **S\*** stage IDs only. **R1–R6** are reserved exclusively for [Research gates](#research-gates-must-complete-before-claims-below) above — do not reuse `R*` for rollout.
+
 | Stage | Content |
 |-------|---------|
-| R0 | Design rev 3 + pure packages |
-| R1a | Engine + CLI skeleton (short-host lab) |
-| R1b | Research gates R1–R5 as needed |
-| R2 | Adapter “complete” for production hostnames |
-| R3 | GUI |
-| R4 | Wiki + Windows release artifact |
-| R5 | Phase 1 hybrid shadow |
-| R6+ | Other client adapters |
+| **S0** | Design rev 3 + pure packages |
+| **S1a** | Engine + CLI skeleton (short-host lab) |
+| **S1b** | Research gates R1–R5 as needed |
+| **S2** | Adapter “complete” for production hostnames |
+| **S3** | GUI |
+| **S4** | Wiki + Windows release artifact |
+| **S5** | Phase 1 hybrid shadow |
+| **S6+** | Other client adapters |
 
 **Release:** Windows amd64 primary; macOS/Linux GUI optional for path management. Server Docker **unchanged**.
 
@@ -1039,7 +1061,7 @@ Gates are tracked under `docs/client-injector/research/`; profiles gain offsets 
 | **KD-17** | **Embed root** = `internal/clientinject/profiles/`; `third_party/client-profiles/` is mirror | `go:embed` path rules |
 | **KD-18** | FSD default port **6809**; CachedServers `NAME\|host` without port when default; `host:port` when non-default or IncludePort | Prior-art shaped; R6 may refine |
 | **KD-19** | Phase 0 production hostnames require **R1 free-slot remap and/or working short JWT path** (fixed `/j` or other A8); else short-host lab only (max JWT host **12** on default `/api/v1/fsd-jwt`) | Budget math; fixed `/j` → max host **25** |
-| **KD-20** | HealthCheck residual UTF-16 scan for stock JWT after patch | Second-site safety |
+| **KD-20** | HealthCheck residual UTF-16 scan for stock JWT: **warn** pre-R3; **fail** post-R3 / adapter-complete | Second-site safety without blocking Phase 0 |
 | **KD-21** | Phase 1 shadow = **hybrid**: patch temp copy of PE (+ any DLLs mutated); **cwd = install root**; do not full-tree copy by default | DLLs/GeoVR/plugins resolve from install |
 | **KD-22** | Product name **openfsd Client Setup**; “runtime injector” is roadmap language only | Naming honesty |
 
@@ -1161,9 +1183,9 @@ go build -o openfsd-client ./cmd/openfsd-client
 | | |
 |--|--|
 | **Title** | `docs: client setup / injector design rev 3` |
-| **Files** | `docs/design/client-runtime-injector.md` |
+| **Files** | `docs/design/client-runtime-injector.md`, `docs/client-injector/research/vpilot-3.12.1.md`, `third_party/client-profiles/vpilot-3.12.1.yaml`, `.gitignore` (`.research/`) |
 | **Deps** | None |
-| **Description** | Land this document (incl. `/j` A8 notes, exact URL budgets). No runtime code. |
+| **Description** | Land design (incl. `/j` A8 notes, exact URL budgets) + fingerprint seed + research notes + gitignore for local `.research/` extracts. No runtime code. |
 
 ### PR-2: Pure `cilus` + `vpilotconfig` + hygiene PE guard
 
