@@ -24,6 +24,13 @@ jobs:
         with:
           # Node 20 is EOL on GHA runners; pin current Actions default (24).
           node-version: "24"
+      # Fyne (openfsd-client GUI) needs OpenGL + X11 headers for CGO on Linux.
+      - name: Fyne / OpenGL build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgl1-mesa-dev xorg-dev libxcursor-dev libxrandr-dev \
+            libxinerama-dev libxi-dev libxxf86vm-dev pkg-config
       - name: gofmt
         run: test -z "$(gofmt -l .)"
       - name: Hygiene (no panic/reflect/fmt.Print in library code)
