@@ -129,6 +129,35 @@ func fileSHA1(w FileWriter, path string) (string, error) {
 	return hex.EncodeToString(sum[:]), nil
 }
 
+// stockPESHA1 returns the stock primary-PE SHA-1 for forensics / manifest PESHA1.
+//
+// Order:
+//  1. profile PrimaryBinary.SHA1 (authoritative stock fingerprint)
+//  2. sibling .openfsd-bak SHA-1 (post-Apply; live PE is patched)
+//  3. live PE SHA-1 (first-time / no bak — expected to equal stock)
+//
+// Never prefer a patched live hash when profile stock or bak is available.
+func stockPESHA1(w FileWriter, pe string, profile *Profile) string {
+	if profile != nil {
+		if s := strings.ToLower(strings.TrimSpace(profile.PrimaryBinary.SHA1)); s != "" {
+			return s
+		}
+	}
+	if pe == "" {
+		return ""
+	}
+	if w == nil {
+		w = OSFileWriter{}
+	}
+	if sum, err := fileSHA1(w, BackupPath(pe)); err == nil && sum != "" {
+		return sum
+	}
+	if sum, err := fileSHA1(w, pe); err == nil {
+		return sum
+	}
+	return ""
+}
+
 // normalizeInstall makes PrimaryPE absolute under RootDir when relative.
 func normalizeInstall(install Install) Install {
 	if pe := AbsPrimaryPE(install); pe != "" {
@@ -153,8 +182,10 @@ func (e *Engine) Plan(ctx context.Context, install Install, ep Endpoints) (*Plan
 	if install.ProfileID == "" {
 		install.ProfileID = profile.ProfileID
 	}
-	if install.HashSHA1 == "" && install.PrimaryPE != "" {
-		if sum, err := fileSHA1(e.writer(), install.PrimaryPE); err == nil {
+	// HashSHA1 / manifest PESHA1 must be the stock PE fingerprint, not a
+	// post-patch live digest (re-Plan after Apply leaves bak + patched PE).
+	if install.HashSHA1 == "" {
+		if sum := stockPESHA1(e.writer(), install.PrimaryPE, profile); sum != "" {
 			install.HashSHA1 = sum
 		}
 	}
@@ -214,6 +245,8 @@ func (e *Engine) Apply(ctx context.Context, plan *Plan) (*ApplyResult, error) {
 	// On first apply (no stock bak for PE yet), PE must match profile stock SHA.
 	// Re-apply after a prior successful inject keeps stock in .openfsd-bak while
 	// the live PE may already be patched — skip live-hash stock check then.
+	// HashSHA1 / manifest PESHA1 always record stock identity (profile or bak),
+	// never a patched live digest.
 	if plan.Install.PrimaryPE != "" {
 		want := strings.ToLower(strings.TrimSpace(profile.PrimaryBinary.SHA1))
 		bak := BackupPath(plan.Install.PrimaryPE)
@@ -226,11 +259,9 @@ func (e *Engine) Apply(ctx context.Context, plan *Plan) (*ApplyResult, error) {
 				return nil, fmt.Errorf("clientinject: PE sha1 %s does not match profile %s stock %s",
 					sum, profile.ProfileID, want)
 			}
-			plan.Install.HashSHA1 = sum
-		} else if plan.Install.HashSHA1 == "" {
-			if sum, err := fileSHA1(w, plan.Install.PrimaryPE); err == nil {
-				plan.Install.HashSHA1 = sum
-			}
+		}
+		if stock := stockPESHA1(w, plan.Install.PrimaryPE, profile); stock != "" {
+			plan.Install.HashSHA1 = stock
 		}
 	}
 	if err := a.Verify(plan.Install, profile); err != nil {

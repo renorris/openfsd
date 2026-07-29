@@ -14,6 +14,20 @@
 // Prefer Rewrite (or ParseDocument + Document.Format) when updating an existing
 // install config: unknown elements and attributes are preserved. Format alone
 // emits a minimal four-field document and is for synthetic fixtures only.
+//
+// # encoding/xml fidelity limits
+//
+// Round-trip uses encoding/xml with a generic element tree (xml:",any"). That
+// preserves unknown elements and their attributes for normal vPilot configs,
+// but does **not** preserve:
+//   - XML comments (<!-- ... -->)
+//   - processing instructions
+//   - exact original whitespace, indentation, or attribute order
+//   - document type declarations / entity expansions beyond the stdlib decoder
+//
+// Acceptable for Phase 0 (vPilot writes machine-generated field values). Operators
+// who hand-edit vPilotConfig.xml with comments should expect comments to be
+// dropped on Apply; re-add comments after inject if needed.
 package vpilotconfig
 
 import (

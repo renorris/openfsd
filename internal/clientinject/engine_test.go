@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -764,6 +765,78 @@ func TestEngine_PlanFillsHash(t *testing.T) {
 	}
 	if plan.Install.HashSHA1 != sum {
 		t.Fatalf("hash=%q", plan.Install.HashSHA1)
+	}
+}
+
+// After Apply the live PE may be patched; re-Plan with empty HashSHA1 must still
+// record stock (profile/bak) for HashSHA1, and re-Apply manifest PESHA1 must match stock.
+func TestEngine_RePlanHashSHA1IsStockNotLive(t *testing.T) {
+	root := t.TempDir()
+	pe := filepath.Join(root, "app.exe")
+	payload := filepath.Join(root, "payload.bin")
+	stockPE := []byte("MZ-fake-pe")
+	patchedPE := []byte("MZ-PATCHED-PE-CONTENT")
+	if err := os.WriteFile(pe, stockPE, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(payload, []byte("STOCK-PAYLOAD"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stockSum := sha1hex(stockPE)
+	store := NewProfileStore()
+	_ = store.Add(&Profile{
+		SchemaVersion: 2, ProfileID: "fake-1", ClientID: "fake",
+		PrimaryBinary: PrimaryBinarySpec{RelativePath: "app.exe", SHA1: stockSum},
+	})
+	fake := &FakeAdapter{ID: "fake", NewData: []byte("OPENFSD-PATCHED")}
+	eng := NewEngine(store, fake)
+	install := Install{
+		ClientID: "fake", RootDir: root, PrimaryPE: pe, ProfileID: "fake-1",
+	}
+	plan, err := eng.Plan(context.Background(), install, Endpoints{WebBaseURL: "https://a/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := eng.Apply(context.Background(), plan); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate PE body mutation (real adapters patch the PE; FakeAdapter only
+	// rewrites payload.bin — write a patched PE while bak holds stock).
+	if err := os.WriteFile(pe, patchedPE, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Bak must still be stock from first Apply.
+	bak, err := os.ReadFile(pe + BackupSuffix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(bak, stockPE) {
+		t.Fatalf("bak=%q", bak)
+	}
+
+	// Re-Plan without HashSHA1 / with only RootDir+PE — must fill stock, not live.
+	plan2, err := eng.Plan(context.Background(), Install{
+		ClientID: "fake", RootDir: root, PrimaryPE: pe, ProfileID: "fake-1",
+	}, Endpoints{WebBaseURL: "https://a/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan2.Install.HashSHA1 != stockSum {
+		t.Fatalf("re-plan HashSHA1=%q want stock %q (not live %q)",
+			plan2.Install.HashSHA1, stockSum, sha1hex(patchedPE))
+	}
+
+	// Re-Apply: manifest PESHA1 must be stock.
+	plan2.Mutations = plan.Mutations // reuse write mutation
+	if _, err := eng.Apply(context.Background(), plan2); err != nil {
+		t.Fatal(err)
+	}
+	m, err := ReadManifest(OSFileWriter{}, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.EqualFold(m.PESHA1, stockSum) {
+		t.Fatalf("manifest PESHA1=%q want stock %q", m.PESHA1, stockSum)
 	}
 }
 
