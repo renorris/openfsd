@@ -25,10 +25,10 @@ const (
 	ExitPlanBlockers  = 6
 )
 
-const usageText = `openfsd-client — openfsd Client Setup (headless CLI)
+const usageText = `openfsd-client — openfsd Client Setup (GUI + headless CLI)
 
 Usage:
-  openfsd-client                          Print this help (GUI lands in a later PR)
+  openfsd-client                          Launch GUI when a display is available; else this help
   openfsd-client list-profiles
   openfsd-client detect --client vpilot
   openfsd-client plan|apply|revert|health|launch [flags]
