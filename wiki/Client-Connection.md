@@ -17,22 +17,24 @@ openfsd supports the modern VATSIM FSD protocol. **Clients using protocol revisi
 Phase 0 is **on-disk apply + config** (reversible backups) — **not** in-memory inject.
 
 - **Default JWT path** (`/api/v1/fsd-jwt`): max public host length **12** characters for in-place PE patch.
-- **`--prefer-short-jwt`** + server short path **`POST /j`** (A8: handler must be `getFsdJwt`, not a bare 302): max host **25**.
+- **`--prefer-short-jwt`** + server short path **`POST /j`** (A8: handler must be `getFsdJwt`, not a bare 302): max host **25**. Stock openfsd still **302-redirects** `/j` until A8 lands — confirm your deploy before relying on host length 25.
 - **R1 free-slot `#US` remap** is still **OPEN** — production long hostnames need **A8 short paths** and/or short DNS until R1 lands.
 - **AFV:** retarget voice base if URL **≤ 25** chars; otherwise plan **`-novoice`**. PE AFV disable is **not** until research gate **R2**.
 - **Quit the client completely** before Apply / Revert.
 - **Never redistribute** vPilot or other proprietary clients; users install from the vendor.
+- Headless binary is **CLI-only** (no subcommand → help; Fyne GUI later). **`launch` dry-prints** args only (does not spawn the PE; real/ephemeral spawn is later).
 
-CLI sketch:
+CLI sketch (see [operator guide](../docs/client-injector/README.md) for full flags):
 
 ```bash
+openfsd-client                          # help (GUI later)
 openfsd-client list-profiles
-openfsd-client detect --client vpilot
+openfsd-client detect --client vpilot   # Discover only; no --install
 openfsd-client plan  --client vpilot --install DIR --web-base URL --fsd-host HOST [--prefer-short-jwt] [--afv-base URL]
-openfsd-client apply --client vpilot --install DIR ...   # client must be quit
-openfsd-client health --client vpilot --install DIR
+openfsd-client apply --client vpilot --install DIR --web-base URL --fsd-host HOST ...   # client must be quit
+openfsd-client health --client vpilot --install DIR --web-base URL --fsd-host HOST ...  # same endpoints as apply
 openfsd-client revert --client vpilot --install DIR
-openfsd-client launch --client vpilot --install DIR
+openfsd-client launch --client vpilot --install DIR --web-base URL --fsd-host HOST ...  # dry-print exec line only
 ```
 
 ### status.txt (openfsd subset)

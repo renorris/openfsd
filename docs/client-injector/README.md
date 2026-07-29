@@ -20,9 +20,10 @@ instead of the public VATSIM endpoints they ship with.
 | Phase 0 (shipped intent) | Not Phase 0 |
 |--------------------------|-------------|
 | On-disk PE string / config **apply** with reversible backups | In-memory process inject |
-| Config rewrite (status URL, cached servers) | Shadow / ephemeral launch (later) |
+| Config rewrite (status URL, cached servers) | Shadow / ephemeral PE launch (**PR-9**) |
 | Reversible **Revert** + **Health** | PE AFV `ret` disable (research gate **R2**) |
-| Launch with client CLI flags (`-novoice`, server override) | Redistributing client installers |
+| Headless `launch` **prints** planned client args (`-novoice`, server override) — does not spawn the PE | Real process spawn / Fyne GUI (later PRs) |
+| — | Redistributing client installers (forbidden; see Legal) |
 
 **Honest naming:** Phase 0 is an **on-disk apply + config** tool. Do not market it as
 a “runtime-only injector.” Runtime strategies are later roadmap phases only.
@@ -84,12 +85,13 @@ canonical `/api/v1/fsd-jwt` path.
 
 **With `--prefer-short-jwt`:** planner prefers short paths (order typically
 `/j`, then other A8 aliases) so max host can reach **25** when the server’s
-`POST /j` invokes the JWT handler **directly**.
+`POST /j` invokes the JWT handler **directly** (not a 302 redirect — many HTTP
+clients drop or rewrite POST bodies after redirects).
 
 | Research / server work | Status (honest) |
 |------------------------|-----------------|
 | **R1** free-slot `#US` + ldstr remap | **OPEN** — production-length hosts without A8 need this |
-| **A8** short JWT paths (fix `/j` + aliases) | Optional companion web change; high leverage for long hosts |
+| **A8** short JWT paths (fix `/j` + aliases) | Optional companion web change; high leverage for long hosts. **Stock openfsd still 302-redirects `POST /j` until A8/PR-5 lands** — do not rely on max host 25 without confirming your deploy has the fixed handler. |
 | **R2** PE AFV `ret` disable site | **OPEN** — not used in Phase 0 |
 
 **R1 free-slot remap is still OPEN.** For production long hostnames today, plan on
@@ -154,10 +156,12 @@ failure; keep the `.openfsd-bak` / manifest tree intact until you are sure.
 
 ## CLI examples
 
-GUI (when no subcommand and GUI is built):
+The headless binary is **CLI-only today**. No subcommand prints help (Fyne GUI is
+a later PR — design PR-7):
 
 ```bash
 openfsd-client
+# same as: openfsd-client help
 ```
 
 List embedded client profiles:
@@ -166,12 +170,12 @@ List embedded client profiles:
 openfsd-client list-profiles
 ```
 
-Detect install / fingerprint:
+Detect install candidates (Discover only — **no** `--install` flag):
 
 ```bash
 openfsd-client detect --client vpilot
-# or with explicit path:
-openfsd-client detect --client vpilot --install "%LOCALAPPDATA%\vPilot"
+# Prints root=… pe=… for each candidate, or "no vpilot installs found (pass --install DIR)"
+# Use --install on plan|apply|health|launch|revert when auto-detect is wrong or empty.
 ```
 
 Dry-run plan (always do this first on a new hostname):
@@ -186,7 +190,8 @@ openfsd-client plan \
   --afv-base "https://v.ex.co"
 ```
 
-Production-style host with short JWT path preference (server must support A8 `/j`):
+Production-style host with short JWT path preference (server must support A8 `/j`
+with a **direct** JWT handler — not a bare 302):
 
 ```bash
 openfsd-client plan \
@@ -198,43 +203,74 @@ openfsd-client plan \
   --afv-base "https://voice.example.com"
 ```
 
-Apply / revert / health (quit client first):
+Apply / health / revert (quit client first). **Health must use the same endpoint
+flags as apply** — empty `--web-base` / `--afv-base` skips or weakens JWT/AFV
+assertions and can print `health ok` without verifying patches:
 
 ```bash
 openfsd-client apply  --client vpilot --install "%LOCALAPPDATA%\vPilot" \
   --web-base "https://fsd.ex.co" --fsd-host "fsd.ex.co" \
   --afv-base "https://v.ex.co"
 
-openfsd-client health --client vpilot --install "%LOCALAPPDATA%\vPilot"
+openfsd-client health --client vpilot --install "%LOCALAPPDATA%\vPilot" \
+  --web-base "https://fsd.ex.co" --fsd-host "fsd.ex.co" \
+  --afv-base "https://v.ex.co"
 
 openfsd-client revert --client vpilot --install "%LOCALAPPDATA%\vPilot"
 ```
 
-Launch (after a successful apply; may pass `-novoice` / server override as planned):
+### Launch (dry-print only)
+
+Headless `launch` **does not start** the client. It recomputes planned args from
+the same endpoint flags and prints an `exec: …` line for you to run from the
+install directory (or your own launcher). Real process spawn / ephemeral shadow
+PE is **PR-9+**; GUI spawn is **PR-7+**.
+
+Pass the **same** `--web-base` / `--fsd-host` / `--afv-base` / `--force-disable-afv`
+(and friends) used at apply so printed flags match the plan (`-serveraddressoverride`,
+`-novoice` when over-budget or forced):
 
 ```bash
-openfsd-client launch --client vpilot --install "%LOCALAPPDATA%\vPilot"
+openfsd-client launch --client vpilot --install "%LOCALAPPDATA%\vPilot" \
+  --web-base "https://fsd.ex.co" --fsd-host "fsd.ex.co" \
+  --afv-base "https://v.ex.co"
+# stdout example:
+#   exec: C:\…\vPilot.exe -serveraddressoverride fsd.ex.co
+#   (launch is dry-print only in headless CLI; start the client with these args from the install directory)
 
-# Force no voice even if AFV URL would fit:
-openfsd-client apply ... --force-disable-afv
-openfsd-client launch --client vpilot --install "%LOCALAPPDATA%\vPilot"
+# Force no voice in the printed args (and plan AFV skip on apply):
+openfsd-client apply  ... --force-disable-afv
+openfsd-client launch ... --force-disable-afv
+# printed args include -novoice
 ```
 
-Common flags (all mutate subcommands that need endpoints):
+Common flags (`plan` | `apply` | `health` | `launch` share the endpoint set;
+`revert` needs only `--install`; `detect` only `--client`):
 
 | Flag | Meaning |
 |------|---------|
-| `--client` | Adapter id (`vpilot`, …) |
-| `--install` | Client install directory |
+| `--client` | Adapter id (`vpilot`, …); `detect` default `vpilot` |
+| `--install` | Client install directory (**required** for plan/apply/health/launch/revert) |
 | `--web-base` | openfsd web base (`https://host`) |
 | `--fsd-host` / `--fsd-port` | FSD TCP (default port **6809**) |
 | `--afv-base` | AFV REST public base (must be ≤25 chars for retarget) |
-| `--prefer-short-jwt` | Prefer server short JWT paths (`/j` → max host **25**) |
-| `--force-disable-afv` | Plan launch with **`-novoice`**; skip AFV retarget |
+| `--prefer-short-jwt` | Prefer server short JWT paths (`/j` → max host **25** if A8 fixed) |
+| `--force-disable-afv` | Skip AFV retarget; include **`-novoice`** in launch args |
 
-Illustrative exit codes (design): `0` ok, `1` usage, `2` hash mismatch, `3` apply
-failed (reverted), `4` revert failed, `5` client running / file locked, `6` plan
-blockers.
+Optional (advanced): `--fsd-server-name` (CachedServers label, default `OPENFSD`),
+`--profiles-dir` (override embedded YAML).
+
+Exit codes (`cmd/openfsd-client`):
+
+| Code | Meaning |
+|-----:|---------|
+| 0 | ok |
+| 1 | usage |
+| 2 | hash mismatch (unknown / wrong PE) |
+| 3 | apply failed (auto-reverted when possible); also used when health fails |
+| 4 | revert failed |
+| 5 | client running / file locked |
+| 6 | plan blockers |
 
 ---
 
@@ -247,7 +283,7 @@ blockers.
 - [ ] AFV URL ≤**25** chars for retarget; else accept **`-novoice`**.
 - [ ] Do not expect PE AFV disable until **R2**.
 - [ ] Never ship or mirror vPilot binaries in git, Docker images, or operator dropboxes.
-- [ ] After Apply: health check, then one real connect smoke test on the private network.
+- [ ] After Apply: `health` with the **same** endpoint flags as apply, then one real connect smoke test (start client yourself with printed `launch` args or manually).
 
 ---
 
