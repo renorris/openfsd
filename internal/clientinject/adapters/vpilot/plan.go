@@ -9,6 +9,11 @@ import (
 	"github.com/renorris/openfsd/internal/clientinject/cilus"
 )
 
+// freeSlotRemapReady is false until R1 wires ldstr token bytes + free-slot body
+// writes. When false, non-empty us_free_slots are treated as unavailable
+// (JWT blocker / AFV -novoice) rather than planning half-implemented remaps.
+const freeSlotRemapReady = false
+
 // Plan builds a dry-run mutation plan. Does not write disk.
 func (a *Adapter) Plan(install clientinject.Install, profile *clientinject.Profile, ep clientinject.Endpoints) (*clientinject.Plan, error) {
 	if profile == nil {
@@ -28,8 +33,7 @@ func (a *Adapter) Plan(install clientinject.Install, profile *clientinject.Profi
 		plan.Blockers = append(plan.Blockers, "FSDHost is required")
 	}
 
-	// Config paths: require at least one existing config or allow create at install root.
-	cfgPaths := resolveConfigWritePaths(install)
+	cfgPaths := a.resolveConfigWritePaths(install)
 	anyExist := false
 	for _, p := range cfgPaths {
 		if _, err := a.writer().Stat(p); err == nil {
@@ -37,15 +41,9 @@ func (a *Adapter) Plan(install clientinject.Install, profile *clientinject.Profi
 			break
 		}
 	}
-	// Also check install ConfigPaths via os for Discover paths.
 	if !anyExist {
-		// If caller only has relative paths not yet created, still plan config
-		// write to install-dir (tests create it). Soft blocker only when root
-		// has no PE context — for unit tests, WriteFile creates.
-		// Prefer: if PE exists and no config, warn; still allow plan for lab
-		// with synthetic config creation on Apply.
 		plan.Warnings = append(plan.Warnings,
-			"no vPilotConfig.xml found yet; Apply will write "+filepath.Join(install.RootDir, configName)+
+			"no vPilotConfig.xml found yet; Apply will create "+filepath.Join(install.RootDir, configName)+
 				" (run vPilot once on a real install so the client owns other settings)")
 	}
 
@@ -55,7 +53,7 @@ func (a *Adapter) Plan(install clientinject.Install, profile *clientinject.Profi
 	plan.Mutations = append(plan.Mutations, clientinject.Mutation{
 		ID:          "config_status_servers",
 		Kind:        clientinject.MutConfigRewrite,
-		Description: "Rewrite NetworkStatusURL + CachedServers; clear credentials",
+		Description: "Rewrite NetworkStatusURL + CachedServers; clear credentials (preserve other XML)",
 		TargetRel:   configName,
 		Detail: clientinject.ConfigRewriteDetail{
 			Paths:            cfgPaths,
@@ -66,49 +64,27 @@ func (a *Adapter) Plan(install clientinject.Install, profile *clientinject.Profi
 	})
 
 	// --- JWT #US ---
-	jwtURL, jwtWarns, jwtBlocker := resolveJWTURL(ep, profile)
+	jwtURL, jwtWarns, _ := resolveJWTURL(ep, profile)
 	plan.Warnings = append(plan.Warnings, jwtWarns...)
-	if jwtBlocker != "" {
-		plan.Blockers = append(plan.Blockers, jwtBlocker)
-		// Still record constraint strategy.
-		updateConstraintStrategy(plan, "JWTURL", "blocker")
-	} else if jwtURL != "" {
+	if jwtURL != "" {
 		js, ok := profile.Strings["fsd_jwt"]
 		if !ok {
 			plan.Blockers = append(plan.Blockers, "profile missing strings.fsd_jwt")
 		} else if !cilus.FitsBudget(jwtURL, js.PayloadBudgetBytes) {
-			// Try free-slot remap.
-			if len(profile.USFreeSlots) == 0 {
-				plan.Blockers = append(plan.Blockers,
-					fmt.Sprintf("JWT URL %q (%d runes) exceeds #US budget %d bytes (~%d runes); free-slot remap unavailable (us_free_slots empty); use a short host (≤12 chars for default /api/v1/fsd-jwt) or --prefer-short-jwt if server has fixed /j",
-						jwtURL, len([]rune(jwtURL)), js.PayloadBudgetBytes, (js.PayloadBudgetBytes-1)/2))
+			// Free-slot remap not ready (R1) — same as empty us_free_slots.
+			if len(profile.USFreeSlots) > 0 && !freeSlotRemapReady {
+				plan.Warnings = append(plan.Warnings,
+					"us_free_slots present but ldstr remap not implemented (R1 incomplete); treating free-slot remap as unavailable")
+			}
+			if freeSlotRemapReady && len(profile.USFreeSlots) > 0 {
+				// Reserved for full R1 implementation (must set NewToken + body string).
+				plan.Blockers = append(plan.Blockers, "JWT free-slot remap ready flag set but not fully implemented")
 				updateConstraintStrategy(plan, "JWTURL", "blocker")
 			} else {
-				// Remap path (R1) — pick first free slot that fits.
-				slot, ok := pickFreeSlot(profile.USFreeSlots, jwtURL)
-				if !ok {
-					plan.Blockers = append(plan.Blockers, "JWT URL does not fit any us_free_slots budget")
-					updateConstraintStrategy(plan, "JWTURL", "blocker")
-				} else {
-					ldstrOff := int64(0)
-					if len(js.LdstrFileOffsets) > 0 {
-						ldstrOff = js.LdstrFileOffsets[0].Int64()
-					}
-					plan.Mutations = append(plan.Mutations, clientinject.Mutation{
-						ID:          "patch_fsd_jwt_remap",
-						Kind:        clientinject.MutLdstrRemap,
-						Description: "Remap fsd_jwt ldstr to free #US slot",
-						TargetRel:   profile.PrimaryBinary.RelativePath,
-						Detail: clientinject.LdstrRemapDetail{
-							LdstrFileOff: ldstrOff,
-							SlotHeapOff:  slot.HeapOffset.Int64(),
-							SlotBodyOff:  slot.BodyOffset.Int64(),
-							SlotBudget:   slot.BudgetBytes,
-						},
-					})
-					// Also write string into free slot body (handled in Apply via remap detail).
-					updateConstraintStrategy(plan, "JWTURL", "remap_required")
-				}
+				plan.Blockers = append(plan.Blockers,
+					fmt.Sprintf("JWT URL %q (%d runes) exceeds #US budget %d bytes (~%d runes); free-slot remap unavailable; use a short host (≤12 chars for default /api/v1/fsd-jwt) or --prefer-short-jwt if server has fixed /j",
+						jwtURL, len([]rune(jwtURL)), js.PayloadBudgetBytes, (js.PayloadBudgetBytes-1)/2))
+				updateConstraintStrategy(plan, "JWTURL", "blocker")
 			}
 		} else {
 			bodyOffs := flexibleToInt64s(js.BodyFileOffsets)
@@ -118,10 +94,11 @@ func (a *Adapter) Plan(install clientinject.Install, profile *clientinject.Profi
 				Description: "Retarget FSD JWT #US in-place",
 				TargetRel:   profile.PrimaryBinary.RelativePath,
 				Detail: clientinject.USStringDetail{
-					StringRef: "fsd_jwt",
-					NewString: jwtURL,
-					HeapOff:   js.USHeapOffset.Int64(),
-					BodyOffs:  bodyOffs,
+					StringRef:   "fsd_jwt",
+					NewString:   jwtURL,
+					HeapOff:     js.USHeapOffset.Int64(),
+					BodyOffs:    bodyOffs,
+					BudgetBytes: js.PayloadBudgetBytes,
 				},
 			})
 			updateConstraintStrategy(plan, "JWTURL", "in_place")
@@ -135,43 +112,29 @@ func (a *Adapter) Plan(install clientinject.Install, profile *clientinject.Profi
 		if ep.AFVBaseURL == "" && !ep.ForceDisableAFV {
 			plan.Warnings = append(plan.Warnings, "AFVBaseURL empty — planning -novoice (no voice)")
 		}
+		if ep.ForceDisableAFV {
+			updateConstraintStrategy(plan, "AFVBaseURL", "launch_novoice")
+		}
 	} else {
 		as, ok := profile.Strings["afv_base"]
 		if !ok {
 			plan.Warnings = append(plan.Warnings, "profile missing strings.afv_base; planning -novoice")
 			needNoVoice = true
+			updateConstraintStrategy(plan, "AFVBaseURL", "launch_novoice")
 		} else if !cilus.FitsBudget(ep.AFVBaseURL, as.PayloadBudgetBytes) {
-			if len(profile.USFreeSlots) > 0 {
-				if slot, ok := pickFreeSlot(profile.USFreeSlots, ep.AFVBaseURL); ok {
-					ldstrOff := int64(0)
-					if len(as.LdstrFileOffsets) > 0 {
-						ldstrOff = as.LdstrFileOffsets[0].Int64()
-					}
-					plan.Mutations = append(plan.Mutations, clientinject.Mutation{
-						ID:          "patch_afv_base_remap",
-						Kind:        clientinject.MutLdstrRemap,
-						Description: "Remap afv_base ldstr to free #US slot",
-						TargetRel:   profile.PrimaryBinary.RelativePath,
-						Detail: clientinject.LdstrRemapDetail{
-							LdstrFileOff: ldstrOff,
-							SlotHeapOff:  slot.HeapOffset.Int64(),
-							SlotBodyOff:  slot.BodyOffset.Int64(),
-							SlotBudget:   slot.BudgetBytes,
-						},
-					})
-					updateConstraintStrategy(plan, "AFVBaseURL", "remap_required")
-				} else {
-					plan.Warnings = append(plan.Warnings,
-						fmt.Sprintf("AFV URL %q exceeds budget and free slots; using -novoice", ep.AFVBaseURL))
-					needNoVoice = true
-					updateConstraintStrategy(plan, "AFVBaseURL", "blocker")
-				}
+			if freeSlotRemapReady && len(profile.USFreeSlots) > 0 {
+				plan.Blockers = append(plan.Blockers, "AFV free-slot remap ready flag set but not fully implemented")
+				updateConstraintStrategy(plan, "AFVBaseURL", "blocker")
 			} else {
+				if len(profile.USFreeSlots) > 0 && !freeSlotRemapReady {
+					plan.Warnings = append(plan.Warnings,
+						"us_free_slots present but ldstr remap not implemented (R1 incomplete); AFV falls back to -novoice")
+				}
 				plan.Warnings = append(plan.Warnings,
 					fmt.Sprintf("AFV URL %q exceeds #US budget %d (~%d runes); free-slot remap unavailable — planning -novoice",
 						ep.AFVBaseURL, as.PayloadBudgetBytes, (as.PayloadBudgetBytes-1)/2))
 				needNoVoice = true
-				updateConstraintStrategy(plan, "AFVBaseURL", "blocker")
+				updateConstraintStrategy(plan, "AFVBaseURL", "launch_novoice")
 			}
 		} else {
 			bodyOffs := flexibleToInt64s(as.BodyFileOffsets)
@@ -181,10 +144,11 @@ func (a *Adapter) Plan(install clientinject.Install, profile *clientinject.Profi
 				Description: "Retarget AFV base #US in-place",
 				TargetRel:   profile.PrimaryBinary.RelativePath,
 				Detail: clientinject.USStringDetail{
-					StringRef: "afv_base",
-					NewString: ep.AFVBaseURL,
-					HeapOff:   as.USHeapOffset.Int64(),
-					BodyOffs:  bodyOffs,
+					StringRef:   "afv_base",
+					NewString:   ep.AFVBaseURL,
+					HeapOff:     as.USHeapOffset.Int64(),
+					BodyOffs:    bodyOffs,
+					BudgetBytes: as.PayloadBudgetBytes,
 				},
 			})
 			updateConstraintStrategy(plan, "AFVBaseURL", "in_place")
@@ -200,7 +164,6 @@ func (a *Adapter) Plan(install clientinject.Install, profile *clientinject.Profi
 			continue
 		}
 		if m.FileOffset == nil || m.FileOffset.Int64() == 0 {
-			// Offset null until R2 — skip silently (out of scope).
 			continue
 		}
 		if needNoVoice && ep.ForceDisableAFV {
@@ -242,7 +205,6 @@ func (a *Adapter) Plan(install clientinject.Install, profile *clientinject.Profi
 		})
 	}
 
-	// Honesty warnings for host length.
 	if !ep.PreferShortJWTPath && ep.WebBaseURL != "" {
 		plan.Warnings = append(plan.Warnings,
 			"default JWT path /api/v1/fsd-jwt allows max host 12 chars for in-place #US; use --prefer-short-jwt for /j (max host 25) if server has fixed short JWT routes")
@@ -263,6 +225,9 @@ func resolveJWTURL(ep clientinject.Endpoints, profile *clientinject.Profile) (ur
 	}
 
 	candidates := jwtURLCandidates(ep)
+	if len(candidates) == 0 {
+		return "", nil, ""
+	}
 	for _, c := range candidates {
 		if cilus.FitsBudget(c, budget) {
 			if ep.PreferShortJWTPath && c != ep.WebBaseURL+"/api/v1/fsd-jwt" {
@@ -273,7 +238,6 @@ func resolveJWTURL(ep clientinject.Endpoints, profile *clientinject.Profile) (ur
 		}
 	}
 
-	// None fit. Return best (shortest candidate) for error messages; blocker set by caller if no remap.
 	best := candidates[0]
 	for _, c := range candidates[1:] {
 		if len(c) < len(best) {
@@ -316,15 +280,6 @@ func jwtURLCandidates(ep clientinject.Endpoints) []string {
 	}
 	add(base + "/api/v1/fsd-jwt")
 	return out
-}
-
-func pickFreeSlot(slots []clientinject.USFreeSlot, s string) (clientinject.USFreeSlot, bool) {
-	for _, slot := range slots {
-		if slot.BudgetBytes > 0 && cilus.FitsBudget(s, slot.BudgetBytes) {
-			return slot, true
-		}
-	}
-	return clientinject.USFreeSlot{}, false
 }
 
 func flexibleToInt64s(ff []clientinject.FlexibleInt64) []int64 {

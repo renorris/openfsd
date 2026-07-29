@@ -886,3 +886,61 @@ func TestFileWriter_CopyAndOpen(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestEngine_ResolveProfile_BakAndManifest(t *testing.T) {
+	root := t.TempDir()
+	pe := filepath.Join(root, "app.exe")
+	stock := []byte("STOCK-PE-BYTES-AAAA")
+	patched := []byte("PATCHED-PE-BYTES-BB")
+	if err := os.WriteFile(pe, stock, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store := NewProfileStore()
+	_ = store.Add(&Profile{
+		SchemaVersion: 2,
+		ProfileID:     "fake-bak",
+		ClientID:      "fake",
+		PrimaryBinary: PrimaryBinarySpec{RelativePath: "app.exe", SHA1: sha1hex(stock)},
+	})
+	eng := NewEngine(store)
+
+	// After "apply": live is patched, bak holds stock.
+	if err := os.WriteFile(pe+BackupSuffix, stock, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pe, patched, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// No ProfileID / HashSHA1 — must resolve via bak.
+	p, err := eng.ResolveProfile(Install{ClientID: "fake", RootDir: root, PrimaryPE: pe})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.ProfileID != "fake-bak" {
+		t.Fatalf("got %q", p.ProfileID)
+	}
+
+	// Via manifest ProfileID when bak hash also wouldn't match store if we remove bak.
+	// Write manifest with profile id.
+	m := &Manifest{
+		ClientID:    "fake",
+		ProfileID:   "fake-bak",
+		PESHA1:      sha1hex(stock),
+		Status:      ManifestStatusApplied,
+		InstallRoot: root,
+	}
+	if err := WriteManifest(OSFileWriter{}, m); err != nil {
+		t.Fatal(err)
+	}
+	// Remove bak — resolve via manifest.
+	_ = os.Remove(pe + BackupSuffix)
+	// Live still patched (unknown hash).
+	p2, err := eng.ResolveProfile(Install{ClientID: "fake", RootDir: root, PrimaryPE: pe})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p2.ProfileID != "fake-bak" {
+		t.Fatalf("manifest resolve: %q", p2.ProfileID)
+	}
+}

@@ -8,6 +8,12 @@
 //
 // CachedServers plaintext is newline-separated "NAME|host" (or "NAME|host:port")
 // entries before encryption.
+//
+// # XML rewrite
+//
+// Prefer Rewrite (or ParseDocument + Document.Format) when updating an existing
+// install config: unknown elements and attributes are preserved. Format alone
+// emits a minimal four-field document and is for synthetic fixtures only.
 package vpilotconfig
 
 import (
@@ -46,6 +52,13 @@ type Config struct {
 	CachedServers   []string
 	NetworkLogin    string
 	NetworkPassword string
+}
+
+// Document is a parsed vPilotConfig.xml with decrypted known fields and a
+// generic element tree so Format can preserve unknown elements.
+type Document struct {
+	Config Config
+	tree   *genericXML
 }
 
 // DeriveKey returns the 24-byte 3DES key: MD5(ConfigGUID) || first 8 of that MD5.
@@ -112,76 +125,212 @@ func ApplyEndpoints(cfg *Config, statusURL string, servers []string, clearCreds 
 	}
 }
 
-// xmlRoot is used for encoding/decoding the known network fields.
-type xmlRoot struct {
-	XMLName          xml.Name `xml:"vPilotConfig"`
-	NetworkStatusURL string   `xml:"NetworkStatusURL"`
-	CachedServers    string   `xml:"CachedServers"`
-	NetworkLogin     string   `xml:"NetworkLogin"`
-	NetworkPassword  string   `xml:"NetworkPassword"`
+// genericXML is a DOM-ish tree that preserves unknown elements/attributes.
+type genericXML struct {
+	XMLName xml.Name
+	Attrs   []xml.Attr   `xml:",any,attr"`
+	Nodes   []genericXML `xml:",any"`
+	Text    string       `xml:",chardata"`
 }
 
 // Parse decrypts obfuscated fields from vPilotConfig.xml bytes.
 // Empty element text is treated as empty plaintext (not an error).
-// Fields that fail to decrypt return an error.
+// Fields that fail to decrypt return an error. Unknown elements are ignored
+// (use ParseDocument / Rewrite to preserve them on write).
 func Parse(data []byte) (*Config, error) {
+	doc, err := ParseDocument(data)
+	if err != nil {
+		return nil, err
+	}
+	cfg := doc.Config
+	return &cfg, nil
+}
+
+// ParseDocument parses full XML into a Document (config + tree for rewrite).
+func ParseDocument(data []byte) (*Document, error) {
 	if len(bytes.TrimSpace(data)) == 0 {
 		return nil, ErrEmptyConfig
 	}
-	var root xmlRoot
+	var root genericXML
 	if err := xml.Unmarshal(data, &root); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrBadXML, err)
 	}
+	if localName(root.XMLName) != "vPilotConfig" {
+		return nil, fmt.Errorf("%w: root element %q (want vPilotConfig)", ErrBadXML, localName(root.XMLName))
+	}
+	cfg, err := configFromTree(&root)
+	if err != nil {
+		return nil, err
+	}
+	return &Document{Config: *cfg, tree: &root}, nil
+}
 
+// Format re-encrypts known fields and writes a **minimal** vPilotConfig.xml
+// (four network fields only). Prefer Rewrite when updating a real install.
+func Format(cfg *Config) ([]byte, error) {
+	if cfg == nil {
+		return nil, ErrEmptyConfig
+	}
+	enc, err := encryptConfigFields(cfg)
+	if err != nil {
+		return nil, err
+	}
+	root := genericXML{
+		XMLName: xml.Name{Local: "vPilotConfig"},
+		Nodes: []genericXML{
+			textChild("NetworkStatusURL", enc.status),
+			textChild("CachedServers", enc.servers),
+			textChild("NetworkLogin", enc.login),
+			textChild("NetworkPassword", enc.pass),
+		},
+	}
+	return marshalXML(&root)
+}
+
+// Format on Document re-encrypts known fields into the preserved tree and
+// writes the full document (unknown elements kept).
+func (d *Document) Format() ([]byte, error) {
+	if d == nil || d.tree == nil {
+		return nil, ErrEmptyConfig
+	}
+	if err := applyConfigToTree(d.tree, &d.Config); err != nil {
+		return nil, err
+	}
+	return marshalXML(d.tree)
+}
+
+// Rewrite parses original XML, applies cfg known fields, and returns XML that
+// preserves unknown elements/attributes from original. Fails if original is
+// not well-formed or known encrypted fields cannot be decrypted on parse.
+func Rewrite(original []byte, cfg *Config) ([]byte, error) {
+	if cfg == nil {
+		return nil, ErrEmptyConfig
+	}
+	doc, err := ParseDocument(original)
+	if err != nil {
+		return nil, err
+	}
+	doc.Config = *cfg
+	return doc.Format()
+}
+
+type encryptedFields struct {
+	status, servers, login, pass string
+}
+
+func encryptConfigFields(cfg *Config) (encryptedFields, error) {
+	var e encryptedFields
+	var err error
+	if e.status, err = Encrypt(cfg.NetworkStatusURL); err != nil {
+		return e, fmt.Errorf("NetworkStatusURL: %w", err)
+	}
+	if e.servers, err = Encrypt(joinServers(cfg.CachedServers)); err != nil {
+		return e, fmt.Errorf("CachedServers: %w", err)
+	}
+	if e.login, err = Encrypt(cfg.NetworkLogin); err != nil {
+		return e, fmt.Errorf("NetworkLogin: %w", err)
+	}
+	if e.pass, err = Encrypt(cfg.NetworkPassword); err != nil {
+		return e, fmt.Errorf("NetworkPassword: %w", err)
+	}
+	return e, nil
+}
+
+func applyConfigToTree(root *genericXML, cfg *Config) error {
+	enc, err := encryptConfigFields(cfg)
+	if err != nil {
+		return err
+	}
+	setOrAppendTextChild(root, "NetworkStatusURL", enc.status)
+	setOrAppendTextChild(root, "CachedServers", enc.servers)
+	setOrAppendTextChild(root, "NetworkLogin", enc.login)
+	setOrAppendTextChild(root, "NetworkPassword", enc.pass)
+	return nil
+}
+
+func configFromTree(root *genericXML) (*Config, error) {
 	cfg := &Config{}
 	var err error
-	if cfg.NetworkStatusURL, err = decryptField(root.NetworkStatusURL); err != nil {
+	statusEnc := childText(root, "NetworkStatusURL")
+	if cfg.NetworkStatusURL, err = decryptField(statusEnc); err != nil {
 		return nil, fmt.Errorf("NetworkStatusURL: %w", err)
 	}
+	serversEnc := childText(root, "CachedServers")
 	var serversPlain string
-	if serversPlain, err = decryptField(root.CachedServers); err != nil {
+	if serversPlain, err = decryptField(serversEnc); err != nil {
 		return nil, fmt.Errorf("CachedServers: %w", err)
 	}
 	cfg.CachedServers = splitServers(serversPlain)
-	if cfg.NetworkLogin, err = decryptField(root.NetworkLogin); err != nil {
+	if cfg.NetworkLogin, err = decryptField(childText(root, "NetworkLogin")); err != nil {
 		return nil, fmt.Errorf("NetworkLogin: %w", err)
 	}
-	if cfg.NetworkPassword, err = decryptField(root.NetworkPassword); err != nil {
+	if cfg.NetworkPassword, err = decryptField(childText(root, "NetworkPassword")); err != nil {
 		return nil, fmt.Errorf("NetworkPassword: %w", err)
 	}
 	return cfg, nil
 }
 
-// Format re-encrypts known fields and writes a minimal vPilotConfig.xml document.
-// Synthetic fixtures only use the known fields; callers that need full DOM
-// fidelity should merge externally. Output uses UTF-8 XML declaration.
-func Format(cfg *Config) ([]byte, error) {
-	if cfg == nil {
+func localName(n xml.Name) string {
+	if n.Local != "" {
+		return n.Local
+	}
+	return n.Space
+}
+
+func childText(root *genericXML, local string) string {
+	if root == nil {
+		return ""
+	}
+	for i := range root.Nodes {
+		if localName(root.Nodes[i].XMLName) == local {
+			return strings.TrimSpace(collectText(&root.Nodes[i]))
+		}
+	}
+	return ""
+}
+
+func collectText(n *genericXML) string {
+	if n == nil {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(n.Text)
+	for i := range n.Nodes {
+		// Unexpected nested elements: still gather chardata.
+		b.WriteString(collectText(&n.Nodes[i]))
+	}
+	return b.String()
+}
+
+func textChild(local, text string) genericXML {
+	return genericXML{
+		XMLName: xml.Name{Local: local},
+		Text:    text,
+	}
+}
+
+func setOrAppendTextChild(root *genericXML, local, text string) {
+	if root == nil {
+		return
+	}
+	for i := range root.Nodes {
+		if localName(root.Nodes[i].XMLName) == local {
+			root.Nodes[i].Text = text
+			root.Nodes[i].Nodes = nil // drop nested junk inside known field
+			return
+		}
+	}
+	root.Nodes = append(root.Nodes, textChild(local, text))
+}
+
+func marshalXML(root *genericXML) ([]byte, error) {
+	if root == nil {
 		return nil, ErrEmptyConfig
 	}
-	statusEnc, err := Encrypt(cfg.NetworkStatusURL)
-	if err != nil {
-		return nil, fmt.Errorf("NetworkStatusURL: %w", err)
+	// Ensure root local name.
+	if root.XMLName.Local == "" && root.XMLName.Space == "" {
+		root.XMLName = xml.Name{Local: "vPilotConfig"}
 	}
-	serversEnc, err := Encrypt(joinServers(cfg.CachedServers))
-	if err != nil {
-		return nil, fmt.Errorf("CachedServers: %w", err)
-	}
-	loginEnc, err := Encrypt(cfg.NetworkLogin)
-	if err != nil {
-		return nil, fmt.Errorf("NetworkLogin: %w", err)
-	}
-	passEnc, err := Encrypt(cfg.NetworkPassword)
-	if err != nil {
-		return nil, fmt.Errorf("NetworkPassword: %w", err)
-	}
-	root := xmlRoot{
-		NetworkStatusURL: statusEnc,
-		CachedServers:    serversEnc,
-		NetworkLogin:     loginEnc,
-		NetworkPassword:  passEnc,
-	}
-	// xml.MarshalIndent only fails for unsupported types; xmlRoot is fixed.
 	body, err := xml.MarshalIndent(root, "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("vpilotconfig: marshal: %w", err)
@@ -203,7 +352,6 @@ func decryptField(enc string) (string, error) {
 }
 
 // splitServers splits newline-separated CachedServers plaintext.
-// Empty lines are dropped. A single entry without newline is fine.
 func splitServers(plain string) []string {
 	plain = strings.ReplaceAll(plain, "\r\n", "\n")
 	plain = strings.TrimSpace(plain)
@@ -229,12 +377,8 @@ func joinServers(servers []string) string {
 	return strings.Join(servers, "\n")
 }
 
-// pkcs7Pad pads b to a multiple of blockSize (PKCS#7).
-// When len(b) is already a multiple of blockSize, a full block of padding is added
-// (pad value == blockSize), including for empty input.
 func pkcs7Pad(b []byte, blockSize int) []byte {
 	pad := blockSize - (len(b) % blockSize)
-	// When len%blockSize == 0, pad evaluates to blockSize (full block).
 	out := make([]byte, len(b)+pad)
 	copy(out, b)
 	for i := len(b); i < len(out); i++ {
@@ -243,7 +387,6 @@ func pkcs7Pad(b []byte, blockSize int) []byte {
 	return out
 }
 
-// pkcs7Unpad removes and validates PKCS#7 padding.
 func pkcs7Unpad(b []byte, blockSize int) ([]byte, error) {
 	if len(b) == 0 || len(b)%blockSize != 0 {
 		return nil, fmt.Errorf("%w: length %d", ErrBadPadding, len(b))
@@ -260,7 +403,6 @@ func pkcs7Unpad(b []byte, blockSize int) ([]byte, error) {
 	return b[:len(b)-pad], nil
 }
 
-// ecbEncrypt encrypts src into dst using ECB (len must be multiple of block size).
 func ecbEncrypt(block cipher.Block, dst, src []byte) {
 	bs := block.BlockSize()
 	for i := 0; i < len(src); i += bs {
@@ -268,7 +410,6 @@ func ecbEncrypt(block cipher.Block, dst, src []byte) {
 	}
 }
 
-// ecbDecrypt decrypts src into dst using ECB.
 func ecbDecrypt(block cipher.Block, dst, src []byte) {
 	bs := block.BlockSize()
 	for i := 0; i < len(src); i += bs {

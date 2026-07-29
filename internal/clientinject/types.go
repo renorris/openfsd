@@ -61,6 +61,9 @@ type USStringDetail struct {
 	NewString string
 	HeapOff   int64
 	BodyOffs  []int64
+	// BudgetBytes is the stock #US body payload budget (profile payload_budget_bytes).
+	// Apply must pad to this size so re-apply with a longer in-budget URL works.
+	BudgetBytes int
 }
 
 // LdstrRemapDetail is Detail for MutLdstrRemap.

@@ -1,6 +1,7 @@
 package vpilot
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha1"
 	"encoding/binary"
@@ -495,5 +496,241 @@ func TestClientIDDisplay(t *testing.T) {
 	}
 	if len(a.SupportedProfiles()) == 0 {
 		t.Fatal("profiles")
+	}
+}
+
+func TestApply_ReApplyLongerInBudgetJWT(t *testing.T) {
+	_, _, install, profile, a := setupInstall(t)
+	w := clientinject.OSFileWriter{}
+
+	// First apply: short host URL (smaller body).
+	ep1 := clientinject.Endpoints{
+		WebBaseURL: "https://fsd.ex.co",
+		FSDHost:    "fsd.ex.co",
+		AFVBaseURL: "https://v.ex.co",
+	}
+	plan1, err := a.Plan(install, profile, ep1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan1.Blockers) != 0 {
+		t.Fatalf("blockers: %v", plan1.Blockers)
+	}
+	if err := a.Apply(context.Background(), plan1, w); err != nil {
+		t.Fatal(err)
+	}
+
+	// Second apply without Revert: slightly longer host still in budget (≤12 chars host for default path).
+	// https://fsd.ex.co = 9 host → 32 total; https://a.bc.de.fg = 10 host → 33 total still ≤35.
+	ep2 := clientinject.Endpoints{
+		WebBaseURL: "https://ab.cd.ef.g",
+		FSDHost:    "ab.cd.ef.g",
+		AFVBaseURL: "https://v.ex.co",
+	}
+	// ab.cd.ef.g is 10 chars; JWT len = 8+10+15 = 33 ≤ 35.
+	plan2, err := a.Plan(install, profile, ep2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan2.Blockers) != 0 {
+		t.Fatalf("blockers on re-plan: %v", plan2.Blockers)
+	}
+	if err := a.Apply(context.Background(), plan2, w); err != nil {
+		t.Fatalf("re-apply: %v", err)
+	}
+	peData, err := os.ReadFile(install.PrimaryPE)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := decodeUSAtBody(peData, testJWTBodyOff, testJWTBudget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "https://ab.cd.ef.g/api/v1/fsd-jwt"
+	if got != want {
+		t.Fatalf("jwt after re-apply=%q want %q", got, want)
+	}
+}
+
+func TestPlan_FreeSlotsIncompleteIsBlocker(t *testing.T) {
+	_, _, install, profile, a := setupInstall(t)
+	// Populate free slots as if R1 research landed offsets but remap not wired.
+	profile.USFreeSlots = []clientinject.USFreeSlot{{
+		ID:          "slot1",
+		BudgetBytes: 200,
+		HeapOffset:  clientinject.FlexibleInt64(1),
+		BodyOffset:  clientinject.FlexibleInt64(2),
+	}}
+	ep := clientinject.Endpoints{
+		WebBaseURL: "https://fsd.example.com",
+		FSDHost:    "fsd.example.com",
+	}
+	plan, err := a.Plan(install, profile, ep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Blockers) == 0 {
+		t.Fatal("expected JWT blocker even with free slots (R1 incomplete)")
+	}
+	for _, m := range plan.Mutations {
+		if m.Kind == clientinject.MutLdstrRemap {
+			t.Fatal("must not plan incomplete ldstr remap")
+		}
+	}
+	warn := false
+	for _, w := range plan.Warnings {
+		if strings.Contains(w, "R1") || strings.Contains(w, "remap not implemented") {
+			warn = true
+		}
+	}
+	if !warn {
+		t.Fatalf("expected R1 warning, got %v", plan.Warnings)
+	}
+}
+
+func TestPlan_AFVOverBudgetStrategyLaunchNoVoice(t *testing.T) {
+	_, _, install, profile, a := setupInstall(t)
+	ep := clientinject.Endpoints{
+		WebBaseURL: "https://fsd.ex.co",
+		FSDHost:    "fsd.ex.co",
+		AFVBaseURL: "https://voice1.example.com",
+	}
+	plan, err := a.Plan(install, profile, ep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range plan.Constraints {
+		if c.Field == "AFVBaseURL" && c.Strategy == "blocker" {
+			t.Fatal("AFV fallback must not use strategy=blocker")
+		}
+		if c.Field == "AFVBaseURL" && c.Strategy != "launch_novoice" {
+			t.Fatalf("AFV strategy=%q want launch_novoice", c.Strategy)
+		}
+	}
+}
+
+func TestApply_ConfigParseFailDoesNotWipe(t *testing.T) {
+	root := t.TempDir()
+	cfgPath := filepath.Join(root, configName)
+	// Well-formed XML with undecryptable field ciphertext — must fail, not wipe.
+	corrupt := []byte(`<?xml version="1.0"?><vPilotConfig>
+  <NetworkStatusURL>!!!not-base64-cipher!!!</NetworkStatusURL>
+  <CachedServers></CachedServers>
+  <NetworkLogin></NetworkLogin>
+  <NetworkPassword></NetworkPassword>
+  <AudioDevice>KeepMe</AudioDevice>
+</vPilotConfig>`)
+	if err := os.WriteFile(cfgPath, corrupt, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m := clientinject.Mutation{
+		ID:   "config_status_servers",
+		Kind: clientinject.MutConfigRewrite,
+		Detail: clientinject.ConfigRewriteDetail{
+			Paths:            []string{cfgPath},
+			NetworkStatusURL: "https://x/api/v1/data/status.txt",
+			CachedServers:    []string{"OPENFSD|h"},
+			ClearCredentials: true,
+		},
+	}
+	err := applyConfig(clientinject.OSFileWriter{}, m)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	raw, _ := os.ReadFile(cfgPath)
+	if !bytes.Contains(raw, []byte("!!!not-base64-cipher!!!")) {
+		t.Fatalf("config was wiped: %s", raw)
+	}
+	if !bytes.Contains(raw, []byte("KeepMe")) {
+		t.Fatalf("extra field wiped: %s", raw)
+	}
+}
+
+func TestApply_ConfigPreservesExtraFields(t *testing.T) {
+	root := t.TempDir()
+	cfgPath := filepath.Join(root, configName)
+	// Rich config via Rewrite from Format + manual? Build with Format then inject is hard.
+	// Use Rewrite's test path: create via ParseDocument of richer original.
+	statusEnc, _ := vpilotconfig.Encrypt("http://status.vatsim.net/")
+	serversEnc, _ := vpilotconfig.Encrypt("AUTOMATIC|fsd.connect.vatsim.net")
+	loginEnc, _ := vpilotconfig.Encrypt("")
+	passEnc, _ := vpilotconfig.Encrypt("")
+	original := []byte(`<?xml version="1.0" encoding="UTF-8"?>
+<vPilotConfig>
+  <NetworkStatusURL>` + statusEnc + `</NetworkStatusURL>
+  <CachedServers>` + serversEnc + `</CachedServers>
+  <NetworkLogin>` + loginEnc + `</NetworkLogin>
+  <NetworkPassword>` + passEnc + `</NetworkPassword>
+  <AudioDevice>Headset</AudioDevice>
+</vPilotConfig>
+`)
+	if err := os.WriteFile(cfgPath, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m := clientinject.Mutation{
+		Kind: clientinject.MutConfigRewrite,
+		Detail: clientinject.ConfigRewriteDetail{
+			Paths:            []string{cfgPath},
+			NetworkStatusURL: "https://fsd.ex.co/api/v1/data/status.txt",
+			CachedServers:    []string{"OPENFSD|fsd.ex.co"},
+			ClearCredentials: true,
+		},
+	}
+	if err := applyConfig(clientinject.OSFileWriter{}, m); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(raw, []byte("<AudioDevice>Headset</AudioDevice>")) {
+		t.Fatalf("extra field lost: %s", raw)
+	}
+	cfg, err := vpilotconfig.Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.NetworkStatusURL != "https://fsd.ex.co/api/v1/data/status.txt" {
+		t.Fatalf("%q", cfg.NetworkStatusURL)
+	}
+}
+
+func TestEngine_RePlanAfterApply_NoProfileID(t *testing.T) {
+	_, _, install, profile, a := setupInstall(t)
+	// Clear ProfileID/Hash as CLI would initially (only path).
+	install.ProfileID = ""
+	install.HashSHA1 = ""
+	store := clientinject.NewProfileStore()
+	if err := store.Add(profile); err != nil {
+		t.Fatal(err)
+	}
+	a.Profiles = store
+	eng := clientinject.NewEngine(store, a)
+
+	ep := clientinject.Endpoints{WebBaseURL: "https://fsd.ex.co", FSDHost: "fsd.ex.co", AFVBaseURL: "https://v.ex.co"}
+	plan, err := eng.Plan(context.Background(), install, ep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := eng.Apply(context.Background(), plan); err != nil {
+		t.Fatal(err)
+	}
+
+	// Re-plan with empty ProfileID/Hash — must use bak/manifest.
+	install2 := clientinject.Install{
+		ClientID:    clientID,
+		RootDir:     install.RootDir,
+		PrimaryPE:   install.PrimaryPE,
+		ConfigPaths: install.ConfigPaths,
+	}
+	plan2, err := eng.Plan(context.Background(), install2, ep)
+	if err != nil {
+		t.Fatalf("re-plan after apply: %v", err)
+	}
+	if len(plan2.Blockers) != 0 {
+		t.Fatalf("blockers: %v", plan2.Blockers)
+	}
+	if plan2.Install.ProfileID != profile.ProfileID {
+		t.Fatalf("profile id=%q", plan2.Install.ProfileID)
 	}
 }

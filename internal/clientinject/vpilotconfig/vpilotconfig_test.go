@@ -449,3 +449,112 @@ func TestEncryptDeterministic(t *testing.T) {
 		t.Fatal("ECB encrypt should be deterministic")
 	}
 }
+
+func TestRewritePreservesUnknownElements(t *testing.T) {
+	// Build a richer "install-like" config with extra fields.
+	statusEnc, err := Encrypt("http://status.vatsim.net/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	serversEnc, err := Encrypt("AUTOMATIC|fsd.connect.vatsim.net")
+	if err != nil {
+		t.Fatal(err)
+	}
+	loginEnc, err := Encrypt("CID")
+	if err != nil {
+		t.Fatal(err)
+	}
+	passEnc, err := Encrypt("secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := []byte(fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<vPilotConfig>
+  <NetworkStatusURL>%s</NetworkStatusURL>
+  <CachedServers>%s</CachedServers>
+  <NetworkLogin>%s</NetworkLogin>
+  <NetworkPassword>%s</NetworkPassword>
+  <AudioDevice>Speakers</AudioDevice>
+  <PluginPath>C:\Plugins\Foo</PluginPath>
+  <SomeNested>
+    <Inner>keep-me</Inner>
+  </SomeNested>
+</vPilotConfig>
+`, statusEnc, serversEnc, loginEnc, passEnc))
+
+	cfg := &Config{
+		NetworkStatusURL: "https://fsd.ex.co/api/v1/data/status.txt",
+		CachedServers:    []string{"OPENFSD|fsd.ex.co"},
+		NetworkLogin:     "",
+		NetworkPassword:  "",
+	}
+	out, err := Rewrite(original, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(out, []byte("<AudioDevice>")) || !bytes.Contains(out, []byte("Speakers")) {
+		t.Fatalf("AudioDevice lost: %s", out)
+	}
+	if !bytes.Contains(out, []byte("<PluginPath>")) || !bytes.Contains(out, []byte(`C:\Plugins\Foo`)) {
+		t.Fatalf("PluginPath lost: %s", out)
+	}
+	if !bytes.Contains(out, []byte("<Inner>keep-me</Inner>")) {
+		t.Fatalf("nested element lost: %s", out)
+	}
+	// Plaintext secrets must not appear.
+	if bytes.Contains(out, []byte("fsd.ex.co/api")) {
+		t.Fatal("plaintext status leaked")
+	}
+	got, err := Parse(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.NetworkStatusURL != cfg.NetworkStatusURL {
+		t.Fatalf("status=%q", got.NetworkStatusURL)
+	}
+	if len(got.CachedServers) != 1 || got.CachedServers[0] != "OPENFSD|fsd.ex.co" {
+		t.Fatalf("servers=%v", got.CachedServers)
+	}
+	if got.NetworkLogin != "" || got.NetworkPassword != "" {
+		t.Fatal("creds not cleared")
+	}
+}
+
+func TestRewriteParseFailure(t *testing.T) {
+	_, err := Rewrite([]byte("not xml at all {{{"), &Config{NetworkStatusURL: "x"})
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !errors.Is(err, ErrBadXML) && !strings.Contains(err.Error(), "bad XML") {
+		// wrapped
+		if !strings.Contains(err.Error(), "XML") && !strings.Contains(err.Error(), "xml") {
+			t.Fatalf("err=%v", err)
+		}
+	}
+}
+
+func TestParseDocumentFormatRoundTrip(t *testing.T) {
+	cfg := &Config{NetworkStatusURL: "http://a/", CachedServers: []string{"N|h"}}
+	raw, err := Format(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Inject extra sibling via Rewrite path: parse, manually not needed — use Rewrite on expanded.
+	// Expand by wrapping isn't easy; use original string with extra after Format fields.
+	doc, err := ParseDocument(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc.Config.NetworkStatusURL = "http://b/"
+	out, err := doc.Format()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := Parse(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.NetworkStatusURL != "http://b/" {
+		t.Fatalf("%q", got.NetworkStatusURL)
+	}
+}

@@ -49,7 +49,14 @@ func (e *Engine) writer() FileWriter {
 	return OSFileWriter{}
 }
 
-// ResolveProfile picks a profile for install (by ProfileID or PE hash).
+// ResolveProfile picks a profile for install.
+//
+// Order:
+//  1. explicit install.ProfileID
+//  2. install.HashSHA1 (if set) via LookupByHash
+//  3. live primary PE SHA-1
+//  4. stock PE sibling .openfsd-bak SHA-1 (post-Apply re-plan)
+//  5. manifest ProfileID / PESHA1 under install root
 func (e *Engine) ResolveProfile(install Install) (*Profile, error) {
 	if e.Profiles == nil {
 		return nil, fmt.Errorf("clientinject: no profile store")
@@ -60,22 +67,57 @@ func (e *Engine) ResolveProfile(install Install) (*Profile, error) {
 		}
 		return nil, fmt.Errorf("clientinject: profile %q not found", install.ProfileID)
 	}
-	sha := install.HashSHA1
-	if sha == "" && install.PrimaryPE != "" {
-		sum, err := fileSHA1(e.writer(), install.PrimaryPE)
-		if err != nil {
-			return nil, fmt.Errorf("clientinject: hash PE: %w", err)
+
+	tryHash := func(sha string) (*Profile, bool) {
+		sha = strings.ToLower(strings.TrimSpace(sha))
+		if sha == "" {
+			return nil, false
 		}
-		sha = sum
+		return e.Profiles.LookupByHash(install.ClientID, sha)
 	}
-	if sha == "" {
-		return nil, fmt.Errorf("clientinject: cannot resolve profile without ProfileID or PE hash")
+
+	if p, ok := tryHash(install.HashSHA1); ok {
+		return p, nil
 	}
-	p, ok := e.Profiles.LookupByHash(install.ClientID, sha)
-	if !ok {
-		return nil, fmt.Errorf("clientinject: no profile for client %q sha1=%s", install.ClientID, sha)
+
+	w := e.writer()
+	pe := AbsPrimaryPE(install)
+	var liveSHA string
+	if pe != "" {
+		if sum, err := fileSHA1(w, pe); err == nil {
+			liveSHA = sum
+			if p, ok := tryHash(sum); ok {
+				return p, nil
+			}
+		}
+		// Stock bak from first Apply — live PE may already be patched.
+		if sum, err := fileSHA1(w, BackupPath(pe)); err == nil {
+			if p, ok := tryHash(sum); ok {
+				return p, nil
+			}
+		}
 	}
-	return p, nil
+
+	if install.RootDir != "" {
+		if m, err := ReadManifest(w, install.RootDir); err == nil {
+			if m.ProfileID != "" {
+				if p, ok := e.Profiles.Get(m.ProfileID); ok {
+					return p, nil
+				}
+			}
+			if p, ok := tryHash(m.PESHA1); ok {
+				return p, nil
+			}
+		}
+	}
+
+	if liveSHA != "" {
+		return nil, fmt.Errorf("clientinject: no profile for client %q sha1=%s (live PE; also checked bak/manifest)", install.ClientID, liveSHA)
+	}
+	if install.HashSHA1 != "" {
+		return nil, fmt.Errorf("clientinject: no profile for client %q sha1=%s", install.ClientID, install.HashSHA1)
+	}
+	return nil, fmt.Errorf("clientinject: cannot resolve profile without ProfileID, PE hash, bak, or manifest")
 }
 
 func fileSHA1(w FileWriter, path string) (string, error) {

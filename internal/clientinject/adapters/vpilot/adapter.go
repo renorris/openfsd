@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/renorris/openfsd/internal/clientinject"
+	"github.com/renorris/openfsd/internal/clientinject/cilus"
 )
 
 const (
@@ -92,7 +93,7 @@ func (a *Adapter) Discover(ctx context.Context) ([]clientinject.InstallCandidate
 			ClientID:    clientID,
 			RootDir:     root,
 			PrimaryPE:   pe,
-			ConfigPaths: configCandidates(root),
+			ConfigPaths: a.configCandidates(root),
 			DisplayHint: hint,
 		})
 	}
@@ -125,7 +126,8 @@ func (a *Adapter) Discover(ctx context.Context) ([]clientinject.InstallCandidate
 }
 
 // configCandidates returns ordered config paths that exist (R4).
-func configCandidates(installRoot string) []string {
+func (a *Adapter) configCandidates(installRoot string) []string {
+	w := a.writer()
 	var out []string
 	seen := make(map[string]struct{})
 	addIfExists := func(p string) {
@@ -133,7 +135,7 @@ func configCandidates(installRoot string) []string {
 		if _, ok := seen[p]; ok {
 			return
 		}
-		if _, err := os.Stat(p); err != nil {
+		if _, err := w.Stat(p); err != nil {
 			return
 		}
 		seen[p] = struct{}{}
@@ -227,46 +229,49 @@ func (a *Adapter) EndpointConstraints(profile *clientinject.Profile) []clientinj
 }
 
 // LaunchArgs returns CLI flags for launching the patched client.
+// Uses the same AFV budget decision as Plan when a profile can be resolved.
 func (a *Adapter) LaunchArgs(install clientinject.Install, ep clientinject.Endpoints) []string {
-	_ = install
 	ep = ep.Normalize()
+	serverFlag := "-serveraddressoverride"
+	noVoiceFlag := "-novoice"
+	afvBudget := 51
+	if p, err := a.loadProfileForInstall(install); err == nil && p != nil {
+		if p.Launch.ServerAddressFlag != "" {
+			serverFlag = p.Launch.ServerAddressFlag
+		}
+		if len(p.Launch.NoVoiceFlags) > 0 {
+			noVoiceFlag = p.Launch.NoVoiceFlags[0]
+		}
+		if s, ok := p.Strings["afv_base"]; ok && s.PayloadBudgetBytes > 0 {
+			afvBudget = s.PayloadBudgetBytes
+		}
+	}
+
 	var args []string
 	if addr := ep.FSDAddress(); addr != "" {
-		args = append(args, "-serveraddressoverride", addr)
+		args = append(args, serverFlag, addr)
 	}
-	if ep.ForceDisableAFV || ep.AFVBaseURL == "" {
-		args = append(args, "-novoice")
-	} else if afvSpecBudget(ep) {
-		// Over-budget AFV also needs -novoice; recompute via budget helper.
-		// Use a light check: BodyBudgetBytes without full profile — AFV max 25 runes.
-		if !fitsAFVURL(ep.AFVBaseURL) {
-			args = append(args, "-novoice")
-		}
+	needNoVoice := ep.ForceDisableAFV || ep.AFVBaseURL == ""
+	if !needNoVoice && !cilus.FitsBudget(ep.AFVBaseURL, afvBudget) {
+		needNoVoice = true
+	}
+	if needNoVoice {
+		args = append(args, noVoiceFlag)
 	}
 	return args
 }
 
-func fitsAFVURL(url string) bool {
-	// Stock AFV budget is 51 body bytes → 25 runes. Use rune count as approximation;
-	// exact body check is in Plan.
-	if url == "" {
-		return true
-	}
-	// ASCII URLs: body = 2*len + 1 ≤ 51 → len ≤ 25.
-	return len(url) <= 25
-}
-
-func afvSpecBudget(ep clientinject.Endpoints) bool {
-	return ep.AFVBaseURL != "" && !ep.ForceDisableAFV
-}
-
 // InstallFromDir builds an Install for an explicit --install directory.
 func InstallFromDir(root string) clientinject.Install {
+	return New().InstallFromDir(root)
+}
+
+// InstallFromDir builds an Install using this adapter's FileWriter for config discovery.
+func (a *Adapter) InstallFromDir(root string) clientinject.Install {
 	root = filepath.Clean(root)
 	pe := filepath.Join(root, primaryName)
-	cfgs := configCandidates(root)
+	cfgs := a.configCandidates(root)
 	if len(cfgs) == 0 {
-		// Prefer install-dir path for plan detail even if missing (plan may block).
 		cfgs = []string{filepath.Join(root, configName)}
 	}
 	return clientinject.Install{
@@ -278,9 +283,8 @@ func InstallFromDir(root string) clientinject.Install {
 }
 
 // resolveConfigWritePaths returns paths that Apply will rewrite.
-// Existing candidates only; if none exist under install, returns install config
-// path for creation (tests / first-run after blocker is lifted).
-func resolveConfigWritePaths(install clientinject.Install) []string {
+func (a *Adapter) resolveConfigWritePaths(install clientinject.Install) []string {
+	w := a.writer()
 	var existing []string
 	for _, p := range install.ConfigPaths {
 		if p == "" {
@@ -289,13 +293,12 @@ func resolveConfigWritePaths(install clientinject.Install) []string {
 		if !filepath.IsAbs(p) {
 			p = filepath.Join(install.RootDir, p)
 		}
-		if _, err := os.Stat(p); err == nil {
+		if _, err := w.Stat(p); err == nil {
 			existing = append(existing, p)
 		}
 	}
 	if len(existing) > 0 {
 		return existing
 	}
-	// Fallback: install-dir config (may not exist yet).
 	return []string{filepath.Join(install.RootDir, configName)}
 }

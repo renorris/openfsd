@@ -136,7 +136,7 @@ func cmdDetect(args []string, stdout, stderr io.Writer) int {
 	cands, err := a.Discover(context.Background())
 	if err != nil {
 		fmt.Fprintf(stderr, "detect: %v\n", err)
-		return ExitApplyFailed
+		return ExitUsage
 	}
 	if len(cands) == 0 {
 		fmt.Fprintf(stdout, "no %s installs found (pass --install DIR)\n", *client)
@@ -325,22 +325,47 @@ func withInstallPlan(ef *endpointFlags, stdout, stderr io.Writer, fn func(*clien
 		fmt.Fprintf(stderr, "unknown client %q\n", ef.client)
 		return ExitUsage
 	}
-	install := buildInstall(ef.client, ef.install)
+	install := buildInstall(eng, ef.client, ef.install)
 	ep := ef.endpoints()
 	return fn(eng, install, ep)
 }
 
-func buildInstall(clientID, root string) clientinject.Install {
+// buildInstall constructs an Install and seeds ProfileID/HashSHA1 from a prior
+// inject manifest when present so re-plan/re-apply works after the live PE is patched.
+func buildInstall(eng *clientinject.Engine, clientID, root string) clientinject.Install {
 	root = filepath.Clean(root)
+	var install clientinject.Install
 	switch clientID {
 	case "vpilot":
-		return vpilot.InstallFromDir(root)
+		install = vpilot.InstallFromDir(root)
 	default:
-		return clientinject.Install{
+		install = clientinject.Install{
 			ClientID:  clientID,
 			RootDir:   root,
 			PrimaryPE: filepath.Join(root, "vPilot.exe"),
 		}
+	}
+	seedInstallFromManifest(eng, &install)
+	return install
+}
+
+func seedInstallFromManifest(eng *clientinject.Engine, install *clientinject.Install) {
+	if install == nil || install.RootDir == "" {
+		return
+	}
+	var writer clientinject.FileWriter = clientinject.OSFileWriter{}
+	if eng != nil && eng.Writer != nil {
+		writer = eng.Writer
+	}
+	m, err := clientinject.ReadManifest(writer, install.RootDir)
+	if err != nil {
+		return
+	}
+	if install.ProfileID == "" && m.ProfileID != "" {
+		install.ProfileID = m.ProfileID
+	}
+	if install.HashSHA1 == "" && m.PESHA1 != "" {
+		install.HashSHA1 = m.PESHA1
 	}
 }
 
