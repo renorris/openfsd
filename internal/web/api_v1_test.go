@@ -296,13 +296,14 @@ func TestFsdJwtShortPathAliases(t *testing.T) {
 	for _, path := range paths {
 		t.Run("ok_"+path, func(t *testing.T) {
 			w := env.doJSON(t, http.MethodPost, path, goodBody, "")
-			// Body must reach handler: never redirect.
+			// Body must reach handler: never redirect (302 was the old /j bug).
 			assert.NotContains(t, []int{
 				http.StatusMovedPermanently,
 				http.StatusFound,
 				http.StatusTemporaryRedirect,
 				http.StatusPermanentRedirect,
 			}, w.Code, "path %s must not redirect (code %d, Location %q)", path, w.Code, w.Header().Get("Location"))
+			assert.Empty(t, w.Header().Get("Location"), "path %s must not set Location", path)
 			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 			var okBody struct {
 				Success bool   `json:"success"`
@@ -321,6 +322,7 @@ func TestFsdJwtShortPathAliases(t *testing.T) {
 				http.StatusTemporaryRedirect,
 				http.StatusPermanentRedirect,
 			}, w.Code, "path %s must not redirect", path)
+			assert.Empty(t, w.Header().Get("Location"), "path %s must not set Location", path)
 			assert.Equal(t, http.StatusUnauthorized, w.Code, w.Body.String())
 			var errBody struct {
 				Success  bool   `json:"success"`
@@ -339,17 +341,10 @@ func TestFsdJwtShortPathAliases(t *testing.T) {
 				http.StatusTemporaryRedirect,
 				http.StatusPermanentRedirect,
 			}, w.Code, "path %s must not redirect", path)
+			assert.Empty(t, w.Header().Get("Location"), "path %s must not set Location", path)
 			assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
 		})
 	}
-
-	// Explicit regression: POST /j must not 302 to /api/v1/fsd-jwt.
-	t.Run("j_not_redirect", func(t *testing.T) {
-		w := env.doJSON(t, http.MethodPost, "/j", goodBody, "")
-		assert.NotEqual(t, http.StatusFound, w.Code)
-		assert.Empty(t, w.Header().Get("Location"))
-		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-	})
 }
 
 func TestUserLoadPermissions(t *testing.T) {

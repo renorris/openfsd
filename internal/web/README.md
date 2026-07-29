@@ -208,7 +208,7 @@ OpenFSD-API-Version: 2026-07-28
 
 Canonical OpenAPI file: `internal/web/openapi/openapi.v1.yaml` (`//go:embed`). No mirrored copy under `docs/`.
 
-**Outside microversion reject:** `/api/v1/data/*`, `/api/v1/fsd-jwt`, auth login/refresh, discovery, OpenAPI. Resource groups (`/user`, `/users`, `/config`, `/fsdconn`, `/sweatbox`, `/editor`, `/account`) reject unknown/invalid pins with **400** envelope.
+**Outside microversion reject:** `/api/v1/data/*`, FSD JWT (`POST /j`, `POST /api/fsd-jwt`, `POST /api/v1/fsd-jwt`), auth login/refresh, discovery, OpenAPI. Resource groups (`/user`, `/users`, `/config`, `/fsdconn`, `/sweatbox`, `/editor`, `/account`) reject unknown/invalid pins with **400** envelope.
 
 **Stability tiers:** see [Operator REST guide §3](#3-stability-tiers). Enveloped user/users/config/fsdconn/editor + sweatbox mutations/`session` are **Stable** (goldens under `testdata/api_v1/<pin>/`). Account JSON is **Provisional** until post-release maintainer sign-off. Design: [`docs/design/rest-api-versioning.md`](../../docs/design/rest-api-versioning.md) (Accepted).
 
@@ -368,8 +368,10 @@ Instead, generate an API token using the Configure Server menu via the frontend.
 
 ---
 
-#### POST /api/v1/fsd-jwt
-Obtain an FSD JWT token (see authentication-tokens in the FSD docs). This call matches the functionality of the VATSIM /api/fsd-jwt endpoint.
+#### POST /api/v1/fsd-jwt (canonical); also POST /j, POST /api/fsd-jwt
+Obtain an FSD JWT token (see [authentication-token.md](../../docs/authentication-token.md)). This call matches the functionality of the VATSIM `/api/fsd-jwt` endpoint.
+
+Short-path aliases **`POST /j`** and **`POST /api/fsd-jwt`** bind the same handler directly (no redirect) for Client Setup PE `#US` URL length budgets — see the max_host table in that doc. All three are public and outside microversion reject.
 
 **Request Body** (form-encoded or JSON):
 ```json

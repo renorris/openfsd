@@ -16,6 +16,8 @@ You will need to add an entry to the `myservers.txt` file. See the following sni
 
 Newer versions of VRC such as 1.3.0 use the new VATSIM fsd-jwt authentication system. The binary for these newer versions would need to be patched to call the openfsd fsd-jwt URL.
 
+openfsd JWT endpoints (same VATSIM-shaped body; no redirect): canonical `POST /api/v1/fsd-jwt`, short aliases `POST /j` and `POST /api/fsd-jwt` for PE `#US` URL budgets. See [authentication-token.md](../docs/authentication-token.md) for the max_host table.
+
 ## Euroscope
 
 See [here](https://github.com/renorris/openfsd-client-patch-utility).
