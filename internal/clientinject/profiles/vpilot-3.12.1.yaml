@@ -2,6 +2,18 @@
 # Legal: user must install vPilot themselves; openfsd never redistributes it.
 # Source installer: https://vpilot.rosscarlson.dev/Assets/Files/Installers/vPilot-Setup-3.12.1.exe
 # Offsets from docs/client-injector/research/vpilot-3.12.1.md — version-pinned by PE hash.
+# Research gates R1–R5: docs/client-injector/research/vpilot-3.12.1-gates.md
+#
+# Gate summary (2026-07-28):
+#   R1 OPEN  — us_free_slots empty (no unreferenced long #US; remap needs sacrifice validation)
+#   R2 OPEN  — afv_disable_pe.file_offset null (3.11.1 0x4BA54 obsolete)
+#   R3 CLOSED not-live — second UTF-16 JWT at 0xBA44A is NOT a live #US body; do not dual-write
+#   R4 CLOSED — config beside install / %LOCALAPPDATA%\vPilot\ (see research notes)
+#   R5 CLOSED — voice1.vatsim.net only in vPilot.exe (no GeoVR re-hardcode)
+#
+# Phase 0: short-host JWT lab only unless A8 short path or R1 remap lands.
+# Production hostnames need R1 and/or A8. Residual full-PE scan will still see
+# dead 0xBA44A after primary patch — allowlist that offset (do not add to body_file_offsets).
 
 schema_version: 2
 client_id: vpilot
@@ -34,10 +46,15 @@ primary_binary:
     clr: true
     architecture: x86
 
+# R4: relative to install root (default install root == %LOCALAPPDATA%\vPilot).
+# Adapter must also probe %LOCALAPPDATA%\vPilot\vPilotConfig.xml when install
+# root differs, plus any path recorded in a prior inject manifest. Rewrite
+# existing files only; if none exist, blocker (run vPilot once).
 config_files:
   - relative_path: vPilotConfig.xml
     format: xml_obfuscated_fields
 
+# R5: related DLLs carry AFV machinery but do NOT re-hardcode voice1.vatsim.net.
 related_binaries:
   - GeoVR.Client.dll
   - GeoVR.Connection.dll
@@ -53,6 +70,7 @@ strings:
   fsd_jwt:
     stock: "https://auth.vatsim.net/api/fsd-jwt"
     us_heap_offset: 0x1569F
+    # R3: only live #US body. Dead residual UTF-16 also at 0xBA44A (not listed).
     body_file_offsets: [0xB7988]
     ldstr_file_offsets: [0x4BDB5]
     payload_budget_bytes: 71
@@ -72,7 +90,8 @@ strings:
     payload_budget_bytes: 45
     template: ""
 
-# Populated only after research gate R1 — empty means remap unavailable
+# R1 OPEN — empty means ldstr remap unavailable. Candidate sacrifice catalog
+# (not validated): docs/client-injector/research/vpilot-3.12.1-gates.md
 us_free_slots: []
 
 mutations:
