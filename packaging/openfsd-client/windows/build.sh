@@ -67,29 +67,53 @@ while [[ "$(echo "${VI_VERSION}" | tr -cd '.' | wc -c)" -lt 3 ]]; do
   VI_VERSION="${VI_VERSION}.0"
 done
 
-ICON_ARG=()
-if [[ -f "${ICO}" ]]; then
-  ICON_ARG=("/DSetupIcon=${ICO}")
-else
-  # Inno requires SetupIconFile if defined in iss — use optional empty via define
-  # Provide a generated 16x16 ico fallback from any png
-  if [[ -f "${PKG_ROOT}/assets/icon-512.png" ]] && command -v magick >/dev/null 2>&1; then
-    magick "${PKG_ROOT}/assets/icon-512.png" -define icon:auto-resize=256,128,64,48,32,16 "${ICO}"
-    ICON_ARG=("/DSetupIcon=${ICO}")
-  fi
+if [[ ! -f "${ICO}" ]] && [[ -f "${PKG_ROOT}/assets/icon-512.png" ]] && command -v magick >/dev/null 2>&1; then
+  magick "${PKG_ROOT}/assets/icon-512.png" -define icon:auto-resize=256,128,64,48,32,16 "${ICO}"
 fi
 
+# ISCC is a native Windows tool: all paths must be Windows-style, not /d/a/...
+# Otherwise ISCC treats path segments as extra script filenames.
+winpath() {
+  if command -v cygpath >/dev/null 2>&1; then
+    cygpath -w "$1"
+  else
+    # Git Bash
+    if command -v cygpath.exe >/dev/null 2>&1; then
+      cygpath.exe -w "$1"
+    else
+      echo "$1" | sed -e 's|^/\([a-zA-Z]\)/|\1:\\|' -e 's|/|\\|g'
+    fi
+  fi
+}
+
+BIN_WIN="$(winpath "${BIN_PATH}")"
+DIST_WIN="$(winpath "${DIST_ROOT}")"
+ISS_WIN="$(winpath "${ISS}")"
+ISCC_WIN="$(winpath "${ISCC}")"
+
 echo "==> Inno Setup ${VERSION} (VersionInfo ${VI_VERSION})"
-ISCC_ARGS=(
+echo "    ISCC=${ISCC_WIN}"
+echo "    script=${ISS_WIN}"
+echo "    SourceBin=${BIN_WIN}"
+echo "    OutputDir=${DIST_WIN}"
+
+# Quote defines so paths with spaces are one argument; pass script last.
+ISCC_CMD=(
+  "${ISCC_WIN}"
   "/DMyAppVersion=${VERSION}"
   "/DMyAppVersionInfo=${VI_VERSION}"
-  "/DSourceBin=${BIN_PATH}"
-  "/DOutputDir=${DIST_ROOT}"
+  "/DSourceBin=${BIN_WIN}"
+  "/DOutputDir=${DIST_WIN}"
 )
-if [[ ${#ICON_ARG[@]} -gt 0 ]]; then
-  ISCC_ARGS+=("${ICON_ARG[@]}")
+if [[ -f "${ICO}" ]]; then
+  ICO_WIN="$(winpath "${ICO}")"
+  ISCC_CMD+=("/DSetupIcon=${ICO_WIN}")
 fi
-"${ISCC}" "${ISCC_ARGS[@]}" "${ISS}"
+ISCC_CMD+=("${ISS_WIN}")
+
+# Run via cmd.exe so quoting matches Windows ISCC expectations under msys2.
+cmd.exe //C "$(printf '%q ' "${ISCC_CMD[@]}")" 2>/dev/null || \
+  "${ISCC_CMD[@]}"
 
 # Also ship portable zip of the bare binary for power users.
 PORTABLE="${DIST_ROOT}/${BIN_NAME}-${VERSION}-windows-${GOARCH}-portable.zip"
