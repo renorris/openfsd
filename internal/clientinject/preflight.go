@@ -11,9 +11,13 @@ import (
 var ErrClientRunning = errors.New("clientinject: client appears to be running (file locked); quit the client completely, then Apply again")
 
 // PreflightPrimaryPE tries to open the primary PE exclusively (O_RDWR +
-// platform exclusive lock). On lock/sharing failures it returns
-// ErrClientRunning. Best-effort: process-list detection is optional and not
-// required for the gate.
+// platform exclusive lock / CreateFile share-mode 0 on Windows).
+// On lock/sharing failures it returns ErrClientRunning.
+//
+// This is a best-effort probe only: the exclusive lock is released before
+// return. Engine.Apply does not hold the lock across CreateBackups/adapter
+// mutations (TOCTOU is possible if the client starts mid-Apply). Process-list
+// detection is optional and not required for the gate.
 func PreflightPrimaryPE(path string) error {
 	if path == "" {
 		return fmt.Errorf("clientinject: preflight: empty primary PE path")

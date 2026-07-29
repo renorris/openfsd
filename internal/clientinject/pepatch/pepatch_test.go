@@ -246,18 +246,6 @@ func TestScanUTF16String_TooShort(t *testing.T) {
 	}
 }
 
-func TestBytesEqual(t *testing.T) {
-	if bytesEqual([]byte{1}, []byte{1, 2}) {
-		t.Fatal("len")
-	}
-	if !bytesEqual([]byte{1, 2}, []byte{1, 2}) {
-		t.Fatal("eq")
-	}
-	if bytesEqual([]byte{1, 2}, []byte{1, 3}) {
-		t.Fatal("ne")
-	}
-}
-
 func TestEncodePadded_UTF16Alias(t *testing.T) {
 	// via PaddedStringOverwrite encoding aliases
 	var buf seekBuffer

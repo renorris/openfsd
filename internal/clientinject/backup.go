@@ -2,6 +2,7 @@ package clientinject
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"time"
@@ -20,6 +21,12 @@ const (
 	ManifestStatusFailed     = "failed"
 	ManifestStatusReverted   = "reverted"
 )
+
+// ErrPriorInjectActive is returned when Apply finds an unfinished or applied
+// inject that must be Reverted first (or when bak would be clobbered).
+// For status=applied, re-Apply is allowed if stock bak is preserved; this
+// error is used for status=in_progress (incomplete prior Apply).
+var ErrPriorInjectActive = errors.New("clientinject: prior inject in progress; Revert first, then Apply again")
 
 // Manifest records a transactional Apply for Revert and recovery.
 type Manifest struct {
@@ -102,7 +109,9 @@ func CollectPlanTargets(plan *Plan) []string {
 	return out
 }
 
-// CreateBackups copies each existing target to its .openfsd-bak sibling.
+// CreateBackups ensures each existing target has a .openfsd-bak sibling.
+// Existing bak files are never overwritten — they hold stock content from the
+// first Apply and must remain restorable across re-Apply.
 // Missing targets are skipped (they may be created by Apply).
 func CreateBackups(w FileWriter, targets []string) ([]ManifestFile, error) {
 	var files []ManifestFile
@@ -112,6 +121,11 @@ func CreateBackups(w FileWriter, targets []string) ([]ManifestFile, error) {
 			continue
 		}
 		bak := BackupPath(orig)
+		if _, err := w.Stat(bak); err == nil {
+			// Preserve existing stock bak.
+			files = append(files, ManifestFile{Original: orig, Backup: bak})
+			continue
+		}
 		if err := w.CopyFile(orig, bak); err != nil {
 			return files, fmt.Errorf("clientinject: backup %s: %w", orig, err)
 		}
@@ -207,4 +221,23 @@ func NewManifest(plan *Plan, files []ManifestFile, preflightOK bool) *Manifest {
 		UpdatedAt:           now,
 		InstallRoot:         plan.Install.RootDir,
 	}
+}
+
+// CheckPriorInject refuses Apply when a prior inject is incomplete (in_progress).
+// status=applied / failed / reverted is OK: CreateBackups preserves stock bak.
+// Recovery: Revert uses bak even if status is still in_progress.
+func CheckPriorInject(w FileWriter, installRoot string) error {
+	path := ManifestPath(installRoot)
+	if _, err := w.Stat(path); err != nil {
+		return nil // no manifest
+	}
+	m, err := ReadManifest(w, installRoot)
+	if err != nil {
+		return fmt.Errorf("clientinject: read prior manifest: %w", err)
+	}
+	if m.Status == ManifestStatusInProgress {
+		return fmt.Errorf("%w (status=%s); Revert restores .openfsd-bak even if status is in_progress",
+			ErrPriorInjectActive, m.Status)
+	}
+	return nil
 }

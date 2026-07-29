@@ -9,11 +9,14 @@ import (
 	"unsafe"
 )
 
-// On Windows, a second CreateFile with share-mode 0 fails if the PE is mapped
-// or open without share. We re-open via CreateFileW with dwShareMode=0.
-// If that fails with sharing violation, treat as client running.
-// Holding a simple *os.File from OpenFile may still allow another OpenFile
-// (Go uses FILE_SHARE_READ|WRITE); exclusive CreateFile is the real gate.
+// On Windows, CreateFileW with dwShareMode=0 is the real "client running" gate:
+// a mapped/open PE typically fails exclusive open with ERROR_SHARING_VIOLATION
+// even when no byte-range locks exist. LockFileEx alone is insufficient because
+// running EXEs usually do not hold range locks — LockFileEx can succeed while
+// the client is still running.
+//
+// We always attempt CreateFile exclusive. LockFileEx is a secondary signal only
+// (returns ErrClientRunning when it reports a lock/sharing violation).
 
 var (
 	modkernel32      = syscall.NewLazyDLL("kernel32.dll")
@@ -36,7 +39,11 @@ const (
 )
 
 func tryExclusiveLock(f *os.File) error {
-	// Prefer LockFileEx exclusive non-blocking on the already-open handle.
+	// Primary gate: CreateFile with share mode 0 (always).
+	if err := tryCreateFileExclusive(f.Name()); err != nil {
+		return err
+	}
+	// Secondary: LockFileEx on the already-open Go handle (best-effort).
 	var ol syscall.Overlapped
 	r1, _, e1 := procLockFileEx.Call(
 		f.Fd(),
@@ -52,8 +59,9 @@ func tryExclusiveLock(f *os.File) error {
 			errno == syscall.Errno(_ERROR_SHARING_VIOLATION) {
 			return fmt.Errorf("%w: LockFileEx: %v", ErrClientRunning, errno)
 		}
-		// Fallback: try CreateFile with share mode 0.
-		return tryCreateFileExclusive(f.Name())
+		// Non-lock LockFileEx failure after CreateFile exclusive succeeded:
+		// treat as probe noise (CreateFile already proved exclusive open).
+		return nil
 	}
 	return nil
 }

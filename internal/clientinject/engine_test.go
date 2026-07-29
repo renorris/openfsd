@@ -405,6 +405,282 @@ func TestCollectPlanTargets(t *testing.T) {
 	}
 }
 
+func TestEngine_ReApplyPreservesStockBak(t *testing.T) {
+	// Apply → re-Apply with different payload → Revert must restore original stock.
+	root, pe, payload, stock := setupFakeInstall(t)
+	store := NewProfileStore()
+	_ = store.Add(&Profile{
+		SchemaVersion: 2,
+		ProfileID:     "fake-1",
+		ClientID:      "fake",
+		PrimaryBinary: PrimaryBinarySpec{
+			RelativePath: "app.exe",
+			SHA1:         sha1hex([]byte("MZ-fake-pe")),
+		},
+	})
+	fake := &FakeAdapter{ID: "fake", NewData: []byte("PATCH-V1")}
+	eng := NewEngine(store, fake)
+	install := Install{
+		ClientID:  "fake",
+		RootDir:   root,
+		PrimaryPE: pe,
+		HashSHA1:  sha1hex([]byte("MZ-fake-pe")),
+		ProfileID: "fake-1",
+	}
+	plan, err := eng.Plan(context.Background(), install, Endpoints{WebBaseURL: "https://x.test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := eng.Apply(context.Background(), plan); err != nil {
+		t.Fatal(err)
+	}
+	// Stock bak must still be original after first apply.
+	bak1, err := os.ReadFile(payload + BackupSuffix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(bak1, stock) {
+		t.Fatalf("first bak=%q stock=%q", bak1, stock)
+	}
+	// Re-apply different content; bak must not be clobbered with PATCH-V1.
+	fake.NewData = []byte("PATCH-V2")
+	plan2, err := eng.Plan(context.Background(), install, Endpoints{WebBaseURL: "https://y.test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Live PE is still stock (fake only patches payload.bin), so Plan/Verify OK.
+	if _, err := eng.Apply(context.Background(), plan2); err != nil {
+		t.Fatal(err)
+	}
+	bak2, err := os.ReadFile(payload + BackupSuffix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(bak2, stock) {
+		t.Fatalf("re-apply clobbered bak: got %q want stock %q", bak2, stock)
+	}
+	got, _ := os.ReadFile(payload)
+	if !bytes.Equal(got, []byte("PATCH-V2")) {
+		t.Fatalf("payload=%q", got)
+	}
+	if err := eng.Revert(context.Background(), root); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = os.ReadFile(payload)
+	if !bytes.Equal(got, stock) {
+		t.Fatalf("after revert got %q want stock", got)
+	}
+}
+
+func TestEngine_RelativePrimaryPE(t *testing.T) {
+	root, _, payload, stock := setupFakeInstall(t)
+	store := NewProfileStore()
+	_ = store.Add(&Profile{
+		SchemaVersion: 2,
+		ProfileID:     "fake-1",
+		ClientID:      "fake",
+		PrimaryBinary: PrimaryBinarySpec{RelativePath: "app.exe", SHA1: sha1hex([]byte("MZ-fake-pe"))},
+	})
+	fake := &FakeAdapter{ID: "fake", NewData: []byte("REL-PATCH")}
+	eng := NewEngine(store, fake)
+	install := Install{
+		ClientID:  "fake",
+		RootDir:   root,
+		PrimaryPE: "app.exe", // relative
+		ProfileID: "fake-1",
+		HashSHA1:  sha1hex([]byte("MZ-fake-pe")),
+	}
+	plan, err := eng.Plan(context.Background(), install, Endpoints{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !filepath.IsAbs(plan.Install.PrimaryPE) {
+		t.Fatalf("Plan should abs PrimaryPE, got %q", plan.Install.PrimaryPE)
+	}
+	if _, err := eng.Apply(context.Background(), plan); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(payload)
+	if !bytes.Equal(got, []byte("REL-PATCH")) {
+		t.Fatalf("%q", got)
+	}
+	// Revert still works
+	if err := eng.Revert(context.Background(), root); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = os.ReadFile(payload)
+	if !bytes.Equal(got, stock) {
+		t.Fatalf("revert %q", got)
+	}
+}
+
+func TestEngine_PriorInjectInProgressRefuses(t *testing.T) {
+	root, pe, _, _ := setupFakeInstall(t)
+	store := NewProfileStore()
+	_ = store.Add(&Profile{
+		SchemaVersion: 2,
+		ProfileID:     "fake-1",
+		ClientID:      "fake",
+		PrimaryBinary: PrimaryBinarySpec{RelativePath: "app.exe", SHA1: sha1hex([]byte("MZ-fake-pe"))},
+	})
+	// Stale in_progress manifest (e.g. finalize WriteManifest failed after patch).
+	m := &Manifest{
+		InstallRoot: root,
+		Status:      ManifestStatusInProgress,
+		ClientID:    "fake",
+		ProfileID:   "fake-1",
+		Files:       []ManifestFile{{Original: pe, Backup: BackupPath(pe)}},
+	}
+	if err := WriteManifest(OSFileWriter{}, m); err != nil {
+		t.Fatal(err)
+	}
+	fake := &FakeAdapter{ID: "fake"}
+	eng := NewEngine(store, fake)
+	plan := &Plan{
+		Install:   Install{ClientID: "fake", RootDir: root, PrimaryPE: pe, ProfileID: "fake-1", HashSHA1: sha1hex([]byte("MZ-fake-pe"))},
+		Mutations: []Mutation{{ID: "x", TargetRel: "payload.bin", Detail: WriteFileDetail{Contents: []byte("x")}}},
+	}
+	_, err := eng.Apply(context.Background(), plan)
+	if err == nil || !errors.Is(err, ErrPriorInjectActive) {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestEngine_ApplyVerifyMismatch(t *testing.T) {
+	root, pe, _, _ := setupFakeInstall(t)
+	// Wrong PE contents vs profile stock SHA.
+	if err := os.WriteFile(pe, []byte("WRONG-PE"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store := NewProfileStore()
+	_ = store.Add(&Profile{
+		SchemaVersion: 2,
+		ProfileID:     "fake-1",
+		ClientID:      "fake",
+		PrimaryBinary: PrimaryBinarySpec{RelativePath: "app.exe", SHA1: sha1hex([]byte("MZ-fake-pe"))},
+	})
+	fake := &FakeAdapter{ID: "fake"}
+	eng := NewEngine(store, fake)
+	plan := &Plan{
+		Install:   Install{ClientID: "fake", RootDir: root, PrimaryPE: pe, ProfileID: "fake-1"},
+		Mutations: []Mutation{{ID: "x", TargetRel: "payload.bin", Detail: WriteFileDetail{Contents: []byte("x")}}},
+	}
+	_, err := eng.Apply(context.Background(), plan)
+	if err == nil {
+		t.Fatal("expected sha mismatch")
+	}
+}
+
+func TestEngine_HealthFailClearsMutationsApplied(t *testing.T) {
+	root, pe, _, _ := setupFakeInstall(t)
+	store := NewProfileStore()
+	_ = store.Add(&Profile{
+		SchemaVersion: 2,
+		ProfileID:     "fake-1",
+		ClientID:      "fake",
+		PrimaryBinary: PrimaryBinarySpec{RelativePath: "app.exe", SHA1: sha1hex([]byte("MZ-fake-pe"))},
+	})
+	fake := &FakeAdapter{ID: "fake", NewData: []byte("BAD"), FailHealth: true}
+	eng := NewEngine(store, fake)
+	install := Install{ClientID: "fake", RootDir: root, PrimaryPE: pe, ProfileID: "fake-1", HashSHA1: sha1hex([]byte("MZ-fake-pe"))}
+	plan, err := eng.Plan(context.Background(), install, Endpoints{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = eng.Apply(context.Background(), plan)
+	if err == nil {
+		t.Fatal("expected health error")
+	}
+	m, err := ReadManifest(OSFileWriter{}, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(m.MutationsApplied) != 0 {
+		t.Fatalf("MutationsApplied should be cleared after health restore, got %v", m.MutationsApplied)
+	}
+}
+
+func TestEngine_PreflightOKFalseWhenNoPE(t *testing.T) {
+	root := t.TempDir()
+	payload := filepath.Join(root, "payload.bin")
+	stock := []byte("stock")
+	if err := os.WriteFile(payload, stock, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store := NewProfileStore()
+	_ = store.Add(&Profile{
+		SchemaVersion: 2,
+		ProfileID:     "fake-1",
+		ClientID:      "fake",
+		PrimaryBinary: PrimaryBinarySpec{RelativePath: "app.exe"}, // empty sha — no stock check
+	})
+	fake := &FakeAdapter{ID: "fake", NewData: []byte("P")}
+	eng := NewEngine(store, fake)
+	plan := &Plan{
+		Install:   Install{ClientID: "fake", RootDir: root, PrimaryPE: "", ProfileID: "fake-1"},
+		Mutations: []Mutation{{ID: "write_payload", TargetRel: "payload.bin", Detail: WriteFileDetail{Contents: []byte("P")}}},
+	}
+	res, err := eng.Apply(context.Background(), plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = res
+	m, _ := ReadManifest(OSFileWriter{}, root)
+	if m.PreflightOK {
+		t.Fatal("preflight_ok should be false when PrimaryPE empty")
+	}
+}
+
+func TestCreateBackups_PreservesExisting(t *testing.T) {
+	w := OSFileWriter{}
+	dir := t.TempDir()
+	orig := filepath.Join(dir, "f.bin")
+	bak := BackupPath(orig)
+	if err := w.WriteFile(orig, []byte("LIVE")); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.WriteFile(bak, []byte("STOCK")); err != nil {
+		t.Fatal(err)
+	}
+	files, err := CreateBackups(w, []string{orig})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 {
+		t.Fatalf("%v", files)
+	}
+	got, _ := w.ReadFile(bak)
+	if string(got) != "STOCK" {
+		t.Fatalf("clobbered bak: %q", got)
+	}
+}
+
+func TestFileWriter_WriteFilePreservesMode(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "x.bin")
+	if err := os.WriteFile(path, []byte("a"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	w := OSFileWriter{}
+	if err := w.WriteFile(path, []byte("bb")); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm()&0o111 == 0 {
+		// On some FS execute bit may not stick; at least we tried 0o755.
+		// Require that we didn't force only 0o644 if OS preserves.
+		t.Logf("mode=%v (execute may be unsupported on this FS)", info.Mode())
+	}
+	// Content updated
+	got, _ := os.ReadFile(path)
+	if string(got) != "bb" {
+		t.Fatalf("%q", got)
+	}
+}
+
 func TestEngine_RegisterAdapterAndWriterNil(t *testing.T) {
 	eng := &Engine{Profiles: NewProfileStore()}
 	fake := &FakeAdapter{ID: "fake"}

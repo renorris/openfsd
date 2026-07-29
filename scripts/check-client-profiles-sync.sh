@@ -54,10 +54,7 @@ for emb in "$EMBED"/*.yaml "$EMBED"/*.yml; do
     echo "  FAIL: $base client_id embed=$ec mirror=$mc"
     failed=1
   fi
-  # primary_binary.sha1 appears after primary_binary: — use simple grep of sha1 under file
-  esha="$(grep -E '^\s+sha1:' "$emb" 2>/dev/null | head -1 | sed -E 's/.*sha1:[[:space:]]*//' | tr -d '"' || true)"
-  msha="$(grep -E '^\s+sha1:' "$mir" 2>/dev/null | head -1 | sed -E 's/.*sha1:[[:space:]]*//' | tr -d '"' || true)"
-  # Prefer the primary_binary sha1 line that is not under installer (second sha1 often PE)
+  # Prefer the primary_binary sha1 (not installer sha1 under installer:)
   esha_pe="$(awk '/^primary_binary:/{p=1} p&&/sha1:/{print $2; exit}' "$emb" | tr -d '"' || true)"
   msha_pe="$(awk '/^primary_binary:/{p=1} p&&/sha1:/{print $2; exit}' "$mir" | tr -d '"' || true)"
   if [[ -n "$esha_pe" && -n "$msha_pe" && "$esha_pe" != "$msha_pe" ]]; then

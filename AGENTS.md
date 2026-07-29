@@ -32,6 +32,7 @@ Operational rules for agents and humans changing this repository. This file is t
 | `internal/clientinject` | Engine plan/apply/revert | Must not import server/web/afv/db/postoffice/session/cluster/sweatbox/metar/auth/serviceapi |
 | `internal/clientinject/cilus` | Pure CLR `#US` encode/decode | **stdlib only** |
 | `internal/clientinject/vpilotconfig` | Pure vPilot 3DES config crypto + XML | **stdlib only** |
+| `internal/clientinject/pepatch` | PE/binary overwrite + padded string + UTF-16 scan | **stdlib only** |
 
 **Wire format:** `pkg/protocol` (FSD) and `pkg/twrfiles` (.apt/.air) — no alternate field order or marshaling in handlers/clients.
 
@@ -60,7 +61,8 @@ internal/auth     → protocol
 internal/session  → protocol
 internal/clientinject/cilus → (stdlib only)
 internal/clientinject/vpilotconfig → (stdlib only)
-internal/clientinject → cilus, vpilotconfig, …; never server/web/afv/db/…
+internal/clientinject/pepatch → (stdlib only)
+internal/clientinject → cilus, vpilotconfig, pepatch, …; never server/web/afv/db/…
 cmd/openfsd-client → internal/clientinject (+ GUI); never server/web/afv/db/…
 ```
 
@@ -88,8 +90,9 @@ Enforce with `scripts/check-import-graph.sh`.
 | `internal/clientinject` (incl. subpackages) | `server`, `web`, `afv`, `db`, `postoffice`, `session`, `cluster`, `sweatbox`, `metar`, `auth`, `serviceapi` |
 | `internal/clientinject/cilus` | Any non-stdlib import |
 | `internal/clientinject/vpilotconfig` | Any non-stdlib import |
+| `internal/clientinject/pepatch` | Any non-stdlib import |
 
-Stdlib heuristic: first path element contains no `.` (e.g. `fmt`, `net/http`). Third-party is never allowed in `pkg/protocol`, `pkg/twrfiles`, `internal/geo`, `internal/clientinject/cilus`, or `internal/clientinject/vpilotconfig`.
+Stdlib heuristic: first path element contains no `.` (e.g. `fmt`, `net/http`). Third-party is never allowed in `pkg/protocol`, `pkg/twrfiles`, `internal/geo`, `internal/clientinject/cilus`, `internal/clientinject/vpilotconfig`, or `internal/clientinject/pepatch`.
 
 **Cycle rule:** `session` never imports `postoffice`. Postoffice depends on a narrow participant/send port. Shared errors like `ErrCallsignInUse` live next to the registry, not in `pkg/protocol`.
 
@@ -191,6 +194,8 @@ Enforced by `scripts/check-coverage.sh` (CI).
 | `internal/cluster` | ≥90% | **Hard** |
 | `internal/clientinject/cilus` | ≥98% | **Hard** |
 | `internal/clientinject/vpilotconfig` | ≥98% | **Hard** |
+| `internal/clientinject/pepatch` | ≥95% | **Hard** |
+| `internal/clientinject` | ≥85% | Soft (report only; hard after GUI/adapters mature) |
 | `internal/web` | ≥80% | Soft (report only) |
 | `internal/afv` | ≥80% | Soft (P0; hard ≥85 later) |
 | Overall aspirational | 90% | Soft (report only) |

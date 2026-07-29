@@ -36,8 +36,18 @@ func (OSFileWriter) ReadFile(path string) ([]byte, error) {
 }
 
 // WriteFile implements FileWriter.
+// When overwriting an existing file, preserves its permission bits (so PE
+// rewrites via full-file WriteFile keep the executable bit on Unix/Wine).
+// New files default to 0o644. Prefer OpenReadWrite / pepatch for PE mutations.
 func (OSFileWriter) WriteFile(path string, data []byte) error {
-	return os.WriteFile(path, data, 0o644)
+	mode := fs.FileMode(0o644)
+	if info, err := os.Stat(path); err == nil {
+		mode = info.Mode().Perm()
+		if mode == 0 {
+			mode = 0o644
+		}
+	}
+	return os.WriteFile(path, data, mode)
 }
 
 // CopyFile implements FileWriter.

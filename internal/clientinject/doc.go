@@ -4,7 +4,8 @@
 //
 // Pure subpackages (stdlib only):
 //   - pepatch — PE/binary overwrite helpers
-//   - cilus / vpilotconfig — land in sibling PRs
+//   - cilus — CLR #US heap encode/decode
+//   - vpilotconfig — vPilot 3DES config crypto + XML field rewrite
 //
 // This package must not import server, web, afv, db, postoffice, session,
 // cluster, sweatbox, metar, auth, or serviceapi.

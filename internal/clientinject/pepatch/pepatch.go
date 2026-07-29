@@ -3,6 +3,7 @@
 package pepatch
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -129,21 +130,9 @@ func ScanUTF16String(data []byte, s string) []int64 {
 	var hits []int64
 	// Byte-aligned scan; PE strings are 2-byte aligned but residual scan is exhaustive.
 	for i := 0; i+need <= len(data); i++ {
-		if bytesEqual(data[i:i+need], pat) {
+		if bytes.Equal(data[i:i+need], pat) {
 			hits = append(hits, int64(i))
 		}
 	}
 	return hits
-}
-
-func bytesEqual(a, b []byte) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }
