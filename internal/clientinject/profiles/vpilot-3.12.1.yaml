@@ -13,7 +13,8 @@
 #
 # Phase 0: short-host JWT lab only unless A8 short path or R1 remap lands.
 # Production hostnames need R1 and/or A8. Residual full-PE scan will still see
-# dead 0xBA44A after primary patch — allowlist that offset (do not add to body_file_offsets).
+# dead 0xBA44A after primary patch — KD-20 allowlist that offset; fail only on
+# unexpected residual hits (do not add 0xBA44A to body_file_offsets / dual-write).
 
 schema_version: 2
 client_id: vpilot

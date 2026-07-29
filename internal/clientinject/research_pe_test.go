@@ -17,9 +17,10 @@ import (
 //
 //	go test -tags=research ./internal/clientinject/ -count=1
 //
-// Looks for OPENFSD_VPILOT_EXE, then common .research paths relative to the
-// module / home scratch tree. Skips cleanly when the PE is absent so CI
-// without extract stays green under -tags=research.
+// Looks for OPENFSD_VPILOT_EXE, then relative / walk-up `.research/...` paths
+// (and optional $HOME/scratch/openfsd/... convenience — no username hardcode).
+// Skips cleanly when the PE is absent so CI without extract stays green under
+// -tags=research.
 
 const (
 	researchStockJWT    = "https://auth.vatsim.net/api/fsd-jwt"
@@ -47,9 +48,14 @@ func researchVPilotPath(t *testing.T) string {
 	candidates := []string{
 		filepath.Join(".research", "vpilot", "extracted", "vPilot.exe"),
 		filepath.Join("..", "..", ".research", "vpilot", "extracted", "vPilot.exe"),
-		"/Users/rnorris/scratch/openfsd/.research/vpilot/extracted/vPilot.exe",
 	}
-	// Also try walking up from cwd for monorepo root .research/
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		// Generic maintainer layout (no hardcoded username): ~/scratch/openfsd/.research/...
+		candidates = append(candidates,
+			filepath.Join(home, "scratch", "openfsd", ".research", "vpilot", "extracted", "vPilot.exe"),
+		)
+	}
+	// Walk up from cwd for monorepo root .research/
 	wd, _ := os.Getwd()
 	for i := 0; i < 6 && wd != ""; i++ {
 		candidates = append(candidates, filepath.Join(wd, ".research", "vpilot", "extracted", "vPilot.exe"))

@@ -21,7 +21,7 @@
 | Production-length JWT hostnames without A8 | **No** — needs **R1** free-slot remap **or** openfsd **A8** short path (`/j` fixed, etc.) |
 | AFV base retarget when URL fits #US budget 51 | **Yes** if host short enough; URL only in `vPilot.exe` (R5) |
 | AFV PE `ret` disable fallback | **No** until R2 |
-| “No residual stock JWT UTF-16 in whole PE” | **No** — dead copy at `0xBA44A` remains after primary patch (R3); residual HealthCheck must **allowlist** that offset or stay warn-level for full-PE scan |
+| Residual HealthCheck post-R3 | **Yes** when allowlisting dead `0xBA44A` and failing only on **unexpected** hits (design rev 3.3 / KD-20). Whole-PE residual-zero is **not** required or achievable without dual-write |
 | Config rewrite path | **Yes** for default install (`%LOCALAPPDATA%\vPilot\`); multi-candidate ordered list in R4 |
 
 **Do not market adapter complete** for arbitrary production hostnames while R1 is open (unless A8 is deployed and PreferShortJWTPath is used).
@@ -109,11 +109,13 @@ Pre-context at `0xBA44A` is binary framing (`… 04 88 13 00 00 04 98 3A … 08 
 
 - **Do not** add `0xBA44A` to `strings.fsd_jwt.body_file_offsets`.  
 - Patching only the live `#US` body (+ length prefix) is correct for runtime JWT.  
-- Full-PE residual scan will still report `0xBA44A` after a successful primary patch → HealthCheck must treat it as a **documented dead hit** (allowlist) or remain **warn-level** until residual policy is implemented. This is **not** a reason to dual-write.
+- Full-PE residual scan will still report `0xBA44A` after a successful primary patch → HealthCheck **allowlists** that offset as a documented dead hit (design KD-20). This is **not** a reason to dual-write.
 
 ### Residual-scan test policy
 
-Synthetic fixtures (two live-style UTF-16 copies) validate the scanner. Real PE research test (optional `research` tag) asserts exactly two hits at `0xB7988` and `0xBA44A` on stock 3.12.1.
+Synthetic fixtures use **two UTF-16 copies (live-style terminal `0x01` + dead residual framing terminal `0x04`)** to validate the scanner and lock the R3 live/dead distinction. Real PE research test (optional `research` tag) asserts exactly two hits at `0xB7988` and `0xBA44A` on stock 3.12.1.
+
+**HealthCheck residual rule (aligned with design rev 3.3 / KD-20):** after patching profile-listed live bodies, **allowlist** documented dead residuals (`0xBA44A`); **fail only on unexpected** residual stock JWT hits. Do **not** require whole-PE residual-zero or dual-write of dead sites.
 
 ---
 

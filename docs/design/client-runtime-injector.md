@@ -5,11 +5,11 @@
 | **Document** | openfsd Client Setup — multi-client framework + vPilot 3.12.1 adapter |
 | **Author** | _(design author / implementer)_ |
 | **Date** | 2026-07-28 |
-| **Status** | **Draft** (rev 3.2 — review feedback polish) |
+| **Status** | **Draft** (rev 3.3 — R3 residual allowlist) |
 | **Project** | openfsd |
 | **Target land path** | `docs/design/client-runtime-injector.md` |
-| **Related** | `Agents.md`, `docs/client-injector/research/vpilot-3.12.1.md`, `third_party/client-profiles/vpilot-3.12.1.yaml`, `wiki/Client-Connection.md`, `docs/design/afv-server.md`, `docs/authentication-token.md`, `docs/design/rest-api-versioning.md`, archived `renorris/vpilot-patch-utility`, `renorris/openfsd-client-patch-utility` |
-| **Revision** | rev 3.2: soft-probe 3xx fail; residual HealthCheck levels; PR-1 files; rollout S\* vs R\* gates; fingerprint digests; prior rev 3.1 host-len fix; rev 3 URL tables `/j` A8 |
+| **Related** | `Agents.md`, `docs/client-injector/research/vpilot-3.12.1.md`, `docs/client-injector/research/vpilot-3.12.1-gates.md`, `third_party/client-profiles/vpilot-3.12.1.yaml`, `wiki/Client-Connection.md`, `docs/design/afv-server.md`, `docs/authentication-token.md`, `docs/design/rest-api-versioning.md`, archived `renorris/vpilot-patch-utility`, `renorris/openfsd-client-patch-utility` |
+| **Revision** | rev 3.3: R3 closed not-live (`0xBA44A` dead residual allowlist; no dual-write; residual HealthCheck fail only on unexpected hits); prior rev 3.2 soft-probe / S\* vs R\* / URL budgets |
 
 ---
 
@@ -76,7 +76,7 @@ CLR `#US` (3.12.1) — heap file offset `0xA22E8`, size `0x15E04` (values live i
 | `https://voice1.vatsim.net` | `0x6D8D` | `0xA9076` | `0x1F0A7` | 51 bytes |
 | `http://fsd.vatsim.net/` | `0x15751` | `0xB7A3A` | `0x4C0B2` | 45 bytes |
 
-**Also noted (open research):** second fsd-jwt UTF-16 body at file `0xBA44A` (header walk failed — may be resource/non-`#US`). Adapter completeness requires proving liveness or dual-writing (see Research gates).
+**R3 closed (not live):** second fsd-jwt UTF-16 body at file `0xBA44A` is **dead residual data** (outside `#US`, invalid terminal `0x04`, no dual-write). Profile keeps only live body `0xB7988`. Full-PE residual scan will still hit `0xBA44A` after a successful primary patch — **allowlist** that offset (see HealthCheck residual levels + `docs/client-injector/research/vpilot-3.12.1-gates.md`).
 
 ### Pain points
 
@@ -138,7 +138,7 @@ CLR `#US` (3.12.1) — heap file offset `0xA22E8`, size `0x15E04` (values live i
 | AFV `#US` in-place (URL ≤ **25** chars) | **Yes** if short voice host | Same |
 | AFV PE `ret` disable | **Out of Phase 0** until **R2** | Optional fallback |
 | Voice off without PE patch | **`-novoice` / ForceDisableAFV launch flag** | Same |
-| Residual stock JWT scan (incl. second body site) | After **R3** | **Required** for “adapter complete” |
+| Residual stock JWT scan (allowlist dead `0xBA44A`) | After **R3** (closed not-live) | **Required** for “adapter complete” — fail only on **unexpected** residual hits |
 | Config path multi-candidate | After **R4** | **Required** for “adapter complete” |
 | GeoVR re-hardcode check | After **R5** | Required before promising AFV retarget |
 
@@ -461,7 +461,9 @@ type Adapter interface {
    - On any error → restore all from bak; status=failed; keep bak for forensics optional
 7. HealthCheck (see HealthCheck levels below):
      - Always: profile-listed `#US` / body offsets + written configs
-     - Residual full-PE stock JWT scan: **warn** pre-R3; **fail** post-R3 / adapter-complete (KD-20)
+     - Residual full-PE stock JWT scan (KD-20): **warn** on unexpected hits in Phase 0;
+       post-R3 / adapter-complete **fail** only on residual hits **not** in the documented
+       dead-site allowlist (vPilot 3.12.1: `0xBA44A`); never require dual-write of dead sites
    - On failure → auto-revert; report
 8. status=applied
 ```
@@ -507,7 +509,7 @@ flowchart LR
 | `#US` in-place | **0** | only if rendered URL fits budget |
 | `-novoice` launch | **0** | voice off without PE disable |
 | free-slot + ldstr remap | **0.5 / R1** | **required** for real JWT hostnames (or A8) |
-| Dual/multi JWT site patch | **0.5 / R3** | residual stock JWT scan |
+| Residual JWT policy (R3 closed not-live) | **0.5 / R3** | allowlist dead `0xBA44A`; patch primary only |
 | Config multi-candidate | **0.5 / R4** | install dir vs AppData |
 | AFV PE `ret` disable | **0.5 / R2** | not claimed until offset known |
 | GeoVR inventory | **0.5 / R5** | may add DLL mutations |
@@ -653,7 +655,7 @@ strings:
   fsd_jwt:
     stock: "https://auth.vatsim.net/api/fsd-jwt"
     us_heap_offset: 0x1569F
-    body_file_offsets: [0xB7988]   # extend after R3 if second site live
+    body_file_offsets: [0xB7988]   # R3: only live #US; dead residual also at 0xBA44A (allowlist, do not dual-write)
     ldstr_file_offsets: [0x4BDB5]
     payload_budget_bytes: 71
     template: "{{.JWTURL}}"
@@ -742,30 +744,40 @@ Do **not** assume only `install/vPilotConfig.xml`.
 1. Verify SHA-1/256 vs profile.
 2. Preflight lock / not running.
 3. Backup PE.
-4. Patch primary JWT `#US` (+ all `body_file_offsets` after R3).
+4. Patch primary JWT `#US` (+ all profile-listed `body_file_offsets`; R3: primary only — **never** dual-write dead residual `0xBA44A`).
 5. Patch AFV `#US` if retargeting.
 6. Remap ldstr when using free slots (R1).
 7. **Never** apply PE `ret` disable until profile `file_offset` non-null (R2).
 
 #### HealthCheck (strengthened; leveled)
 
-**Always (Phase 0 / pre-R3 and later):**
+**Always (Phase 0 and later):**
 
 1. Decode primary `#US` slots asserted in profile (planned JWT / AFV mutations).
 2. Assert every profile-listed `body_file_offsets` entry for a planned mutation matches the expected post-patch payload (not stock).
 3. Decrypt all written config paths; assert status + server list.
 4. Soft: HTTP GET StatusURL (optional network).
 
-**Residual full-PE stock JWT scan** (UTF-16 `https://auth.vatsim.net/api/fsd-jwt` anywhere in the PE, including sites not yet in the profile — e.g. second body `0xBA44A`):
+**Residual full-PE stock JWT scan** (UTF-16 `https://auth.vatsim.net/api/fsd-jwt` anywhere in the PE):
 
-| Maturity | Residual hit after planned JWT mutation | Rationale |
-|----------|------------------------------------------|-----------|
-| **Phase 0 / pre-R3** (short-host lab, profile lists primary site only) | **Warn** in plan/report; do **not** fail Apply solely for extra residual hits | Second site may be dead resource data; always-fail would block Phase 0 forever until R3 |
-| **Adapter-complete / post-R3** (KD-20) | **Fail** HealthCheck (auto-revert) if any residual stock JWT remains | Multi-site patch closed; “no residual VATSIM JWT” is the guarantee |
+Hits are classified as:
 
-**AFV residual (optional):** if AFV was retargeted, optionally scan for stock AFV base; same warn-then-fail maturity pattern once R5/profile list is complete.
+| Class | Definition (vPilot 3.12.1) | Action |
+|-------|----------------------------|--------|
+| **Expected cleared** | Profile-listed live bodies (e.g. `0xB7988`) after planned JWT mutation | Must **not** still be stock — already covered by body-offset assert above |
+| **Documented dead residual** | Allowlisted non-`#US` copies that research proved not live (R3: **`0xBA44A`**) | **Never fail** solely for these; do **not** dual-write; optional soft note in plan/report |
+| **Unexpected residual** | Any other stock JWT UTF-16 hit (new site, wrong profile, patch miss) | See maturity table |
 
-Engine orchestration step 7 must use these levels — never treat residual full-PE fail as mandatory before R3.
+| Maturity | Unexpected residual after planned JWT mutation | Documented dead residual (`0xBA44A`) | Rationale |
+|----------|------------------------------------------------|--------------------------------------|-----------|
+| **Phase 0 / short-host lab** | **Warn** in plan/report; do **not** fail Apply solely for unexpected extras | Ignore / optional note | Avoid blocking lab; R3 evidence already closed dual-write |
+| **Adapter-complete / post-R3** (KD-20) | **Fail** HealthCheck (auto-revert) | **Allowlist — do not fail** | Guarantee is “no **unexpected** live residual JWT”, **not** “zero UTF-16 copies of the stock string in the whole PE” |
+
+**Normative residual guarantee (post-R3):** every profile-listed live JWT body is patched **and** no **unexpected** stock JWT UTF-16 remains. Whole-PE residual-zero is **not** a goal when dead sites exist; overwriting non-`#US` residual data is out of scope.
+
+**AFV residual (optional):** if AFV was retargeted, optionally scan for stock AFV base; same allowlist/unexpected pattern once R5/profile list is complete.
+
+Engine residual step must implement allowlist + unexpected-fail — never treat “any UTF-16 stock JWT anywhere” as a hard fail after R3 closed not-live.
 
 #### CLI launch
 
@@ -982,7 +994,7 @@ None in openfsd DB. User-machine bak/manifest/settings only.
 |----|------|----------|
 | **R1** | Free `#US` slot catalog + ldstr remap on 3.12.1 | Production-length JWT hostnames without A8 |
 | **R2** | AFV connect `ret` CIL file offset for 3.12.1 | PE disable fallback (not just `-novoice`) |
-| **R3** | Second fsd-jwt body `0xBA44A` liveness; multi-site patch | “No residual VATSIM JWT” guarantee |
+| **R3** | Second fsd-jwt body `0xBA44A` liveness (**closed not-live**) | Residual allowlist policy; primary-only patch; no dual-write |
 | **R4** | Config path resolution (install vs AppData) | Config Apply correctness |
 | **R5** | GeoVR.* string inventory for voice base | AFV retarget confidence |
 | **R6** | CachedServers `host:port` acceptance on 3.12.1 | Non-default FSD port UX |
@@ -1061,7 +1073,7 @@ Gates are tracked under `docs/client-injector/research/`; profiles gain offsets 
 | **KD-17** | **Embed root** = `internal/clientinject/profiles/`; `third_party/client-profiles/` is mirror | `go:embed` path rules |
 | **KD-18** | FSD default port **6809**; CachedServers `NAME\|host` without port when default; `host:port` when non-default or IncludePort | Prior-art shaped; R6 may refine |
 | **KD-19** | Phase 0 production hostnames require **R1 free-slot remap and/or working short JWT path** (fixed `/j` or other A8); else short-host lab only (max JWT host **12** on default `/api/v1/fsd-jwt`) | Budget math; fixed `/j` → max host **25** |
-| **KD-20** | HealthCheck residual UTF-16 scan for stock JWT: **warn** pre-R3; **fail** post-R3 / adapter-complete | Second-site safety without blocking Phase 0 |
+| **KD-20** | HealthCheck residual UTF-16 stock JWT: always assert profile-listed live bodies; **allowlist** documented dead residuals (3.12.1: `0xBA44A`); **fail** only on **unexpected** residual hits post-R3 / adapter-complete (warn in Phase 0 lab) | R3 closed not-live; no dual-write; no whole-PE residual-zero myth |
 | **KD-21** | Phase 1 shadow = **hybrid**: patch temp copy of PE (+ any DLLs mutated); **cwd = install root**; do not full-tree copy by default | DLLs/GeoVR/plugins resolve from install |
 | **KD-22** | Product name **openfsd Client Setup**; “runtime injector” is roadmap language only | Naming honesty |
 
@@ -1073,7 +1085,7 @@ Gates are tracked under `docs/client-injector/research/`; profiles gain offsets 
 |------|----------|------------|
 | JWT over-budget without R1/A8 | **Critical** | Document 12-char rule; blockers; front-load R1; A8 |
 | AFV PE disable unknown | **High** | `-novoice` only until R2 |
-| Second JWT site live | **High** | R3 + residual scan KD-20 |
+| Second JWT residual dead but full-PE scan fails wrongly | **High** | R3 allowlist KD-20 (`0xBA44A`); never dual-write |
 | Config path wrong | **High** | R4 multi-candidate + health |
 | GeoVR re-hardcodes AFV | **Med** | R5 inventory |
 | Client running / file lock | **High** | Preflight KD-11 |

@@ -168,6 +168,6 @@ Recommended design direction: **adapter interface per client**, default vPilot a
 - [x] R5: GeoVR re-hardcode check — **none**.
 - [ ] R1: runtime-validate a sacrifice free slot; populate `us_free_slots`.
 - [ ] R2: locate AFV connect handler CIL for 3.12.1 `ret` disable.
-- [ ] Residual HealthCheck allowlist for dead `0xBA44A` when implementing adapter-complete policy.
+- [x] Residual HealthCheck policy for dead `0xBA44A` documented (design rev 3.3 / KD-20 allowlist; implement in adapter PR).
 - [ ] Antivirus / code-signing interaction when rewriting signed `vPilot.exe`.
 - [ ] R6 (separate): CachedServers `host:port` acceptance on 3.12.1.
