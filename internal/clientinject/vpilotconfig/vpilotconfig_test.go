@@ -5,6 +5,7 @@ import (
 	"crypto/cipher"
 	"crypto/des"
 	"encoding/base64"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"strings"
@@ -556,5 +557,95 @@ func TestParseDocumentFormatRoundTrip(t *testing.T) {
 	}
 	if got.NetworkStatusURL != "http://b/" {
 		t.Fatalf("%q", got.NetworkStatusURL)
+	}
+}
+
+func TestDocumentFormatNilAndEncryptError(t *testing.T) {
+	var nilDoc *Document
+	if _, err := nilDoc.Format(); !errors.Is(err, ErrEmptyConfig) {
+		t.Fatalf("nil doc: %v", err)
+	}
+	if _, err := (&Document{}).Format(); !errors.Is(err, ErrEmptyConfig) {
+		t.Fatalf("empty doc: %v", err)
+	}
+
+	// Format() via Document hits applyConfigToTree encrypt path.
+	raw, err := Format(&Config{NetworkStatusURL: "http://x/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := ParseDocument(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := newTripleDESCipher
+	newTripleDESCipher = func(key []byte) (cipher.Block, error) {
+		return nil, errors.New("forced")
+	}
+	t.Cleanup(func() { newTripleDESCipher = old })
+	if _, err := doc.Format(); err == nil || !strings.Contains(err.Error(), "NetworkStatusURL") {
+		t.Fatalf("encrypt err: %v", err)
+	}
+}
+
+func TestRewriteNilConfig(t *testing.T) {
+	if _, err := Rewrite([]byte(`<vPilotConfig/>`), nil); !errors.Is(err, ErrEmptyConfig) {
+		t.Fatalf("%v", err)
+	}
+}
+
+func TestXMLHelpersEdgeCases(t *testing.T) {
+	// localName falls back to Space when Local is empty.
+	if got := localName(xml.Name{Space: "OnlySpace"}); got != "OnlySpace" {
+		t.Fatalf("localName space: %q", got)
+	}
+	if got := localName(xml.Name{Local: "L", Space: "S"}); got != "L" {
+		t.Fatalf("localName local: %q", got)
+	}
+
+	if childText(nil, "x") != "" {
+		t.Fatal("childText nil root")
+	}
+	if collectText(nil) != "" {
+		t.Fatal("collectText nil")
+	}
+
+	// Nested chardata under a known field is flattened by collectText.
+	root := &genericXML{
+		XMLName: xml.Name{Local: "vPilotConfig"},
+		Nodes: []genericXML{{
+			XMLName: xml.Name{Local: "NetworkStatusURL"},
+			Text:    "outer-",
+			Nodes:   []genericXML{{Text: "inner"}},
+		}},
+	}
+	if got := childText(root, "NetworkStatusURL"); got != "outer-inner" {
+		t.Fatalf("nested text: %q", got)
+	}
+	if childText(root, "Missing") != "" {
+		t.Fatal("missing child")
+	}
+
+	// setOrAppendTextChild: nil no-op, update existing, append missing.
+	setOrAppendTextChild(nil, "x", "y")
+	setOrAppendTextChild(root, "NetworkStatusURL", "updated")
+	if root.Nodes[0].Text != "updated" || root.Nodes[0].Nodes != nil {
+		t.Fatalf("update: %+v", root.Nodes[0])
+	}
+	setOrAppendTextChild(root, "BrandNew", "fresh")
+	if childText(root, "BrandNew") != "fresh" {
+		t.Fatal("append")
+	}
+
+	if _, err := marshalXML(nil); !errors.Is(err, ErrEmptyConfig) {
+		t.Fatalf("marshal nil: %v", err)
+	}
+	// Root with empty name gets defaulted to vPilotConfig.
+	out, err := marshalXML(&genericXML{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(out, []byte("<vPilotConfig")) {
+		t.Fatalf("default root name: %s", out)
 	}
 }
