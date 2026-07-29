@@ -15,8 +15,10 @@ import (
 // running EXEs usually do not hold range locks — LockFileEx can succeed while
 // the client is still running.
 //
-// We always attempt CreateFile exclusive. LockFileEx is a secondary signal only
-// (returns ErrClientRunning when it reports a lock/sharing violation).
+// Important: do NOT open the path with os.OpenFile before CreateFile exclusive.
+// A same-process open handle makes CreateFile(share=0) always fail with
+// ERROR_SHARING_VIOLATION (confirmed on Windows 10/11). Path-based exclusive
+// open is the only correct preflight pattern on Windows.
 
 var (
 	modkernel32      = syscall.NewLazyDLL("kernel32.dll")
@@ -38,12 +40,17 @@ const (
 	_ERROR_SHARING_VIOLATION   = 32
 )
 
+// platformPreflightExclusive is the Windows "client running" probe: CreateFile
+// with share mode 0, then close. No long-lived handle.
+func platformPreflightExclusive(path string) error {
+	return tryCreateFileExclusive(path)
+}
+
+// tryExclusiveLock is used by tests that already hold an *os.File.
+// Prefer platformPreflightExclusive for production preflight.
+// CreateFile exclusive is attempted only after the caller's handle would
+// conflict — so this path uses LockFileEx on the existing handle only.
 func tryExclusiveLock(f *os.File) error {
-	// Primary gate: CreateFile with share mode 0 (always).
-	if err := tryCreateFileExclusive(f.Name()); err != nil {
-		return err
-	}
-	// Secondary: LockFileEx on the already-open Go handle (best-effort).
 	var ol syscall.Overlapped
 	r1, _, e1 := procLockFileEx.Call(
 		f.Fd(),
@@ -59,8 +66,7 @@ func tryExclusiveLock(f *os.File) error {
 			errno == syscall.Errno(_ERROR_SHARING_VIOLATION) {
 			return fmt.Errorf("%w: LockFileEx: %v", ErrClientRunning, errno)
 		}
-		// Non-lock LockFileEx failure after CreateFile exclusive succeeded:
-		// treat as probe noise (CreateFile already proved exclusive open).
+		// Non-lock LockFileEx failure: treat as probe noise.
 		return nil
 	}
 	return nil

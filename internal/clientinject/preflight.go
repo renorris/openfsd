@@ -3,15 +3,15 @@ package clientinject
 import (
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 )
 
 // ErrClientRunning indicates the primary PE appears locked / in use.
 var ErrClientRunning = errors.New("clientinject: client appears to be running (file locked); quit the client completely, then Apply again")
 
-// PreflightPrimaryPE tries to open the primary PE exclusively (O_RDWR +
-// platform exclusive lock / CreateFile share-mode 0 on Windows).
+// PreflightPrimaryPE tries to open the primary PE exclusively.
+// On Windows this is CreateFileW with dwShareMode=0 (no prior open handle).
+// On Unix this is O_RDWR + flock(LOCK_EX|LOCK_NB).
 // On lock/sharing failures it returns ErrClientRunning.
 //
 // This is a best-effort probe only: the exclusive lock is released before
@@ -22,22 +22,12 @@ func PreflightPrimaryPE(path string) error {
 	if path == "" {
 		return fmt.Errorf("clientinject: preflight: empty primary PE path")
 	}
-	f, err := os.OpenFile(path, os.O_RDWR, 0)
-	if err != nil {
-		if isLockError(err) {
-			return fmt.Errorf("%w: open %s: %v", ErrClientRunning, path, err)
-		}
-		return fmt.Errorf("clientinject: preflight open %s: %w", path, err)
-	}
-	defer f.Close()
-
-	if err := tryExclusiveLock(f); err != nil {
+	if err := platformPreflightExclusive(path); err != nil {
 		if isLockError(err) {
 			return fmt.Errorf("%w: lock %s: %v", ErrClientRunning, path, err)
 		}
-		return fmt.Errorf("clientinject: preflight lock %s: %w", path, err)
+		return fmt.Errorf("clientinject: preflight %s: %w", path, err)
 	}
-	_ = unlockFile(f)
 	return nil
 }
 

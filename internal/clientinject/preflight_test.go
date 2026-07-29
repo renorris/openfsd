@@ -36,25 +36,28 @@ func TestPreflightPrimaryPE_Empty(t *testing.T) {
 }
 
 func TestPreflightPrimaryPE_Locked(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		// Windows LockFileEx/share semantics differ; exercise best-effort path only.
-		t.Log("windows: lock contention test is best-effort; skipping strict assertion")
-	}
 	dir := t.TempDir()
 	path := filepath.Join(dir, "app.exe")
 	if err := os.WriteFile(path, []byte("MZ\x00\x00"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// Hold exclusive flock in this process.
+	// Hold an open handle so exclusive re-open / flock fails.
 	holder, err := os.OpenFile(path, os.O_RDWR, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer holder.Close()
-	if err := tryExclusiveLock(holder); err != nil {
-		t.Fatalf("hold lock: %v", err)
+
+	if runtime.GOOS != "windows" {
+		// Unix: need flock on the holder; open alone does not block another open.
+		if err := tryExclusiveLock(holder); err != nil {
+			t.Fatalf("hold lock: %v", err)
+		}
+		defer unlockFile(holder)
 	}
-	defer unlockFile(holder)
+	// Windows: os.OpenFile hold is enough — CreateFile(share=0) fails while any
+	// handle is open (including this process). Do not OpenFile+CreateFile exclusive
+	// in the same preflight path (that always self-conflicts).
 
 	err = PreflightPrimaryPE(path)
 	if err == nil {
