@@ -80,52 +80,47 @@ Local: `./packaging/openfsd-client/build.sh` (on the target OS).
 ## Phase 0 limits (read this before production hostnames)
 
 vPilot 3.12.1 embeds stock JWT and AFV base URLs in the managed PE (`#US` heap).
-In-place overwrite has a **fixed UTF-16 payload budget**. That implies hard caps
-on how long your public URLs can be **until** free-slot remap (research gate **R1**)
-or server short JWT paths (**A8**) are available.
+In-place overwrite has a **fixed UTF-16 payload budget**. Longer URLs use
+**free-slot remap (R1)**: write into a large cosmetic `#US` entry and rewrite the
+CIL `ldstr` token. Server short JWT paths (**A8**) remain optional to keep
+JWT in-place when preferred.
 
 ### JWT host length
 
-| JWT path used in the PE | Max **host** (in-place) | Notes |
-|-------------------------|------------------------:|-------|
-| Default `https://{host}/api/v1/fsd-jwt` | **12** chars | Lab / very short hosts only |
-| Prefer short path → fixed `POST /j` | **25** chars | Requires server A8: `/j` must be **getFsdJwt**, not a bare 302 |
-| Prefer short path → `/api/fsd-jwt` (if exposed) | **15** chars | A8 readable alias |
-| Prefer short path → `/fsd-jwt` (if exposed) | **19** chars | Optional A8 alias |
+| Strategy | Max **host** (approx.) | Notes |
+|----------|------------------------:|-------|
+| In-place default `…/api/v1/fsd-jwt` | **12** chars | Stock `#US` budget 71 body bytes |
+| In-place + `--prefer-short-jwt` → `POST /j` | **25** chars | Needs server A8: `/j` = **getFsdJwt**, not a bare 302 |
+| **Free-slot remap (R1)** | **~500+** chars | Cosmetic UI string sacrificed; profile `us_free_slots` |
 
-**Default without `--prefer-short-jwt`:** max host **12** characters for the
-canonical `/api/v1/fsd-jwt` path.
+**Default without `--prefer-short-jwt`:** planner uses `/api/v1/fsd-jwt`; if the
+full URL exceeds the stock slot, it remaps into a free slot (no plan blocker).
 
-**With `--prefer-short-jwt`:** planner prefers short paths (order typically
-`/j`, then other A8 aliases) so max host can reach **25** when the server’s
-`POST /j` invokes the JWT handler **directly** (not a 302 redirect — many HTTP
-clients drop or rewrite POST bodies after redirects).
+**With `--prefer-short-jwt`:** planner prefers short paths first (order typically
+`/j`, then other A8 aliases) so JWT can stay in-place when the server’s
+`POST /j` invokes the JWT handler **directly**.
 
 | Research / server work | Status (honest) |
 |------------------------|-----------------|
-| **R1** free-slot `#US` + ldstr remap | **OPEN** — production-length hosts without A8 need this |
-| **A8** short JWT paths (fix `/j` + aliases) | Optional companion web change; high leverage for long hosts. **Stock openfsd still 302-redirects `POST /j` until A8/PR-5 lands** — do not rely on max host 25 without confirming your deploy has the fixed handler. |
+| **R1** free-slot `#US` + ldstr remap | **CLOSED** — long hosts remap into large cosmetic slots (budget 1053 / 421) |
+| **A8** short JWT paths (fix `/j` + aliases) | Optional; keeps JWT in-place. **Stock openfsd may still 302 `POST /j` until A8/PR-5** |
 | **R2** PE AFV `ret` disable site | **OPEN** — not used in Phase 0 |
 
-**R1 free-slot remap is still OPEN.** For production long hostnames today, plan on
-**A8 short JWT paths** (especially fixed `/j`) and/or short public DNS. Without R1
-or working A8, Phase 0 JWT patching is a **short-host lab** path only.
-
-Example hosts that fit default path (≤12): `fsd.ex.co` (9).  
-Typical FQDNs like `openfsd.example.com` (19) need **`--prefer-short-jwt`** + server
-`/j` (or R1).
+Example hosts that fit default **in-place** path (≤12): `fsd.ex.co` (9).  
+Typical FQDNs like `openfsd.example.com` (19) use **free-slot remap** automatically
+(or `--prefer-short-jwt` + server `/j` to stay in-place).
 
 ### AFV (voice)
 
 | Situation | Phase 0 behavior |
 |-----------|------------------|
 | AFV base URL length **≤ 25** chars total | Prefer **retarget** `#US` to your `AFV_API_PUBLIC_BASE_URL` |
-| AFV base URL **> 25** chars | Plan **`-novoice`** launch flag (no voice) |
+| AFV base URL **> 25** chars | Free-slot remap when a slot remains; else **`-novoice`** |
 | Operator chooses no voice | `--force-disable-afv` → launch with **`-novoice`** |
 | PE connect-handler `ret` disable | **Not until R2** — do not claim Phase 0 does this |
 
-Examples: `https://v.ex.co` (15) fits; `https://voice.example.com` (25) is at
-budget; `https://voice1.example.com` (26) does **not** fit in-place.
+Examples: `https://v.ex.co` (15) fits in-place; `https://voice.example.com` (25) is at
+in-place budget; longer bases remap when free slots are available.
 
 openfsd must be running with **`-afv`** (and correct advertise/public base URL)
 for retargeted voice to work. Without AFV on the server, use Discord/etc. and
@@ -292,7 +287,7 @@ Exit codes (`cmd/openfsd-client`):
 - [ ] Client installed legally; version hash matches a known profile.
 - [ ] Client **fully quit** before Apply / Revert.
 - [ ] JWT host fits budget: ≤**12** default, or ≤**25** with `--prefer-short-jwt` + fixed server `/j`.
-- [ ] If host is long and R1 is still OPEN: enable A8 short paths on the server **or** shorten DNS.
+- [ ] Long hosts: free-slot remap is automatic; optional A8 short paths keep JWT in-place.
 - [ ] AFV URL ≤**25** chars for retarget; else accept **`-novoice`**.
 - [ ] Do not expect PE AFV disable until **R2**.
 - [ ] Never ship or mirror vPilot binaries in git, Docker images, or operator dropboxes.

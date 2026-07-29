@@ -3,7 +3,7 @@
 # Legal: user must install vPilot themselves; openfsd never redistributes it.
 # Embed canonical (schema v2 + offsets): internal/clientinject/profiles/vpilot-3.12.1.yaml
 # Research gates: docs/client-injector/research/vpilot-3.12.1-gates.md
-# R1 open (no us_free_slots); R2 open; R3 dead residual 0xBA44A; R4/R5 closed.
+# R1 closed (free-slot remap in embed profile); R2 open; R3 dead residual 0xBA44A; R4/R5 closed.
 
 client_id: vpilot
 display_name: vPilot

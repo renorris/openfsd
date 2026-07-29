@@ -4,17 +4,17 @@
 # Offsets from docs/client-injector/research/vpilot-3.12.1.md — version-pinned by PE hash.
 # Research gates R1–R5: docs/client-injector/research/vpilot-3.12.1-gates.md
 #
-# Gate summary (2026-07-28):
-#   R1 OPEN  — us_free_slots empty (no unreferenced long #US; remap needs sacrifice validation)
+# Gate summary (2026-07-29):
+#   R1 CLOSED — free-slot remap via large cosmetic #US (no true zero-ldstr long slots;
+#               sacrifice single-ldstr UI messages; see us_free_slots)
 #   R2 OPEN  — afv_disable_pe.file_offset null (3.11.1 0x4BA54 obsolete)
 #   R3 CLOSED not-live — second UTF-16 JWT at 0xBA44A is NOT a live #US body; do not dual-write
 #   R4 CLOSED — config beside install / %LOCALAPPDATA%\vPilot\ (see research notes)
 #   R5 CLOSED — voice1.vatsim.net only in vPilot.exe (no GeoVR re-hardcode)
 #
-# Phase 0: short-host JWT lab only unless A8 short path or R1 remap lands.
-# Production hostnames need R1 and/or A8. Residual full-PE scan will still see
-# dead 0xBA44A after primary patch — KD-20 allowlist that offset; fail only on
-# unexpected residual hits (do not add 0xBA44A to body_file_offsets / dual-write).
+# Long hostnames: in-place when budget fits; else ldstr remap into us_free_slots.
+# Residual full-PE scan will still see dead 0xBA44A after primary patch — KD-20
+# allowlist that offset; fail only on unexpected residual hits.
 
 schema_version: 2
 client_id: vpilot
@@ -91,9 +91,21 @@ strings:
     payload_budget_bytes: 45
     template: ""
 
-# R1 OPEN — empty means ldstr remap unavailable. Candidate sacrifice catalog
-# (not validated): docs/client-injector/research/vpilot-3.12.1-gates.md
-us_free_slots: []
+# R1: large single-ldstr cosmetic #US entries repurposed as URL write space.
+# No long slot has ldstr count 0; these sacrifice rare UI messages only.
+# Prefer order: largest first (JWT), second for AFV when both remap.
+# Do NOT use METAR regex (0x13C8C) or model-matching lists.
+us_free_slots:
+  - id: config_updated_msg
+    heap_offset: 0x12EEE
+    body_offset: 0xB51D8
+    budget_bytes: 1053
+    description: "Config file updated to latest version… (526 runes; ldstr 0x3763C)"
+  - id: sim_not_found_cmd
+    heap_offset: 0xDE5A
+    body_offset: 0xB0144
+    budget_bytes: 421
+    description: "Command failed; active simulator not found… (210 runes; ldstr 0x32F94)"
 
 mutations:
   - id: config_status_servers

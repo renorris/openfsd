@@ -66,8 +66,19 @@ func (a *Adapter) Apply(ctx context.Context, plan *clientinject.Plan, w clientin
 				return fmt.Errorf("vpilot: %s: %w", m.ID, err)
 			}
 		case clientinject.MutLdstrRemap:
-			// R1 incomplete: Plan must not emit this until freeSlotRemapReady.
-			return fmt.Errorf("vpilot: mutation %s: ldstr remap not implemented (R1); plan should have blocked", m.ID)
+			d, ok := ldstrDetail(m.Detail)
+			if !ok {
+				return fmt.Errorf("vpilot: mutation %s: bad LdstrRemapDetail", m.ID)
+			}
+			if peFile == nil {
+				return fmt.Errorf("vpilot: PE not open for %s", m.ID)
+			}
+			if d.LdstrFileOff <= 0 || len(d.NewToken) == 0 {
+				return fmt.Errorf("vpilot: %s: empty ldstr remap", m.ID)
+			}
+			if err := pepatch.OverwriteAt(peFile, d.LdstrFileOff, d.NewToken); err != nil {
+				return fmt.Errorf("vpilot: %s: %w", m.ID, err)
+			}
 		case clientinject.MutRawOverwrite, clientinject.MutAFVDisablePE:
 			d, ok := rawDetail(m.Detail)
 			if !ok {
@@ -192,36 +203,56 @@ func patchUSString(f clientinject.ReadWriteSeekCloser, d clientinject.USStringDe
 	return nil
 }
 
-// patchUSAtBody rewrites compressed length prefix + padded body at bodyOff.
+// patchUSAtBody rewrites a #US entry whose stock body starts at bodyOff with
+// stock body budget budget. The stock compressed length prefix sits immediately
+// before bodyOff and is sized for body length == budget.
+//
+// When the new body needs a narrower prefix (common for free slots with large
+// budgets), the entry is rewritten from the stock entry start so the CLR reads
+// a valid compressed length + body; remaining stock entry bytes are zeroed.
 func patchUSAtBody(f clientinject.ReadWriteSeekCloser, bodyOff int64, s string, budget int) error {
 	body := cilus.EncodeBody(s)
-	prefix, err := cilus.LengthPrefixBytes(len(body))
+	if len(body) > budget {
+		return fmt.Errorf("string exceeds budget %d", budget)
+	}
+	newPrefix, err := cilus.LengthPrefixBytes(len(body))
 	if err != nil {
 		return fmt.Errorf("length prefix: %w", err)
 	}
-	padded, err := cilus.EncodeBodyPadded(s, budget)
-	if err != nil {
-		return fmt.Errorf("encode body: %w", err)
-	}
-	// Stock pad region uses budget-sized body; prefix width follows budget (≤0x7F → 1 byte).
+	// Stock fully-used slots encode length == budget (profiles use payload_budget_bytes).
 	stockPrefix, err := cilus.LengthPrefixBytes(budget)
 	if err != nil {
 		return err
 	}
-	if len(prefix) != len(stockPrefix) {
-		return fmt.Errorf("length prefix width changed (%d → %d); refuse in-place rewrite", len(stockPrefix), len(prefix))
+	if len(newPrefix) > len(stockPrefix) {
+		return fmt.Errorf("length prefix grew (%d → %d); refuse rewrite", len(stockPrefix), len(newPrefix))
 	}
-	prefixOff := bodyOff - int64(len(stockPrefix))
-	if prefixOff < 0 {
-		return fmt.Errorf("negative prefix offset for body %d", bodyOff)
+	entryOff := bodyOff - int64(len(stockPrefix))
+	if entryOff < 0 {
+		return fmt.Errorf("negative entry offset for body %d", bodyOff)
 	}
-	if err := pepatch.OverwriteAt(f, prefixOff, prefix); err != nil {
-		return fmt.Errorf("write length prefix at %d: %w", prefixOff, err)
-	}
-	if err := pepatch.OverwriteAt(f, bodyOff, padded); err != nil {
-		return fmt.Errorf("write body at %d: %w", bodyOff, err)
+	// Full stock entry footprint: stock prefix + budget body bytes.
+	buf := make([]byte, len(stockPrefix)+budget)
+	copy(buf, newPrefix)
+	copy(buf[len(newPrefix):], body) // remainder stays zero (clears stock text)
+	if err := pepatch.OverwriteAt(f, entryOff, buf); err != nil {
+		return fmt.Errorf("write #US entry at %d: %w", entryOff, err)
 	}
 	return nil
+}
+
+func ldstrDetail(d any) (clientinject.LdstrRemapDetail, bool) {
+	switch v := d.(type) {
+	case clientinject.LdstrRemapDetail:
+		return v, true
+	case *clientinject.LdstrRemapDetail:
+		if v == nil {
+			return clientinject.LdstrRemapDetail{}, false
+		}
+		return *v, true
+	default:
+		return clientinject.LdstrRemapDetail{}, false
+	}
 }
 
 func usDetail(d any) (clientinject.USStringDetail, bool) {

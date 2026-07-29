@@ -1,6 +1,7 @@
 package vpilot
 
 import (
+	"bytes"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -16,7 +17,9 @@ import (
 //
 // Pre-R3 residual policy (KD-20): extra stock JWT UTF-16 hits outside
 // profile-listed body offsets are **warn-only**. Fail only if profile-listed
-// JWT slots remain stock after a JWT mutation was expected.
+// JWT slots remain stock after a JWT mutation was expected (in-place path).
+// Free-slot remap leaves the stock JWT body intact and is checked via the
+// free slot + ldstr token instead.
 func (a *Adapter) HealthCheck(install clientinject.Install, ep clientinject.Endpoints) error {
 	ep = ep.Normalize()
 	w := a.writer()
@@ -35,24 +38,32 @@ func (a *Adapter) HealthCheck(install clientinject.Install, ep clientinject.Endp
 		return fmt.Errorf("vpilot: healthcheck profile: %w", err)
 	}
 
+	usedSlots := make(map[string]bool)
+
 	jwtURL, _, _ := resolveJWTURL(ep, profile)
 	if js, ok := profile.Strings["fsd_jwt"]; ok && jwtURL != "" {
-		for _, fo := range js.BodyFileOffsets {
-			off := fo.Int64()
-			got, err := decodeUSAtBody(data, off, js.PayloadBudgetBytes)
-			if err != nil {
-				return fmt.Errorf("vpilot: healthcheck JWT body@%#x: %w", off, err)
+		if cilus.FitsBudget(jwtURL, js.PayloadBudgetBytes) {
+			for _, fo := range js.BodyFileOffsets {
+				off := fo.Int64()
+				got, err := decodeUSAtBody(data, off, js.PayloadBudgetBytes)
+				if err != nil {
+					return fmt.Errorf("vpilot: healthcheck JWT body@%#x: %w", off, err)
+				}
+				if got == js.Stock || got == stockJWT {
+					return fmt.Errorf("vpilot: healthcheck: profile-listed JWT slot @%#x still stock %q", off, got)
+				}
+				if got != jwtURL {
+					return fmt.Errorf("vpilot: healthcheck: JWT slot @%#x = %q, want %q", off, got, jwtURL)
+				}
 			}
-			if got == js.Stock || got == stockJWT {
-				return fmt.Errorf("vpilot: healthcheck: profile-listed JWT slot @%#x still stock %q", off, got)
-			}
-			if got != jwtURL {
-				return fmt.Errorf("vpilot: healthcheck: JWT slot @%#x = %q, want %q", off, got, jwtURL)
+		} else if freeSlotRemapReady {
+			if err := healthCheckFreeSlot(data, profile.USFreeSlots, usedSlots, jwtURL, js, "JWT"); err != nil {
+				return err
 			}
 		}
 	}
 
-	// AFV: only assert when we would have in-place patched (fits + non-empty + not force disable).
+	// AFV: assert in-place or free-slot remap when voice is enabled and URL set.
 	if as, ok := profile.Strings["afv_base"]; ok && ep.AFVBaseURL != "" && !ep.ForceDisableAFV {
 		if cilus.FitsBudget(ep.AFVBaseURL, as.PayloadBudgetBytes) {
 			for _, fo := range as.BodyFileOffsets {
@@ -66,6 +77,14 @@ func (a *Adapter) HealthCheck(install clientinject.Install, ep clientinject.Endp
 				}
 				if got != ep.AFVBaseURL {
 					return fmt.Errorf("vpilot: healthcheck: AFV slot @%#x = %q, want %q", off, got, ep.AFVBaseURL)
+				}
+			}
+		} else if freeSlotRemapReady {
+			// Only require free-slot health when a slot was available (same as Plan).
+			need := cilus.BodyBudgetBytes(ep.AFVBaseURL)
+			if slot, _ := pickFreeSlot(profile.USFreeSlots, need, usedSlots); slot != nil && len(as.LdstrFileOffsets) > 0 {
+				if err := healthCheckFreeSlot(data, profile.USFreeSlots, usedSlots, ep.AFVBaseURL, as, "AFV"); err != nil {
+					return err
 				}
 			}
 		}
@@ -123,10 +142,92 @@ func (a *Adapter) HealthCheck(install clientinject.Install, ep clientinject.Endp
 	return nil
 }
 
+// healthCheckFreeSlot verifies a free-slot body holds want and ldstr tokens
+// point at the slot heap offset. Marks the chosen slot in used.
+func healthCheckFreeSlot(
+	data []byte,
+	slots []clientinject.USFreeSlot,
+	used map[string]bool,
+	want string,
+	spec clientinject.StringSpec,
+	label string,
+) error {
+	need := cilus.BodyBudgetBytes(want)
+	slot, slotID := pickFreeSlot(slots, need, used)
+	if slot == nil {
+		return fmt.Errorf("vpilot: healthcheck: %s URL over stock budget and no free slot fits", label)
+	}
+	if len(spec.LdstrFileOffsets) == 0 {
+		return fmt.Errorf("vpilot: healthcheck: %s missing ldstr_file_offsets for free-slot check", label)
+	}
+	used[slotID] = true
+
+	entryOff, err := usEntryFileOff(slot.BodyOffset.Int64(), slot.BudgetBytes)
+	if err != nil {
+		return fmt.Errorf("vpilot: healthcheck %s free slot: %w", label, err)
+	}
+	got, err := decodeUSAtEntry(data, entryOff)
+	if err != nil {
+		return fmt.Errorf("vpilot: healthcheck %s free-slot entry@%#x: %w", label, entryOff, err)
+	}
+	if got != want {
+		return fmt.Errorf("vpilot: healthcheck: %s free slot %s = %q, want %q", label, slotID, got, want)
+	}
+
+	wantTok := makeLdstrToken(slot.HeapOffset.Int64())
+	for _, lo := range spec.LdstrFileOffsets {
+		off := lo.Int64()
+		if off <= 0 {
+			continue
+		}
+		if int(off)+len(wantTok) > len(data) {
+			return fmt.Errorf("vpilot: healthcheck: %s ldstr @%#x OOB", label, off)
+		}
+		gotTok := data[off : int(off)+len(wantTok)]
+		if !bytes.Equal(gotTok, wantTok) {
+			return fmt.Errorf("vpilot: healthcheck: %s ldstr @%#x = %x, want %x (heap 0x%X)",
+				label, off, gotTok, wantTok, slot.HeapOffset.Int64())
+		}
+	}
+	return nil
+}
+
+// usEntryFileOff returns the file offset of the #US entry start (compressed
+// length prefix) for a stock body at bodyOff with stock body length budget.
+func usEntryFileOff(bodyOff int64, budget int) (int64, error) {
+	stockPrefix, err := cilus.LengthPrefixBytes(budget)
+	if err != nil {
+		return 0, err
+	}
+	entry := bodyOff - int64(len(stockPrefix))
+	if entry < 0 {
+		return 0, fmt.Errorf("negative entry for body %#x", bodyOff)
+	}
+	return entry, nil
+}
+
+// decodeUSAtEntry decodes a #US entry starting at entryOff (length prefix).
+func decodeUSAtEntry(data []byte, entryOff int64) (string, error) {
+	if entryOff < 0 || int(entryOff) >= len(data) {
+		return "", fmt.Errorf("entry offset %#x out of range", entryOff)
+	}
+	return cilus.DecodeUserString(data[entryOff:])
+}
+
 // decodeUSAtBody reads a #US body at bodyOff using the length prefix before it.
+// Also tries decoding from the stock entry start when the new body used a
+// narrower compressed-length prefix (free-slot short URL case).
 func decodeUSAtBody(data []byte, bodyOff int64, budgetHint int) (string, error) {
 	if bodyOff < 0 || int(bodyOff) >= len(data) {
 		return "", fmt.Errorf("body offset %#x out of range", bodyOff)
+	}
+	// Free-slot / variable-prefix path: decode from stock entry start when budget known.
+	if budgetHint > 0 {
+		if entryOff, err := usEntryFileOff(bodyOff, budgetHint); err == nil {
+			if s, err := decodeUSAtEntry(data, entryOff); err == nil {
+				return s, nil
+			}
+		}
 	}
 	for _, plen := range []int{1, 2, 4} {
 		if bodyOff < int64(plen) {

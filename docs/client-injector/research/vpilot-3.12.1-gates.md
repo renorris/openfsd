@@ -7,7 +7,7 @@
 
 | ID | Gate | Status | Profile impact |
 |----|------|--------|----------------|
-| **R1** | Free `#US` slot catalog + ldstr remap | **OPEN** (catalog documented; no safe unreferenced slots) | `us_free_slots: []` |
+| **R1** | Free `#US` slot catalog + ldstr remap | **CLOSED** (cosmetic sacrifice slots; no zero-ldstr long entries) | `us_free_slots` populated (config_updated_msg 1053, sim_not_found_cmd 421) |
 | **R2** | AFV connect `ret` CIL offset | **OPEN** | `afv_disable_pe.file_offset: null` |
 | **R3** | Second fsd-jwt body `0xBA44A` liveness | **CLOSED — not live** | Keep primary only: `body_file_offsets: [0xB7988]` |
 | **R4** | Config path resolution | **CLOSED** (candidates documented) | `config_files` still install-relative; multi-candidate is adapter discovery |
@@ -18,49 +18,43 @@
 | Claim | OK? |
 |-------|-----|
 | Short-host lab JWT (in-place #US budget ≤71 body bytes; host ≤12 on default `/api/v1/fsd-jwt`) | **Yes** (profile offsets confirmed) |
-| Production-length JWT hostnames without A8 | **No** — needs **R1** free-slot remap **or** openfsd **A8** short path (`/j` fixed, etc.) |
+| Production-length JWT hostnames without A8 | **Yes** — free-slot remap into large cosmetic #US (budget 1053 / 421) |
 | AFV base retarget when URL fits #US budget 51 | **Yes** if host short enough; URL only in `vPilot.exe` (R5) |
 | AFV PE `ret` disable fallback | **No** until R2 |
 | Residual HealthCheck post-R3 | **Yes** when allowlisting dead `0xBA44A` and failing only on **unexpected** hits (design rev 3.3 / KD-20). Whole-PE residual-zero is **not** required or achievable without dual-write |
 | Config rewrite path | **Yes** for default install (`%LOCALAPPDATA%\vPilot\`); multi-candidate ordered list in R4 |
 
-**Do not market adapter complete** for arbitrary production hostnames while R1 is open (unless A8 is deployed and PreferShortJWTPath is used).
+**R1 free-slot remap is profile-enabled** for production-length hosts (sacrifices cosmetic UI strings). A8 short JWT paths remain useful to keep JWT in-place when preferred.
 
 ---
 
-## R1 — Free `#US` slot catalog (**OPEN**)
+## R1 — Free `#US` slot catalog (**CLOSED**)
 
 ### Findings
 
 - `#US` stream: file `0xA22E8`, size `0x15E04`; ~2040 decode-OK entries.
 - **Zero** entries with body budget ≥71 have **ldstr reference count 0**. Every long slot is referenced at least once in CIL (`ldstr` token `0x72` + little-endian `(0x70<<24)|heap_offset`).
 - 3.11.1 prior art remapped JWT `ldstr` to heap `0xD2A2` (sacrificing whatever string lived there). On **3.12.1**, `0xD2A2` is **mid-body** of another entry (`heap=0xD254`, message about remote events) — **not** a valid free entry start. **3.11.1 free-slot offsets are obsolete.**
+- Largest single-ldstr non-critical string: **METAR regex** at heap `0x13C8C` (budget 1097) — **do not sacrifice** (breaks METAR parse).
 
-### Implication
+### Decision (profile-enabled)
 
-Remap on 3.12.1 requires **overwriting a live cosmetic (or other) string** and pointing the JWT `ldstr` at that heap offset. That is a product/UX trade-off, not a pure “unused” slot. Without runtime confirmation that sacrificing a given message is acceptable (and that Dotfuscator/call sites behave), **profile `us_free_slots` stays empty**.
+Remap overwrites a **live cosmetic** string and points JWT/AFV `ldstr` at that heap offset. Accepted UX: rare dialog text may show a URL string if that code path is hit.
 
-### Candidate sacrifice catalog (not profile-enabled)
-
-Single-`ldstr`, large budget, non-URL strings (sample; full scan in notes). Prefer **not** model-matching or voice-error strings for first experiments:
-
-| heap | body file | budget (UTF-16+term) | ldstr file | Stock (preview) |
-|------|-----------|----------------------|------------|-----------------|
-| `0x12EEE` | `0xB51D8` | 1053 | `0x3763C` | Config file updated to latest version… |
-| `0x0DE5A` | `0xB0144` | 421 | `0x32F94` | Command failed. The active simulator was not found… |
-| `0x06B9A` | `0xA8E84` | 387 | `0x1E7A7` | First-time run configuration message… |
-| `0x03062` | `0xA534C` | 343 | `0x9144` | Unknown type code… |
-| `0x01848` | `0xA3B32` | 207 | `0x3866` | Debug messages saved to disk… |
-| `0x01DB9` | `0xA40A3` | 195 | `0x420E` | Model matching rule test complete… |
+| id | heap | body file | budget | ldstr | Stock (preview) |
+|----|------|-----------|--------|-------|-----------------|
+| `config_updated_msg` | `0x12EEE` | `0xB51D8` | **1053** | `0x3763C` | Config file updated to latest version… |
+| `sim_not_found_cmd` | `0x0DE5A` | `0xB0144` | **421** | `0x32F94` | Command failed. The active simulator was not found… |
 
 **JWT ldstr to rewrite when remapping:** file `0x4BDB5` (`72 9F 56 01 70` → stock heap `0x1569F`).  
-Remap bytes: `72 <heap_le24> 70` with new heap offset.
+**AFV ldstr:** file `0x1F0A7` → heap `0x6D8D`.  
+Remap bytes: `72 <heap_le24> 70` with new heap offset. Adapter writes free-slot `#US` entry (variable length-prefix width OK) then overwrites ldstr token(s).
 
-### Close criteria (still open)
+### Close criteria
 
-1. Pick ≥1 sacrifice slot; document accepted UX breakage.  
-2. Runtime smoke: connect openfsd with long JWT URL via remap.  
-3. Populate `us_free_slots` in embed profile + golden residual/plan tests.
+1. ~~Pick ≥1 sacrifice slot; document accepted UX breakage.~~  
+2. Runtime smoke: connect openfsd with long JWT URL via remap (operator / lab).  
+3. ~~Populate `us_free_slots` in embed profile + plan/apply tests.~~
 
 ---
 
@@ -182,4 +176,4 @@ Confirmed live #US map unchanged from research seed:
 
 - Any `vPilot.exe` / GeoVR / installer PE or DLL  
 - Local analysis scripts under `/tmp` or `.research/`  
-- Populated `us_free_slots` or AFV `ret` offset without confirmation
+- AFV `ret` offset without confirmation (R2 still open)

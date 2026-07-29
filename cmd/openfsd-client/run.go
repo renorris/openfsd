@@ -65,11 +65,11 @@ Launch-only flags:
 
 Readiness honesty:
   vPilot: default JWT path /api/v1/fsd-jwt allows max host 12 characters for
-  in-place #US patch (budget 35 runes). Use --prefer-short-jwt for /j (max host
-  25) if the server has fixed short JWT routes (direct POST /j, not a 302).
-  Long hostnames without short paths or free-slot remap are plan blockers.
+  in-place #US patch (budget 35 runes). Longer hosts use free-slot #US remap
+  (large cosmetic string sacrificed). Use --prefer-short-jwt for /j (max host
+  25 in-place) if the server has fixed short JWT routes (direct POST /j, not a 302).
   AFV PE ret-disable is out of scope until research gate R2; over-budget AFV
-  falls back to -novoice.
+  remaps when free slots remain, else -novoice.
 
 Exit codes:
   0 ok

@@ -90,12 +90,12 @@ No LE references to `0xBA44A` as file offset/RVA/VA. Residual full-PE scanners w
 
 **3.11.1 offsets are obsolete** (e.g. old fsd-jwt heap `0xD2A2` / ldstr `0x4B3C5` do not match 3.12.1). Profiles must be **version-pinned by binary hash**.
 
-### Free #US slots / ldstr remap (R1 — open)
+### Free #US slots / ldstr remap (R1 — closed)
 
 - ~2040 decode-OK `#US` entries; **no** long slot (budget ≥71) is unreferenced by CIL `ldstr`.
-- Remap therefore means **sacrificing** a live cosmetic (or other) string, then rewriting JWT `ldstr` at `0x4BDB5` to the sacrifice heap token.
-- Candidate catalog lives in [`vpilot-3.12.1-gates.md`](./vpilot-3.12.1-gates.md). Profile `us_free_slots` remains **empty** until a sacrifice is runtime-validated.
-- Production-length JWT hostnames need **R1 and/or A8** (short JWT path on openfsd). Phase 0 short-host lab only otherwise (max host length **12** on default `/api/v1/fsd-jwt` with body budget 71).
+- Remap **sacrifices** a live cosmetic string, then rewrites JWT `ldstr` at `0x4BDB5` (and AFV at `0x1F0A7` when needed) to the sacrifice heap token.
+- Profile `us_free_slots`: `config_updated_msg` heap `0x12EEE` budget **1053**; `sim_not_found_cmd` heap `0xDE5A` budget **421**. See [`vpilot-3.12.1-gates.md`](./vpilot-3.12.1-gates.md).
+- Do **not** sacrifice the METAR regex at `0x13C8C` (larger but critical).
 
 ### Prior-art AFV strategy (R2 — open)
 
@@ -166,7 +166,7 @@ Recommended design direction: **adapter interface per client**, default vPilot a
 - [x] R3: classify second fsd-jwt site (`0xBA44A`) — **not live**; primary only.
 - [x] R4: config path candidates — install root + LOCALAPPDATA fallback.
 - [x] R5: GeoVR re-hardcode check — **none**.
-- [ ] R1: runtime-validate a sacrifice free slot; populate `us_free_slots`.
+- [x] R1: populate `us_free_slots` (config_updated_msg + sim_not_found_cmd); plan/apply remap wired.
 - [ ] R2: locate AFV connect handler CIL for 3.12.1 `ret` disable.
 - [x] Residual HealthCheck policy for dead `0xBA44A` documented (design rev 3.3 / KD-20 allowlist; implement in adapter PR).
 - [ ] Antivirus / code-signing interaction when rewriting signed `vPilot.exe`.

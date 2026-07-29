@@ -9,10 +9,9 @@ import (
 	"github.com/renorris/openfsd/internal/clientinject/cilus"
 )
 
-// freeSlotRemapReady is false until R1 wires ldstr token bytes + free-slot body
-// writes. When false, non-empty us_free_slots are treated as unavailable
-// (JWT blocker / AFV -novoice) rather than planning half-implemented remaps.
-const freeSlotRemapReady = false
+// freeSlotRemapReady enables writing long URLs into us_free_slots + rewriting
+// CIL ldstr tokens to the free-slot heap offset (R1).
+const freeSlotRemapReady = true
 
 // Plan builds a dry-run mutation plan. Does not write disk.
 func (a *Adapter) Plan(install clientinject.Install, profile *clientinject.Profile, ep clientinject.Endpoints) (*clientinject.Plan, error) {
@@ -63,6 +62,9 @@ func (a *Adapter) Plan(install clientinject.Install, profile *clientinject.Profi
 		},
 	})
 
+	// Free slots consumed by remaps in this plan (JWT first, then AFV).
+	usedSlots := make(map[string]bool)
+
 	// --- JWT #US ---
 	jwtURL, jwtWarns, _ := resolveJWTURL(ep, profile)
 	plan.Warnings = append(plan.Warnings, jwtWarns...)
@@ -70,23 +72,7 @@ func (a *Adapter) Plan(install clientinject.Install, profile *clientinject.Profi
 		js, ok := profile.Strings["fsd_jwt"]
 		if !ok {
 			plan.Blockers = append(plan.Blockers, "profile missing strings.fsd_jwt")
-		} else if !cilus.FitsBudget(jwtURL, js.PayloadBudgetBytes) {
-			// Free-slot remap not ready (R1) — same as empty us_free_slots.
-			if len(profile.USFreeSlots) > 0 && !freeSlotRemapReady {
-				plan.Warnings = append(plan.Warnings,
-					"us_free_slots present but ldstr remap not implemented (R1 incomplete); treating free-slot remap as unavailable")
-			}
-			if freeSlotRemapReady && len(profile.USFreeSlots) > 0 {
-				// Reserved for full R1 implementation (must set NewToken + body string).
-				plan.Blockers = append(plan.Blockers, "JWT free-slot remap ready flag set but not fully implemented")
-				updateConstraintStrategy(plan, "JWTURL", "blocker")
-			} else {
-				plan.Blockers = append(plan.Blockers,
-					fmt.Sprintf("JWT URL %q (%d runes) exceeds #US budget %d bytes (~%d runes); free-slot remap unavailable; use a short host (≤12 chars for default /api/v1/fsd-jwt) or --prefer-short-jwt if server has fixed /j",
-						jwtURL, len([]rune(jwtURL)), js.PayloadBudgetBytes, (js.PayloadBudgetBytes-1)/2))
-				updateConstraintStrategy(plan, "JWTURL", "blocker")
-			}
-		} else {
+		} else if cilus.FitsBudget(jwtURL, js.PayloadBudgetBytes) {
 			bodyOffs := flexibleToInt64s(js.BodyFileOffsets)
 			plan.Mutations = append(plan.Mutations, clientinject.Mutation{
 				ID:          "patch_fsd_jwt",
@@ -102,6 +88,30 @@ func (a *Adapter) Plan(install clientinject.Install, profile *clientinject.Profi
 				},
 			})
 			updateConstraintStrategy(plan, "JWTURL", "in_place")
+		} else if freeSlotRemapReady {
+			need := cilus.BodyBudgetBytes(jwtURL)
+			slot, slotID := pickFreeSlot(profile.USFreeSlots, need, usedSlots)
+			if slot == nil {
+				plan.Blockers = append(plan.Blockers,
+					fmt.Sprintf("JWT URL %q (%d runes) exceeds #US budget %d bytes and no free slot fits (%d body bytes needed)",
+						jwtURL, len([]rune(jwtURL)), js.PayloadBudgetBytes, need))
+				updateConstraintStrategy(plan, "JWTURL", "blocker")
+			} else if len(js.LdstrFileOffsets) == 0 {
+				plan.Blockers = append(plan.Blockers, "profile strings.fsd_jwt missing ldstr_file_offsets for free-slot remap")
+				updateConstraintStrategy(plan, "JWTURL", "blocker")
+			} else {
+				usedSlots[slotID] = true
+				appendFreeSlotRemap(plan, profile, "fsd_jwt", "patch_fsd_jwt", jwtURL, js, *slot, slotID)
+				updateConstraintStrategy(plan, "JWTURL", "remap")
+				plan.Warnings = append(plan.Warnings,
+					fmt.Sprintf("JWT URL remapped to free #US slot %s (budget %d); stock slot left intact",
+						slotID, slot.BudgetBytes))
+			}
+		} else {
+			plan.Blockers = append(plan.Blockers,
+				fmt.Sprintf("JWT URL %q (%d runes) exceeds #US budget %d bytes (~%d runes); free-slot remap unavailable; use a short host (≤12 chars for default /api/v1/fsd-jwt) or --prefer-short-jwt if server has fixed /j",
+					jwtURL, len([]rune(jwtURL)), js.PayloadBudgetBytes, (js.PayloadBudgetBytes-1)/2))
+			updateConstraintStrategy(plan, "JWTURL", "blocker")
 		}
 	}
 
@@ -121,22 +131,7 @@ func (a *Adapter) Plan(install clientinject.Install, profile *clientinject.Profi
 			plan.Warnings = append(plan.Warnings, "profile missing strings.afv_base; planning -novoice")
 			needNoVoice = true
 			updateConstraintStrategy(plan, "AFVBaseURL", "launch_novoice")
-		} else if !cilus.FitsBudget(ep.AFVBaseURL, as.PayloadBudgetBytes) {
-			if freeSlotRemapReady && len(profile.USFreeSlots) > 0 {
-				plan.Blockers = append(plan.Blockers, "AFV free-slot remap ready flag set but not fully implemented")
-				updateConstraintStrategy(plan, "AFVBaseURL", "blocker")
-			} else {
-				if len(profile.USFreeSlots) > 0 && !freeSlotRemapReady {
-					plan.Warnings = append(plan.Warnings,
-						"us_free_slots present but ldstr remap not implemented (R1 incomplete); AFV falls back to -novoice")
-				}
-				plan.Warnings = append(plan.Warnings,
-					fmt.Sprintf("AFV URL %q exceeds #US budget %d (~%d runes); free-slot remap unavailable — planning -novoice",
-						ep.AFVBaseURL, as.PayloadBudgetBytes, (as.PayloadBudgetBytes-1)/2))
-				needNoVoice = true
-				updateConstraintStrategy(plan, "AFVBaseURL", "launch_novoice")
-			}
-		} else {
+		} else if cilus.FitsBudget(ep.AFVBaseURL, as.PayloadBudgetBytes) {
 			bodyOffs := flexibleToInt64s(as.BodyFileOffsets)
 			plan.Mutations = append(plan.Mutations, clientinject.Mutation{
 				ID:          "patch_afv_base",
@@ -152,6 +147,28 @@ func (a *Adapter) Plan(install clientinject.Install, profile *clientinject.Profi
 				},
 			})
 			updateConstraintStrategy(plan, "AFVBaseURL", "in_place")
+		} else if freeSlotRemapReady {
+			need := cilus.BodyBudgetBytes(ep.AFVBaseURL)
+			slot, slotID := pickFreeSlot(profile.USFreeSlots, need, usedSlots)
+			if slot == nil || len(as.LdstrFileOffsets) == 0 {
+				plan.Warnings = append(plan.Warnings,
+					fmt.Sprintf("AFV URL %q exceeds #US budget %d (~%d runes); free-slot remap unavailable — planning -novoice",
+						ep.AFVBaseURL, as.PayloadBudgetBytes, (as.PayloadBudgetBytes-1)/2))
+				needNoVoice = true
+				updateConstraintStrategy(plan, "AFVBaseURL", "launch_novoice")
+			} else {
+				usedSlots[slotID] = true
+				appendFreeSlotRemap(plan, profile, "afv_base", "patch_afv_base", ep.AFVBaseURL, as, *slot, slotID)
+				updateConstraintStrategy(plan, "AFVBaseURL", "remap")
+				plan.Warnings = append(plan.Warnings,
+					fmt.Sprintf("AFV URL remapped to free #US slot %s (budget %d)", slotID, slot.BudgetBytes))
+			}
+		} else {
+			plan.Warnings = append(plan.Warnings,
+				fmt.Sprintf("AFV URL %q exceeds #US budget %d (~%d runes); free-slot remap unavailable — planning -novoice",
+					ep.AFVBaseURL, as.PayloadBudgetBytes, (as.PayloadBudgetBytes-1)/2))
+			needNoVoice = true
+			updateConstraintStrategy(plan, "AFVBaseURL", "launch_novoice")
 		}
 	}
 
@@ -206,8 +223,18 @@ func (a *Adapter) Plan(install clientinject.Install, profile *clientinject.Profi
 	}
 
 	if !ep.PreferShortJWTPath && ep.WebBaseURL != "" {
-		plan.Warnings = append(plan.Warnings,
-			"default JWT path /api/v1/fsd-jwt allows max host 12 chars for in-place #US; use --prefer-short-jwt for /j (max host 25) if server has fixed short JWT routes")
+		// Only remind about short paths when we did not already free-slot remap.
+		remapped := false
+		for _, c := range plan.Constraints {
+			if c.Field == "JWTURL" && c.Strategy == "remap" {
+				remapped = true
+				break
+			}
+		}
+		if !remapped {
+			plan.Warnings = append(plan.Warnings,
+				"default JWT path /api/v1/fsd-jwt allows max host 12 chars for in-place #US; longer hosts free-slot remap; use --prefer-short-jwt for /j (max host 25 in-place) if server has fixed short JWT routes")
+		}
 	}
 
 	return plan, nil
@@ -301,4 +328,88 @@ func updateConstraintStrategy(plan *clientinject.Plan, field, strategy string) {
 		Field:    field,
 		Strategy: strategy,
 	})
+}
+
+// pickFreeSlot returns the first free slot with BudgetBytes >= needBytes that is
+// not in used. Slot ID is profile id or a stable index-based fallback.
+func pickFreeSlot(slots []clientinject.USFreeSlot, needBytes int, used map[string]bool) (*clientinject.USFreeSlot, string) {
+	for i := range slots {
+		s := &slots[i]
+		id := freeSlotID(*s, i)
+		if used[id] {
+			continue
+		}
+		if s.BudgetBytes < needBytes {
+			continue
+		}
+		if s.BodyOffset.Int64() <= 0 || s.HeapOffset.Int64() < 0 {
+			continue
+		}
+		return s, id
+	}
+	return nil, ""
+}
+
+func freeSlotID(s clientinject.USFreeSlot, index int) string {
+	if s.ID != "" {
+		return s.ID
+	}
+	return fmt.Sprintf("slot_%d", index)
+}
+
+// appendFreeSlotRemap plans a free-slot #US body write + ldstr token rewrite(s).
+func appendFreeSlotRemap(
+	plan *clientinject.Plan,
+	profile *clientinject.Profile,
+	stringRef, idPrefix, newURL string,
+	spec clientinject.StringSpec,
+	slot clientinject.USFreeSlot,
+	slotID string,
+) {
+	plan.Mutations = append(plan.Mutations, clientinject.Mutation{
+		ID:          idPrefix + "_freeslot",
+		Kind:        clientinject.MutUSHeapString,
+		Description: fmt.Sprintf("Write %s URL into free #US slot %s", stringRef, slotID),
+		TargetRel:   profile.PrimaryBinary.RelativePath,
+		Detail: clientinject.USStringDetail{
+			StringRef:   stringRef,
+			NewString:   newURL,
+			HeapOff:     slot.HeapOffset.Int64(),
+			BodyOffs:    []int64{slot.BodyOffset.Int64()},
+			BudgetBytes: slot.BudgetBytes,
+		},
+	})
+	tok := makeLdstrToken(slot.HeapOffset.Int64())
+	for i, lo := range spec.LdstrFileOffsets {
+		off := lo.Int64()
+		if off <= 0 {
+			continue
+		}
+		plan.Mutations = append(plan.Mutations, clientinject.Mutation{
+			ID:          fmt.Sprintf("%s_ldstr_%d", idPrefix, i),
+			Kind:        clientinject.MutLdstrRemap,
+			Description: fmt.Sprintf("Remap %s ldstr → free slot heap 0x%X", stringRef, slot.HeapOffset.Int64()),
+			TargetRel:   profile.PrimaryBinary.RelativePath,
+			Detail: clientinject.LdstrRemapDetail{
+				LdstrFileOff: off,
+				NewToken:     append([]byte(nil), tok...),
+				SlotHeapOff:  slot.HeapOffset.Int64(),
+				SlotBodyOff:  slot.BodyOffset.Int64(),
+				SlotBudget:   slot.BudgetBytes,
+			},
+		})
+	}
+}
+
+// makeLdstrToken builds CIL ldstr opcode + metadata token for a #US heap offset.
+// Encoding: 0x72 + little-endian uint32 (0x70000000 | heapOff).
+func makeLdstrToken(heapOff int64) []byte {
+	tok := uint32(0x70000000 | (uint32(heapOff) & 0x00FFFFFF))
+	return []byte{
+		0x72,
+		byte(tok),
+		byte(tok >> 8),
+		byte(tok >> 16),
+		byte(tok >> 24),
+	}
 }

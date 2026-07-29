@@ -41,8 +41,14 @@ func TestLoadEmbedded(t *testing.T) {
 	if len(js.BodyFileOffsets) != 1 || js.BodyFileOffsets[0].Int64() != 0xB7988 {
 		t.Fatalf("body offs=%v", js.BodyFileOffsets)
 	}
-	if len(p.USFreeSlots) != 0 {
-		t.Fatalf("us_free_slots should be empty, got %d", len(p.USFreeSlots))
+	if len(p.USFreeSlots) < 1 {
+		t.Fatal("us_free_slots should list free-slot remap targets")
+	}
+	if p.USFreeSlots[0].BudgetBytes < 71 {
+		t.Fatalf("primary free slot budget %d too small for JWT remap", p.USFreeSlots[0].BudgetBytes)
+	}
+	if p.USFreeSlots[0].HeapOffset.Int64() != 0x12EEE {
+		t.Fatalf("primary free slot heap=%#x want 0x12EEE", p.USFreeSlots[0].HeapOffset.Int64())
 	}
 	if _, ok := store.LookupByHash("vpilot", "7D95A7110392C15728143CC30E1F00899C686EB5"); !ok {
 		t.Fatal("lookup by hash case-insensitive failed")

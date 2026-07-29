@@ -22,6 +22,15 @@ const (
 	testAFVBodyOff = 0x200
 	testJWTBudget  = 71
 	testAFVBudget  = 51
+	// Free-slot synthetic layout (large cosmetic stand-in; 2-byte length prefix).
+	testFreeBodyOff  = 0x400
+	testFreeBudget   = 200 // >127 → 2-byte stock prefix; room for long URLs
+	testFreeHeapOff  = 0x12EEE
+	testFree2BodyOff = 0x600
+	testFree2Budget  = 180
+	testFree2HeapOff = 0xDE5A
+	testJWTLdstrOff  = 0x50
+	testAFVLdstrOff  = 0x60
 )
 
 func sha1hex(b []byte) string {
@@ -32,17 +41,29 @@ func sha1hex(b []byte) string {
 // buildSyntheticPE places stock JWT and AFV #US entries at known body offsets.
 func buildSyntheticPE(t *testing.T) []byte {
 	t.Helper()
-	// File large enough for both slots + residual padding.
-	size := testAFVBodyOff + int64(testAFVBudget) + 64
+	return buildSyntheticPEOpts(t, false)
+}
+
+func buildSyntheticPEOpts(t *testing.T, withFreeSlots bool) []byte {
+	t.Helper()
+	// File large enough for slots + residual + optional free slots + ldstr sites.
+	size := int64(0x800)
 	data := make([]byte, size)
 	writeStockUS(t, data, testJWTBodyOff, stockJWT, testJWTBudget)
 	writeStockUS(t, data, testAFVBodyOff, stockAFV, testAFVBudget)
 	// Pre-R3 residual extra stock JWT (resource-like) — should warn, not fail.
 	extra := testAFVBodyOff + int64(testAFVBudget) + 8
-	// Place raw UTF-16 only (no #US header) for residual scan.
 	raw := encodeUTF16(stockJWT)
 	if int(extra)+len(raw) <= len(data) {
 		copy(data[extra:], raw)
+	}
+	if withFreeSlots {
+		// Cosmetic stand-ins (long messages) — body content only needs to fit budget.
+		writeStockUS(t, data, testFreeBodyOff, strings.Repeat("X", (testFreeBudget-1)/2), testFreeBudget)
+		writeStockUS(t, data, testFree2BodyOff, strings.Repeat("Y", (testFree2Budget-1)/2), testFree2Budget)
+		// Stock ldstr tokens pointing at original JWT/AFV heap offs (synthetic heap values).
+		copy(data[testJWTLdstrOff:], makeLdstrToken(int64(testJWTBodyOff-1)))
+		copy(data[testAFVLdstrOff:], makeLdstrToken(int64(testAFVBodyOff-1)))
 	}
 	return data
 }
@@ -80,7 +101,11 @@ func encodeUTF16(s string) []byte {
 }
 
 func testProfile(pe []byte) *clientinject.Profile {
-	return &clientinject.Profile{
+	return testProfileOpts(pe, false)
+}
+
+func testProfileOpts(pe []byte, withFreeSlots bool) *clientinject.Profile {
+	p := &clientinject.Profile{
 		SchemaVersion:          2,
 		ProfileID:              "vpilot-test-synth",
 		ClientID:               clientID,
@@ -110,12 +135,48 @@ func testProfile(pe []byte) *clientinject.Profile {
 			NoVoiceFlags:      []string{"-novoice"},
 		},
 	}
+	if withFreeSlots {
+		p.ProfileID = "vpilot-test-freeslot"
+		js := p.Strings["fsd_jwt"]
+		js.LdstrFileOffsets = []clientinject.FlexibleInt64{clientinject.FlexibleInt64(testJWTLdstrOff)}
+		p.Strings["fsd_jwt"] = js
+		as := p.Strings["afv_base"]
+		as.LdstrFileOffsets = []clientinject.FlexibleInt64{clientinject.FlexibleInt64(testAFVLdstrOff)}
+		p.Strings["afv_base"] = as
+		p.USFreeSlots = []clientinject.USFreeSlot{
+			{
+				ID:          "slot_large",
+				HeapOffset:  clientinject.FlexibleInt64(testFreeHeapOff),
+				BodyOffset:  clientinject.FlexibleInt64(testFreeBodyOff),
+				BudgetBytes: testFreeBudget,
+				Description: "synthetic large free slot",
+			},
+			{
+				ID:          "slot_medium",
+				HeapOffset:  clientinject.FlexibleInt64(testFree2HeapOff),
+				BodyOffset:  clientinject.FlexibleInt64(testFree2BodyOff),
+				BudgetBytes: testFree2Budget,
+				Description: "synthetic second free slot",
+			},
+		}
+	}
+	return p
 }
 
 func setupInstall(t *testing.T) (root string, pe []byte, install clientinject.Install, profile *clientinject.Profile, a *Adapter) {
 	t.Helper()
+	return setupInstallOpts(t, false)
+}
+
+func setupInstallWithFreeSlot(t *testing.T) (root string, pe []byte, install clientinject.Install, profile *clientinject.Profile, a *Adapter) {
+	t.Helper()
+	return setupInstallOpts(t, true)
+}
+
+func setupInstallOpts(t *testing.T, withFreeSlots bool) (root string, pe []byte, install clientinject.Install, profile *clientinject.Profile, a *Adapter) {
+	t.Helper()
 	root = t.TempDir()
-	pe = buildSyntheticPE(t)
+	pe = buildSyntheticPEOpts(t, withFreeSlots)
 	pePath := filepath.Join(root, primaryName)
 	if err := os.WriteFile(pePath, pe, 0o644); err != nil {
 		t.Fatal(err)
@@ -133,7 +194,7 @@ func setupInstall(t *testing.T) (root string, pe []byte, install clientinject.In
 	if err := os.WriteFile(cfgPath, raw, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	profile = testProfile(pe)
+	profile = testProfileOpts(pe, withFreeSlots)
 	store := clientinject.NewProfileStore()
 	if err := store.Add(profile); err != nil {
 		t.Fatal(err)
@@ -552,15 +613,129 @@ func TestApply_ReApplyLongerInBudgetJWT(t *testing.T) {
 	}
 }
 
-func TestPlan_FreeSlotsIncompleteIsBlocker(t *testing.T) {
+func TestPlan_FreeSlotRemapLongHost(t *testing.T) {
+	_, _, install, profile, a := setupInstallWithFreeSlot(t)
+	ep := clientinject.Endpoints{
+		WebBaseURL: "https://fsd.example.com",
+		FSDHost:    "fsd.example.com",
+		AFVBaseURL: "https://voice1.example.com", // over AFV in-place budget
+	}
+	plan, err := a.Plan(install, profile, ep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Blockers) != 0 {
+		t.Fatalf("expected free-slot remap for long host, blockers=%v", plan.Blockers)
+	}
+	var jwtUS, afvUS, jwtLdstr, afvLdstr bool
+	for _, m := range plan.Mutations {
+		switch m.Kind {
+		case clientinject.MutUSHeapString:
+			d, _ := usDetail(m.Detail)
+			if d.StringRef == "fsd_jwt" {
+				jwtUS = true
+				if d.BudgetBytes != testFreeBudget {
+					t.Fatalf("jwt free budget=%d", d.BudgetBytes)
+				}
+				if d.NewString != "https://fsd.example.com/api/v1/fsd-jwt" {
+					t.Fatalf("jwt url=%q", d.NewString)
+				}
+			}
+			if d.StringRef == "afv_base" {
+				afvUS = true
+			}
+		case clientinject.MutLdstrRemap:
+			d, ok := ldstrDetail(m.Detail)
+			if !ok {
+				t.Fatalf("bad ldstr detail on %s", m.ID)
+			}
+			if d.LdstrFileOff == testJWTLdstrOff {
+				jwtLdstr = true
+				want := makeLdstrToken(testFreeHeapOff)
+				if !bytes.Equal(d.NewToken, want) {
+					t.Fatalf("jwt token=%x want %x", d.NewToken, want)
+				}
+			}
+			if d.LdstrFileOff == testAFVLdstrOff {
+				afvLdstr = true
+			}
+		}
+	}
+	if !jwtUS || !jwtLdstr {
+		t.Fatalf("expected JWT free-slot US+ldstr, jwtUS=%v jwtLdstr=%v", jwtUS, jwtLdstr)
+	}
+	if !afvUS || !afvLdstr {
+		t.Fatalf("expected AFV free-slot US+ldstr, afvUS=%v afvLdstr=%v", afvUS, afvLdstr)
+	}
+	// No -novoice when AFV remapped.
+	for _, m := range plan.Mutations {
+		if m.Kind == clientinject.MutLaunchFlag {
+			d := m.Detail.(clientinject.LaunchFlagDetail)
+			for _, arg := range d.Args {
+				if arg == "-novoice" {
+					t.Fatal("must not plan -novoice when AFV free-slot remap succeeds")
+				}
+			}
+		}
+	}
+}
+
+func TestApply_FreeSlotRemap(t *testing.T) {
+	_, _, install, profile, a := setupInstallWithFreeSlot(t)
+	ep := clientinject.Endpoints{
+		WebBaseURL: "https://fsd.example.com",
+		FSDHost:    "fsd.example.com",
+		AFVBaseURL: "https://voice.long.example.com",
+	}
+	plan, err := a.Plan(install, profile, ep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Blockers) != 0 {
+		t.Fatalf("blockers: %v", plan.Blockers)
+	}
+	w := clientinject.OSFileWriter{}
+	if err := a.Apply(context.Background(), plan, w); err != nil {
+		t.Fatal(err)
+	}
+	peData, err := os.ReadFile(install.PrimaryPE)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Free slot holds JWT URL (decode from entry; prefix may shrink).
+	gotJWT, err := decodeUSAtBody(peData, testFreeBodyOff, testFreeBudget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantJWT := "https://fsd.example.com/api/v1/fsd-jwt"
+	if gotJWT != wantJWT {
+		t.Fatalf("free-slot jwt=%q want %q", gotJWT, wantJWT)
+	}
+	// Stock JWT body still stock (remap does not dual-write).
+	gotStock, err := decodeUSAtBody(peData, testJWTBodyOff, testJWTBudget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotStock != stockJWT {
+		t.Fatalf("stock jwt body changed to %q (should remain stock after remap)", gotStock)
+	}
+	// ldstr points at free heap.
+	wantTok := makeLdstrToken(testFreeHeapOff)
+	gotTok := peData[testJWTLdstrOff : testJWTLdstrOff+5]
+	if !bytes.Equal(gotTok, wantTok) {
+		t.Fatalf("ldstr token=%x want %x", gotTok, wantTok)
+	}
+	if err := a.HealthCheck(install, ep); err != nil {
+		t.Fatalf("healthcheck: %v", err)
+	}
+}
+
+func TestPlan_LongHostStillBlockerWithoutFreeSlots(t *testing.T) {
+	// setupInstall has no free slots — long host remains a blocker.
 	_, _, install, profile, a := setupInstall(t)
-	// Populate free slots as if R1 research landed offsets but remap not wired.
-	profile.USFreeSlots = []clientinject.USFreeSlot{{
-		ID:          "slot1",
-		BudgetBytes: 200,
-		HeapOffset:  clientinject.FlexibleInt64(1),
-		BodyOffset:  clientinject.FlexibleInt64(2),
-	}}
+	if len(profile.USFreeSlots) != 0 {
+		t.Fatal("test profile must not have free slots")
+	}
 	ep := clientinject.Endpoints{
 		WebBaseURL: "https://fsd.example.com",
 		FSDHost:    "fsd.example.com",
@@ -570,21 +745,7 @@ func TestPlan_FreeSlotsIncompleteIsBlocker(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(plan.Blockers) == 0 {
-		t.Fatal("expected JWT blocker even with free slots (R1 incomplete)")
-	}
-	for _, m := range plan.Mutations {
-		if m.Kind == clientinject.MutLdstrRemap {
-			t.Fatal("must not plan incomplete ldstr remap")
-		}
-	}
-	warn := false
-	for _, w := range plan.Warnings {
-		if strings.Contains(w, "R1") || strings.Contains(w, "remap not implemented") {
-			warn = true
-		}
-	}
-	if !warn {
-		t.Fatalf("expected R1 warning, got %v", plan.Warnings)
+		t.Fatal("expected JWT blocker without free slots")
 	}
 }
 

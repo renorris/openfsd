@@ -1,8 +1,8 @@
 // Package vpilot implements the clientinject.Adapter for vPilot 3.12.1.
 //
-// Phase 0 honesty: short-host lab JWT/AFV in-place #US works; long hostnames
-// block unless PreferShortJWTPath + budget fits (or free-slot remap after R1).
-// AFV PE ret disable is out of scope until research gate R2.
+// JWT/AFV #US: in-place when the stock slot budget fits; otherwise free-slot
+// remap (R1) writes the URL into a large cosmetic #US entry and rewrites the
+// CIL ldstr token. AFV PE ret disable is out of scope until research gate R2.
 package vpilot
 
 import (
@@ -206,44 +206,69 @@ func (a *Adapter) EndpointConstraints(profile *clientinject.Profile) []clientinj
 	if profile == nil {
 		return nil
 	}
+	maxFree := maxFreeSlotBudget(profile.USFreeSlots)
 	var out []clientinject.Constraint
 	if s, ok := profile.Strings["fsd_jwt"]; ok && s.PayloadBudgetBytes > 0 {
 		maxRunes := (s.PayloadBudgetBytes - 1) / 2
+		desc := fmt.Sprintf("in-place #US budget %d bytes (~%d runes); default path max host 12 chars; --prefer-short-jwt (/j) max host 25 if server fixed", s.PayloadBudgetBytes, maxRunes)
+		strategy := "in_place"
+		if freeSlotRemapReady && maxFree > s.PayloadBudgetBytes {
+			maxRunes = (maxFree - 1) / 2
+			strategy = "in_place_or_remap"
+			desc = fmt.Sprintf("in-place budget %d bytes; free-slot remap up to %d bytes (~%d runes)", s.PayloadBudgetBytes, maxFree, maxRunes)
+		}
 		out = append(out, clientinject.Constraint{
 			Field:       "JWTURL",
 			MaxRunes:    maxRunes,
-			Strategy:    "in_place",
-			Description: fmt.Sprintf("in-place #US budget %d bytes (~%d runes); default path max host 12 chars; --prefer-short-jwt (/j) max host 25 if server fixed", s.PayloadBudgetBytes, maxRunes),
+			Strategy:    strategy,
+			Description: desc,
 		})
 	}
 	if s, ok := profile.Strings["afv_base"]; ok && s.PayloadBudgetBytes > 0 {
 		maxRunes := (s.PayloadBudgetBytes - 1) / 2
+		desc := fmt.Sprintf("in-place #US budget %d bytes (~%d runes); over-budget falls back to -novoice", s.PayloadBudgetBytes, maxRunes)
+		strategy := "in_place"
+		if freeSlotRemapReady && maxFree > s.PayloadBudgetBytes {
+			maxRunes = (maxFree - 1) / 2
+			strategy = "in_place_or_remap"
+			desc = fmt.Sprintf("in-place budget %d bytes; free-slot remap up to %d bytes (~%d runes); else -novoice", s.PayloadBudgetBytes, maxFree, maxRunes)
+		}
 		out = append(out, clientinject.Constraint{
 			Field:       "AFVBaseURL",
 			MaxRunes:    maxRunes,
-			Strategy:    "in_place",
-			Description: fmt.Sprintf("in-place #US budget %d bytes (~%d runes); over-budget falls back to -novoice", s.PayloadBudgetBytes, maxRunes),
+			Strategy:    strategy,
+			Description: desc,
 		})
 	}
 	return out
 }
 
+func maxFreeSlotBudget(slots []clientinject.USFreeSlot) int {
+	max := 0
+	for _, s := range slots {
+		if s.BudgetBytes > max {
+			max = s.BudgetBytes
+		}
+	}
+	return max
+}
+
 // LaunchArgs returns CLI flags for launching the patched client.
-// Uses the same AFV budget decision as Plan when a profile can be resolved.
+// Uses the same AFV budget / free-slot decision as Plan when a profile can be resolved.
 func (a *Adapter) LaunchArgs(install clientinject.Install, ep clientinject.Endpoints) []string {
 	ep = ep.Normalize()
 	serverFlag := "-serveraddressoverride"
 	noVoiceFlag := "-novoice"
-	afvBudget := 51
-	if p, err := a.loadProfileForInstall(install); err == nil && p != nil {
-		if p.Launch.ServerAddressFlag != "" {
-			serverFlag = p.Launch.ServerAddressFlag
+	var profile *clientinject.Profile
+	if p, err := a.loadProfileForInstall(install); err == nil {
+		profile = p
+	}
+	if profile != nil {
+		if profile.Launch.ServerAddressFlag != "" {
+			serverFlag = profile.Launch.ServerAddressFlag
 		}
-		if len(p.Launch.NoVoiceFlags) > 0 {
-			noVoiceFlag = p.Launch.NoVoiceFlags[0]
-		}
-		if s, ok := p.Strings["afv_base"]; ok && s.PayloadBudgetBytes > 0 {
-			afvBudget = s.PayloadBudgetBytes
+		if len(profile.Launch.NoVoiceFlags) > 0 {
+			noVoiceFlag = profile.Launch.NoVoiceFlags[0]
 		}
 	}
 
@@ -251,14 +276,50 @@ func (a *Adapter) LaunchArgs(install clientinject.Install, ep clientinject.Endpo
 	if addr := ep.FSDAddress(); addr != "" {
 		args = append(args, serverFlag, addr)
 	}
-	needNoVoice := ep.ForceDisableAFV || ep.AFVBaseURL == ""
-	if !needNoVoice && !cilus.FitsBudget(ep.AFVBaseURL, afvBudget) {
-		needNoVoice = true
-	}
-	if needNoVoice {
+	if launchNeedsNoVoice(profile, ep) {
 		args = append(args, noVoiceFlag)
 	}
 	return args
+}
+
+// launchNeedsNoVoice mirrors Plan's AFV / free-slot decision for launch flags.
+func launchNeedsNoVoice(profile *clientinject.Profile, ep clientinject.Endpoints) bool {
+	if ep.ForceDisableAFV || ep.AFVBaseURL == "" {
+		return true
+	}
+	afvBudget := 51
+	var freeSlots []clientinject.USFreeSlot
+	if profile != nil {
+		if s, ok := profile.Strings["afv_base"]; ok && s.PayloadBudgetBytes > 0 {
+			afvBudget = s.PayloadBudgetBytes
+		}
+		freeSlots = profile.USFreeSlots
+	}
+	if cilus.FitsBudget(ep.AFVBaseURL, afvBudget) {
+		return false
+	}
+	if !freeSlotRemapReady {
+		return true
+	}
+	// Reserve free slots in the same order as Plan (JWT first, then AFV).
+	used := make(map[string]bool)
+	if profile != nil {
+		jwtURL, _, _ := resolveJWTURL(ep, profile)
+		if js, ok := profile.Strings["fsd_jwt"]; ok && jwtURL != "" && !cilus.FitsBudget(jwtURL, js.PayloadBudgetBytes) {
+			if slot, id := pickFreeSlot(freeSlots, cilus.BodyBudgetBytes(jwtURL), used); slot != nil {
+				used[id] = true
+			}
+		}
+	}
+	asOK := true
+	if profile != nil {
+		if as, ok := profile.Strings["afv_base"]; ok && len(as.LdstrFileOffsets) == 0 {
+			asOK = false
+		}
+	}
+	need := cilus.BodyBudgetBytes(ep.AFVBaseURL)
+	slot, _ := pickFreeSlot(freeSlots, need, used)
+	return slot == nil || !asOK
 }
 
 // InstallFromDir builds an Install for an explicit --install directory.
