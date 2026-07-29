@@ -71,50 +71,50 @@ if [[ ! -f "${ICO}" ]] && [[ -f "${PKG_ROOT}/assets/icon-512.png" ]] && command 
   magick "${PKG_ROOT}/assets/icon-512.png" -define icon:auto-resize=256,128,64,48,32,16 "${ICO}"
 fi
 
-# ISCC is a native Windows tool: all paths must be Windows-style, not /d/a/...
-# Otherwise ISCC treats path segments as extra script filenames.
+# ISCC is a native Windows tool. Use mixed paths (D:/a/...) not backslashes:
+# bash double-quotes turn \a in D:\a\... into an escape, which corrupts /D args
+# and ISCC reports "more than one script filename".
 winpath() {
   if command -v cygpath >/dev/null 2>&1; then
-    cygpath -w "$1"
+    cygpath -m "$1"
+  elif command -v cygpath.exe >/dev/null 2>&1; then
+    cygpath.exe -m "$1"
   else
-    # Git Bash
-    if command -v cygpath.exe >/dev/null 2>&1; then
-      cygpath.exe -w "$1"
-    else
-      echo "$1" | sed -e 's|^/\([a-zA-Z]\)/|\1:\\|' -e 's|/|\\|g'
-    fi
+    echo "$1" | sed -e 's|^/\([a-zA-Z]\)/|\1:/|' -e 's|\\|/|g'
   fi
 }
 
 BIN_WIN="$(winpath "${BIN_PATH}")"
 DIST_WIN="$(winpath "${DIST_ROOT}")"
 ISS_WIN="$(winpath "${ISS}")"
-ISCC_WIN="$(winpath "${ISCC}")"
+# Keep ISCC as the env path; call through cmd if needed.
+ISCC_EXE="${ISCC}"
 
 echo "==> Inno Setup ${VERSION} (VersionInfo ${VI_VERSION})"
-echo "    ISCC=${ISCC_WIN}"
+echo "    ISCC=${ISCC_EXE}"
 echo "    script=${ISS_WIN}"
 echo "    SourceBin=${BIN_WIN}"
 echo "    OutputDir=${DIST_WIN}"
 
-# One /D per arg; script path last. Paths must be Windows-style (see above).
-if [[ -f "${ICO}" ]]; then
-  ICO_WIN="$(winpath "${ICO}")"
-  "${ISCC_WIN}" \
+# Build a response-style arg list without bash backslash escapes.
+# Prefer cmd.exe /c with a carefully quoted line (spaces in Program Files).
+run_iscc() {
+  local icon_def=""
+  if [[ -f "${ICO}" ]]; then
+    icon_def="/DSetupIcon=$(winpath "${ICO}")"
+  fi
+  # MSYS2_ARG_CONV_EXCL prevents msys from rewriting /D* as paths.
+  MSYS2_ARG_CONV_EXCL='/D*' \
+    "${ISCC_EXE}" \
     "/DMyAppVersion=${VERSION}" \
     "/DMyAppVersionInfo=${VI_VERSION}" \
     "/DSourceBin=${BIN_WIN}" \
     "/DOutputDir=${DIST_WIN}" \
-    "/DSetupIcon=${ICO_WIN}" \
+    ${icon_def:+"${icon_def}"} \
     "${ISS_WIN}"
-else
-  "${ISCC_WIN}" \
-    "/DMyAppVersion=${VERSION}" \
-    "/DMyAppVersionInfo=${VI_VERSION}" \
-    "/DSourceBin=${BIN_WIN}" \
-    "/DOutputDir=${DIST_WIN}" \
-    "${ISS_WIN}"
-fi
+}
+
+run_iscc
 
 # Also ship portable zip of the bare binary for power users.
 PORTABLE="${DIST_ROOT}/${BIN_NAME}-${VERSION}-windows-${GOARCH}-portable.zip"
