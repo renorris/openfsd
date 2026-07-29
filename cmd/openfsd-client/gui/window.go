@@ -99,6 +99,24 @@ func (c *controller) updateForm(fn func(*FormState)) {
 }
 
 func (c *controller) buildUI() fyne.CanvasObject {
+	// --- Install path first ---
+	// Client Select.SetSelected runs OnChanged immediately and may call onDetect,
+	// which writes installEntry. Creating the entry after SetSelected panics
+	// (nil *widget.Entry.SetText) — observed on Windows GUI boot.
+	c.installEntry = widget.NewEntry()
+	c.installEntry.SetPlaceHolder("Client folder")
+	c.installEntry.OnChanged = func(s string) {
+		c.updateForm(func(f *FormState) { f.InstallPath = s })
+	}
+	c.detectBtn = widget.NewButton("Detect", func() { c.onDetect(true) })
+	browseBtn := widget.NewButton("Browse…", func() {
+		c.onBrowse()
+	})
+	installRow := container.NewBorder(nil, nil, nil,
+		container.NewHBox(c.detectBtn, browseBtn),
+		c.installEntry,
+	)
+
 	// --- Client (enabled only) ---
 	var labels []string
 	var firstEnabled string
@@ -129,21 +147,6 @@ func (c *controller) buildUI() fyne.CanvasObject {
 			c.updateForm(func(f *FormState) { f.ClientID = s.ID })
 		}
 	}
-
-	// --- Install path ---
-	c.installEntry = widget.NewEntry()
-	c.installEntry.SetPlaceHolder("Client folder")
-	c.installEntry.OnChanged = func(s string) {
-		c.updateForm(func(f *FormState) { f.InstallPath = s })
-	}
-	c.detectBtn = widget.NewButton("Detect", func() { c.onDetect(true) })
-	browseBtn := widget.NewButton("Browse…", func() {
-		c.onBrowse()
-	})
-	installRow := container.NewBorder(nil, nil, nil,
-		container.NewHBox(c.detectBtn, browseBtn),
-		c.installEntry,
-	)
 
 	// --- Endpoints ---
 	c.webBaseEntry = widget.NewEntry()
@@ -305,6 +308,9 @@ func (c *controller) setBusy(v bool) {
 }
 
 func (c *controller) onDetect(showMiss bool) {
+	if c.installEntry == nil {
+		return
+	}
 	f := c.formCopy()
 	cand, ok := FirstDetectPath(c.eng, f.ClientID)
 	if !ok {
