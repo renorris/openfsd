@@ -235,6 +235,106 @@ func TestVerify_RefuseUnknownHash(t *testing.T) {
 	}
 }
 
+// Regression OPEN-1: stock bak alone must not accept a wrong live PE.
+func TestVerify_RefuseWrongLiveWithStockBakNoManifest(t *testing.T) {
+	_, stock, install, profile, a := setupInstall(t)
+	// Leave stock bak (as after Apply or leftover after Revert forensics).
+	if err := os.WriteFile(clientinject.BackupPath(install.PrimaryPE), stock, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Replace live with different content same size (upgrade same length).
+	wrong := bytes.Repeat([]byte{0xAB}, len(stock))
+	if err := os.WriteFile(install.PrimaryPE, wrong, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// install.HashSHA1 still stock — old short-circuit would have accepted.
+	install.HashSHA1 = profile.PrimaryBinary.SHA1
+	err := a.Verify(install, profile)
+	if err == nil || !strings.Contains(err.Error(), "refuse unknown hash") {
+		t.Fatalf("expected refuse without applied manifest, err=%v", err)
+	}
+}
+
+func TestVerify_RefuseWrongLiveWithBakRevertedManifest(t *testing.T) {
+	root, stock, install, profile, a := setupInstall(t)
+	if err := os.WriteFile(clientinject.BackupPath(install.PrimaryPE), stock, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	wrong := bytes.Repeat([]byte{0xCD}, len(stock))
+	if err := os.WriteFile(install.PrimaryPE, wrong, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w := clientinject.OSFileWriter{}
+	m := &clientinject.Manifest{
+		ClientID:    clientID,
+		ProfileID:   profile.ProfileID,
+		PESHA1:      profile.PrimaryBinary.SHA1,
+		Status:      clientinject.ManifestStatusReverted,
+		InstallRoot: root,
+	}
+	if err := clientinject.WriteManifest(w, m); err != nil {
+		t.Fatal(err)
+	}
+	err := a.Verify(install, profile)
+	if err == nil || !strings.Contains(err.Error(), "refuse unknown hash") {
+		t.Fatalf("expected refuse on reverted manifest, err=%v", err)
+	}
+}
+
+func TestVerify_RefuseSizeMismatchWithStockBak(t *testing.T) {
+	_, stock, install, profile, a := setupInstall(t)
+	if err := os.WriteFile(clientinject.BackupPath(install.PrimaryPE), stock, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Different size live PE (upgrade).
+	if err := os.WriteFile(install.PrimaryPE, append(stock, 0x00, 0x01, 0x02), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Even with applied manifest, size mismatch must fail.
+	w := clientinject.OSFileWriter{}
+	m := &clientinject.Manifest{
+		ClientID:    clientID,
+		ProfileID:   profile.ProfileID,
+		PESHA1:      profile.PrimaryBinary.SHA1,
+		Status:      clientinject.ManifestStatusApplied,
+		InstallRoot: install.RootDir,
+	}
+	if err := clientinject.WriteManifest(w, m); err != nil {
+		t.Fatal(err)
+	}
+	err := a.Verify(install, profile)
+	if err == nil || !strings.Contains(err.Error(), "refuse unknown hash") {
+		t.Fatalf("expected size mismatch refuse, err=%v", err)
+	}
+}
+
+func TestVerify_AcceptPatchedLiveWithAppliedManifest(t *testing.T) {
+	_, stock, install, profile, a := setupInstall(t)
+	// Simulate post-Apply: bak=stock, live=patched same size, status=applied.
+	if err := os.WriteFile(clientinject.BackupPath(install.PrimaryPE), stock, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	patched := append([]byte(nil), stock...)
+	copy(patched[testStatusOff:], []byte("https://fsd.ex.co/api/v1/data/status.json"))
+	if err := os.WriteFile(install.PrimaryPE, patched, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w := clientinject.OSFileWriter{}
+	m := &clientinject.Manifest{
+		ClientID:    clientID,
+		ProfileID:   profile.ProfileID,
+		PESHA1:      profile.PrimaryBinary.SHA1,
+		Status:      clientinject.ManifestStatusApplied,
+		InstallRoot: install.RootDir,
+	}
+	if err := clientinject.WriteManifest(w, m); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Verify(install, profile); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestApplyHealth_RoundTrip(t *testing.T) {
 	_, stock, install, profile, a := setupInstall(t)
 	ep := clientinject.Endpoints{
@@ -248,8 +348,22 @@ func TestApplyHealth_RoundTrip(t *testing.T) {
 	if len(plan.Blockers) != 0 {
 		t.Fatalf("blockers: %v", plan.Blockers)
 	}
+	// Engine-like bak + applied manifest so HealthCheck→Verify accepts patched PE.
+	if err := os.WriteFile(clientinject.BackupPath(install.PrimaryPE), stock, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	w := clientinject.OSFileWriter{}
 	if err := a.Apply(context.Background(), plan, w); err != nil {
+		t.Fatal(err)
+	}
+	m := &clientinject.Manifest{
+		ClientID:    clientID,
+		ProfileID:   profile.ProfileID,
+		PESHA1:      profile.PrimaryBinary.SHA1,
+		Status:      clientinject.ManifestStatusApplied,
+		InstallRoot: install.RootDir,
+	}
+	if err := clientinject.WriteManifest(w, m); err != nil {
 		t.Fatal(err)
 	}
 	if err := a.HealthCheck(install, ep); err != nil {
@@ -280,6 +394,41 @@ func TestApplyHealth_RoundTrip(t *testing.T) {
 	// Break site.
 	if !bytes.Equal(got[testBreakOff:testBreakOff+3], []byte("foo")) {
 		t.Fatalf("break=%q", got[testBreakOff:testBreakOff+3])
+	}
+}
+
+func TestHealthCheck_RefusesUnknownPE(t *testing.T) {
+	_, _, install, _, a := setupInstall(t)
+	if err := os.WriteFile(install.PrimaryPE, []byte("wrong-pe"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := a.HealthCheck(install, clientinject.Endpoints{
+		WebBaseURL: "https://fsd.ex.co",
+		FSDHost:    "fsd.ex.co",
+	})
+	if err == nil || !strings.Contains(err.Error(), "verify") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestPlan_NonASCIIBlocker(t *testing.T) {
+	_, _, install, profile, a := setupInstall(t)
+	plan, err := a.Plan(install, profile, clientinject.Endpoints{
+		WebBaseURL: "https://fsd.exämple.co",
+		FSDHost:    "fsd.exämple.co",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, b := range plan.Blockers {
+		if strings.Contains(b, "ASCII") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected ASCII blocker, blockers=%v", plan.Blockers)
 	}
 }
 

@@ -29,6 +29,14 @@ func (a *Adapter) Plan(install clientinject.Install, profile *clientinject.Profi
 		plan.Blockers = append(plan.Blockers, "FSDHost is required (used with openfsd status feed / operator checklist)")
 	}
 
+	// Length immediates are single-byte character counts proven only for ASCII
+	// (prior-art examples). Non-ASCII hosts would make UTF-8 byte length diverge
+	// from rune count used for the imm — refuse rather than guess.
+	if ep.WebBaseURL != "" && !isASCII(ep.WebBaseURL) {
+		plan.Blockers = append(plan.Blockers,
+			"WebBaseURL must be ASCII; xPilot 3.0.1 PE length immediates are single-byte character counts (non-ASCII hosts unproven)")
+	}
+
 	statusURL := ep.StatusJSONURL()
 	jwtURL := ep.JWTURL()
 	// Prefer full /api/v1/fsd-jwt; PreferShortJWTPath still works via Endpoints.JWTURL.
@@ -183,7 +191,10 @@ func (a *Adapter) Plan(install clientinject.Install, profile *clientinject.Profi
 }
 
 func checkURLFits(url string, profile *clientinject.Profile, stringKey, encoding string) error {
-	n := utf8.RuneCountInString(url)
+	if !isASCII(url) {
+		return fmt.Errorf("%s URL must be ASCII; xPilot 3.0.1 length immediates are single-byte character counts (non-ASCII unproven)", stringKey)
+	}
+	n := utf8.RuneCountInString(url) // equals len(url) for ASCII
 	if n > maxLengthImm {
 		return fmt.Errorf("%s URL length %d exceeds single-byte length immediate max %d", stringKey, n, maxLengthImm)
 	}
@@ -200,13 +211,23 @@ func checkURLFits(url string, profile *clientinject.Profile, stringKey, encoding
 	case "utf16le", "utf-16le", "utf16":
 		need = (n + 1) * 2 // runes + NUL
 	default:
-		// utf8/ascii: bytes + NUL; openfsd URLs are ASCII so runes==bytes.
+		// utf8/ascii: bytes + NUL (ASCII: runes == bytes).
 		need = len(url) + 1
 	}
 	if need > budget {
 		return fmt.Errorf("%s URL needs %d encoded bytes > slot budget %d", stringKey, need, budget)
 	}
 	return nil
+}
+
+// isASCII reports whether s contains only bytes < 128 (openfsd production hosts).
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] > 127 {
+			return false
+		}
+	}
+	return true
 }
 
 func updateConstraintStrategy(plan *clientinject.Plan, field, strategy string) {

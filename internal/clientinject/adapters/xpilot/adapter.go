@@ -131,7 +131,22 @@ func (a *Adapter) Discover(ctx context.Context) ([]clientinject.InstallCandidate
 	return cands, nil
 }
 
-// Verify checks primary PE SHA-1 against the profile (stock bak allowed post-Apply).
+// Verify checks primary PE identity against the profile.
+//
+// Accept when:
+//  1. Live PE SHA-1 equals profile stock (first-time / post-Revert stock), or
+//  2. Re-apply path: live is not stock, but
+//     - sibling .openfsd-bak content hashes to stock,
+//     - live PE size equals bak size (in-place patches never resize the PE),
+//     - inject manifest exists under install root with matching ProfileID,
+//     - manifest status is "applied" or "in_progress" (in_progress while
+//     Engine.Apply runs HealthCheck; applied for re-plan/re-apply). Status
+//     "reverted"/"failed" is refused so leftover bak after Revert + upgrade
+//     cannot pass,
+//     - optional profile size_bytes matches live (and thus bak).
+//
+// Never accept a non-stock live PE solely because bak matches stock or
+// install.HashSHA1 is pre-seeded to stock.
 func (a *Adapter) Verify(install clientinject.Install, profile *clientinject.Profile) error {
 	if profile == nil {
 		return fmt.Errorf("xpilot: nil profile")
@@ -154,24 +169,61 @@ func (a *Adapter) Verify(install clientinject.Install, profile *clientinject.Pro
 	if want == "" {
 		return fmt.Errorf("xpilot: profile has no primary_binary.sha1")
 	}
-	if !strings.EqualFold(got, want) {
-		bak := clientinject.BackupPath(pe)
-		if _, bakErr := w.Stat(bak); bakErr == nil {
-			if install.HashSHA1 != "" && strings.EqualFold(install.HashSHA1, want) {
-				return nil
-			}
-			if bakData, rerr := w.ReadFile(bak); rerr == nil {
-				bakSum := sha1.Sum(bakData)
-				if strings.EqualFold(hex.EncodeToString(bakSum[:]), want) {
-					return nil
-				}
-			}
+	wantSize := profile.PrimaryBinary.SizeBytes
+
+	if strings.EqualFold(got, want) {
+		if wantSize > 0 && int64(len(data)) != wantSize {
+			return fmt.Errorf("xpilot: PE size %d does not match profile %d", len(data), wantSize)
 		}
+		return nil
+	}
+
+	// Live PE is not stock. Only allow re-apply of a PE we previously patched.
+	bak := clientinject.BackupPath(pe)
+	bakData, bakErr := w.ReadFile(bak)
+	if bakErr != nil {
 		return fmt.Errorf("xpilot: PE sha1 %s does not match profile %s (stock %s); refuse unknown hash",
 			got, profile.ProfileID, want)
 	}
-	if wantSize := profile.PrimaryBinary.SizeBytes; wantSize > 0 && int64(len(data)) != wantSize {
-		return fmt.Errorf("xpilot: PE size %d does not match profile %d", len(data), wantSize)
+	bakSum := sha1.Sum(bakData)
+	if !strings.EqualFold(hex.EncodeToString(bakSum[:]), want) {
+		return fmt.Errorf("xpilot: PE sha1 %s does not match profile %s (stock %s); bak is not stock either; refuse unknown hash",
+			got, profile.ProfileID, want)
+	}
+	// In-place padded_string / raw_overwrite never change file length.
+	// A size mismatch means the live PE was replaced (upgrade) while bak lingered.
+	if len(data) != len(bakData) {
+		return fmt.Errorf("xpilot: live PE size %d != stock bak size %d (client upgraded/replaced while bak retained?); refuse unknown hash",
+			len(data), len(bakData))
+	}
+	if wantSize > 0 && int64(len(data)) != wantSize {
+		return fmt.Errorf("xpilot: PE size %d does not match profile %d; refuse unknown hash", len(data), wantSize)
+	}
+
+	root := install.RootDir
+	if root == "" {
+		root = filepath.Dir(pe)
+	}
+	m, mErr := clientinject.ReadManifest(w, root)
+	if mErr != nil {
+		return fmt.Errorf("xpilot: PE sha1 %s is not stock %s and no inject manifest under %s (leftover bak after upgrade? remove %s or reinstall matching PE); refuse unknown hash",
+			got, want, root, bak)
+	}
+	if m.ProfileID != "" && m.ProfileID != profile.ProfileID {
+		return fmt.Errorf("xpilot: manifest profile_id %q != %q; refuse unknown hash", m.ProfileID, profile.ProfileID)
+	}
+	if m.ProfileID == "" {
+		return fmt.Errorf("xpilot: inject manifest missing profile_id; refuse unknown hash")
+	}
+	switch m.Status {
+	case clientinject.ManifestStatusApplied, clientinject.ManifestStatusInProgress:
+		// ok — applied = prior successful inject; in_progress = mid-Apply healthcheck
+	default:
+		return fmt.Errorf("xpilot: live PE not stock (sha1 %s) and manifest status %q (want applied|in_progress); refuse unknown hash — if you upgraded xPilot, reinstall the pinned version or remove bak/manifest",
+			got, m.Status)
+	}
+	if m.PESHA1 != "" && !strings.EqualFold(m.PESHA1, want) {
+		return fmt.Errorf("xpilot: manifest pe_sha1 %s != profile stock %s; refuse unknown hash", m.PESHA1, want)
 	}
 	return nil
 }
@@ -192,7 +244,7 @@ func (a *Adapter) EndpointConstraints(profile *clientinject.Profile) []clientinj
 			Field:       "StatusJSONURL",
 			MaxRunes:    maxRunes,
 			Strategy:    "padded_string",
-			Description: fmt.Sprintf("UTF-8 padded slot %d bytes; length imm is 1 byte (max %d)", s.PayloadBudgetBytes, maxLengthImm),
+			Description: fmt.Sprintf("UTF-8 padded slot %d bytes; length imm is 1 byte (max %d); ASCII hosts only", s.PayloadBudgetBytes, maxLengthImm),
 		})
 	}
 	if s, ok := profile.Strings["fsd_jwt"]; ok && s.PayloadBudgetBytes > 0 {
@@ -205,7 +257,7 @@ func (a *Adapter) EndpointConstraints(profile *clientinject.Profile) []clientinj
 			Field:       "JWTURL",
 			MaxRunes:    maxRunes,
 			Strategy:    "padded_string",
-			Description: fmt.Sprintf("UTF-16LE padded slot %d bytes (~%d runes); length imm max %d", s.PayloadBudgetBytes, maxRunes, maxLengthImm),
+			Description: fmt.Sprintf("UTF-16LE padded slot %d bytes (~%d runes); length imm max %d; ASCII hosts only", s.PayloadBudgetBytes, maxRunes, maxLengthImm),
 		})
 	}
 	out = append(out, clientinject.Constraint{

@@ -10,7 +10,8 @@ import (
 	"github.com/renorris/openfsd/internal/clientinject"
 )
 
-// HealthCheck validates padded-string slots and raw length/break sites after Apply.
+// HealthCheck validates PE identity (Verify) then padded-string slots and raw
+// length/break sites after Apply.
 func (a *Adapter) HealthCheck(install clientinject.Install, ep clientinject.Endpoints) error {
 	ep = ep.Normalize()
 	w := a.writer()
@@ -18,14 +19,19 @@ func (a *Adapter) HealthCheck(install clientinject.Install, ep clientinject.Endp
 	if pe == "" {
 		return fmt.Errorf("xpilot: healthcheck: empty PrimaryPE")
 	}
-	data, err := w.ReadFile(pe)
-	if err != nil {
-		return fmt.Errorf("xpilot: healthcheck read PE: %w", err)
-	}
 
 	profile, err := a.loadProfileForInstall(install)
 	if err != nil {
 		return fmt.Errorf("xpilot: healthcheck profile: %w", err)
+	}
+	// Refuse unknown / wrong-version PE before reading slots at profile offsets.
+	if err := a.Verify(install, profile); err != nil {
+		return fmt.Errorf("xpilot: healthcheck verify: %w", err)
+	}
+
+	data, err := w.ReadFile(pe)
+	if err != nil {
+		return fmt.Errorf("xpilot: healthcheck read PE: %w", err)
 	}
 
 	statusURL := ep.StatusJSONURL()

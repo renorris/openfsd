@@ -71,6 +71,27 @@ file_offset = section.raw_offset + (section_address_va - section.virtual_start)
 
 LEA RIP displacements in prior art point at the **relocated** `.idata` slots (not the stock string sites). They are **content-independent** for a fixed slot address. Length immediates **must** match the new URL length at Apply time.
 
+### Length immediate + non-ASCII hosts
+
+Prior-art length patches are **one byte** set to the sample URL’s character count (ASCII: `len == rune count`). The adapter:
+
+- Uses `utf8.RuneCountInString` for the length imm (equals byte length for ASCII).
+- **Blocks non-ASCII** `WebBaseURL` / status / JWT URLs at Plan time — multi-byte UTF-8 would make “character count vs byte length” ambiguous vs the PE imm, and was never proven against a live xPilot build.
+
+openfsd production hosts are expected to be ASCII DNS labels.
+
+### PE identity / upgrade safety (Verify)
+
+| Live PE | Bak | Manifest | Result |
+|---------|-----|----------|--------|
+| SHA-1 = stock | any | any | **Accept** (first-time / post-Revert stock) |
+| SHA-1 ≠ stock | missing or not stock | — | **Refuse** unknown hash |
+| SHA-1 ≠ stock | stock | missing | **Refuse** (leftover bak after upgrade) |
+| SHA-1 ≠ stock | stock | status `reverted` / `failed` | **Refuse** (leftover bak after Revert) |
+| SHA-1 ≠ stock | stock | `applied` or `in_progress` + ProfileID match + **live size == bak size** | **Accept** (re-apply / mid-Apply HealthCheck) |
+
+In-place `padded_string` / `raw_overwrite` never change PE length, so size mismatch with bak means the live binary was replaced. `size_bytes` / SHA-256 remain unknown until a maintainer re-hashes a user-owned install; bak-size equality covers the upgrade case without inventing numbers.
+
 Example prior-art URLs (length reference only):
 
 - `https://yourfsdserver.com/api/v1/data/status.json` → length `49`
@@ -97,12 +118,13 @@ Example prior-art URLs (length reference only):
 
 ## Honesty / known gaps
 
-- [ ] Re-hash a maintainer-owned 3.0.1 install; add SHA-256 + `size_bytes` when confirmed.
+- [ ] Re-hash a maintainer-owned 3.0.1 install; add SHA-256 + `size_bytes` when confirmed (adapter already enforces live size == bak size on re-apply).
 - [ ] Confirm live connect path after status.json + fsd-jwt retarget (server list fields xPilot expects).
 - [ ] Inventory AFV / voice base URL sites in the same PE (and companion DLLs if any).
-- [ ] Confirm single-byte length immediates for non-ASCII hosts (openfsd URLs are ASCII).
+- [x] Non-ASCII length imm: **blocked at Plan** (ASCII-only contract); prior art unproven for non-ASCII.
 - [ ] Antivirus / code-signing interaction when rewriting signed `xPilot.exe`.
 - [ ] Newer xPilot versions need **new** version-pinned profiles — do not reuse 3.0.1 offsets.
+- [x] Verify bak short-circuit tightened: require applied manifest + bak stock + size parity (not bak alone).
 
 ## Legal / product constraints
 
