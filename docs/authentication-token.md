@@ -13,6 +13,29 @@ openfsd accepts either a local JWT (private network) or a configured auth path d
 POST https://auth.vatsim.net/api/fsd-jwt
 ```
 
+### Endpoints (openfsd)
+
+openfsd exposes the same VATSIM-shaped request/response as public auth.
+All of the following bind the FSD JWT handler **directly** (no HTTP redirect):
+
+| Route | Role | max_host (in-place JWT `#US`, budget 35) |
+|-------|------|------------------------------------------:|
+| `POST /j` | Ultra-short alias for Client Setup PE patch | **25** |
+| `POST /api/fsd-jwt` | Readable short alias | **15** |
+| `POST /api/v1/fsd-jwt` | Canonical | **12** |
+
+`max_host` is characters available for the hostname in
+`https://{host}{path}` when the full URL must fit a 35-byte `#US` slot
+(stock VATSIM URL length). Prefer `POST /j` when private FQDNs exceed the
+canonical budget.
+
+**Do not use a 302/307 redirect surface for JWT POST.** Many HTTP clients
+do not re-POST the body after a redirect. Short paths must invoke the
+handler in-process.
+
+There is **no** `POST /fsd-jwt` root alias (avoids clash with static/frontend
+routing). Use `/j` or `/api/fsd-jwt` instead.
+
 ##### Request body
 
 ```json
