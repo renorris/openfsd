@@ -181,6 +181,7 @@ func Format(cfg *Config) ([]byte, error) {
 		NetworkLogin:     loginEnc,
 		NetworkPassword:  passEnc,
 	}
+	// xml.MarshalIndent only fails for unsupported types; xmlRoot is fixed.
 	body, err := xml.MarshalIndent(root, "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("vpilotconfig: marshal: %w", err)

@@ -98,15 +98,15 @@ fi
 echo "==> Hygiene: no PE binaries / *.exe / *.dll in git"
 
 # Fail if .research/ is somehow tracked (gitignored local RE extracts).
-research_tracked="$(git ls-files '.research' '.research/*' 2>/dev/null || true)"
-if [[ -n "$research_tracked" ]]; then
-  echo "    FAIL: .research/ must not be tracked (gitignored RE extracts only):"
-  printf '    %s\n' $research_tracked
+research_hit=0
+while IFS= read -r -d '' f; do
+  echo "    FAIL: .research/ must not be tracked (gitignored RE extracts only): $f"
+  research_hit=1
   failed=1
-fi
+done < <(git ls-files -z -- '.research' '.research/*' 2>/dev/null || true)
 
 pe_hit=0
-while IFS= read -r f; do
+while IFS= read -r -d '' f; do
   [[ -z "$f" || ! -f "$f" ]] && continue
   base="$(basename "$f")"
   # Extension check (case-insensitive).
@@ -118,17 +118,23 @@ while IFS= read -r f; do
       continue
       ;;
   esac
+  # Skip known text-only extensions before PE magic read (speed; legal posture
+  # still catches *.exe/*.dll above and MZ on remaining paths).
+  case "${base}" in
+    *.go|*.md|*.txt|*.yml|*.yaml|*.json|*.xml|*.html|*.css|*.js|*.ts|*.sh|*.mod|*.sum|*.toml|*.csv|*.svg|*.gitignore|*.editorconfig|Makefile|Dockerfile*|LICENSE*|NOTICE*|*.proto|*.rhai)
+      continue
+      ;;
+  esac
   # PE magic "MZ" at start of file (Windows PE / DOS stub).
-  # Skip empty files and non-regular paths already filtered.
   magic="$(dd if="$f" bs=2 count=1 2>/dev/null | LC_ALL=C od -An -tx1 | tr -d ' \n')"
   if [[ "$magic" == "4d5a" ]]; then
     echo "    FAIL: PE magic MZ at start of tracked file: $f"
     pe_hit=1
     failed=1
   fi
-done < <(git ls-files -z 2>/dev/null | tr '\0' '\n')
+done < <(git ls-files -z 2>/dev/null || true)
 
-if [[ "$pe_hit" -eq 0 && -z "$research_tracked" ]]; then
+if [[ "$pe_hit" -eq 0 && "$research_hit" -eq 0 ]]; then
   echo "    OK"
 fi
 

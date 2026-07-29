@@ -64,22 +64,43 @@ func TestRoundTripNonASCII(t *testing.T) {
 }
 
 func TestTerminalByte(t *testing.T) {
-	// All ASCII → terminal 0x00.
-	body := EncodeBody("hello")
-	if body[len(body)-1] != 0x00 {
-		t.Fatalf("ASCII terminal: got 0x%02x want 0x00", body[len(body)-1])
+	// ECMA-335 II.24.2.4: terminal is 1 iff any UTF-16 unit has top-byte bits
+	// set, or low byte in {0x01–0x08, 0x0E–0x1F, 0x27, 0x2D, 0x7F}.
+	cases := []struct {
+		s    string
+		term byte
+	}{
+		{"hello", 0x00}, // pure ASCII, no specials
+		{"", 0x00},
+		{"https://auth.vatsim.net/api/fsd-jwt", 0x01}, // hyphen 0x2D in fsd-jwt
+		{"https://voice1.vatsim.net", 0x00},           // no special low bytes
+		{"http://fsd.vatsim.net/", 0x00},
+		{"a-b", 0x01},  // hyphen 0x2D
+		{"a'b", 0x01},  // apostrophe 0x27
+		{"\x7f", 0x01}, // DEL
+		{"\x01", 0x01},
+		{"\x08", 0x01},
+		{"\x0e", 0x01},
+		{"\x1f", 0x01},
+		{"héllo", 0x00}, // U+00E9: high clear, low 0xE9 not special
+		{"café", 0x00},
+		{"\u0080", 0x00},     // high clear, low 0x80 not special
+		{"\u0100", 0x01},     // high byte set
+		{"\U0001F600", 0x01}, // surrogate pair → high bytes set
 	}
-
-	// High byte present → terminal 0x01.
-	body = EncodeBody("héllo")
-	if body[len(body)-1] != 0x01 {
-		t.Fatalf("non-ASCII terminal: got 0x%02x want 0x01", body[len(body)-1])
-	}
-
-	// Surrogate pair → terminal 0x01.
-	body = EncodeBody("\U0001F600")
-	if body[len(body)-1] != 0x01 {
-		t.Fatalf("surrogate terminal: got 0x%02x want 0x01", body[len(body)-1])
+	for _, tc := range cases {
+		body := EncodeBody(tc.s)
+		if body[len(body)-1] != tc.term {
+			t.Errorf("%q: terminal 0x%02x want 0x%02x", tc.s, body[len(body)-1], tc.term)
+		}
+		got, err := DecodeBody(body)
+		if err != nil {
+			t.Errorf("%q: DecodeBody: %v", tc.s, err)
+			continue
+		}
+		if got != tc.s {
+			t.Errorf("%q: DecodeBody got %q", tc.s, got)
+		}
 	}
 }
 
@@ -175,6 +196,30 @@ func TestEncodeBodyPadded(t *testing.T) {
 	_, err = EncodeBodyPadded(s, -1)
 	if !errors.Is(err, ErrInvalidBudget) {
 		t.Fatalf("want ErrInvalidBudget, got %v", err)
+	}
+
+	// Footgun: full padded buffer is NOT a valid #US body of budget length
+	// (terminal is early; zeros follow). DecodeBody on full pad must not
+	// round-trip to s. Callers must rewrite length prefix to unpadded body len.
+	if _, err := DecodeBody(padded); err == nil {
+		// Even length? budget 10 is even → DecodeBody rejects even length.
+		// Prefer asserting it does not equal s if it somehow decoded.
+		t.Fatal("DecodeBody(full padded) should fail (even length or bad terminal position)")
+	}
+	// Odd budget with residual zeros after terminal: body of "hi" is 5 bytes
+	// (h,0,i,0,term); pad to 7 → even? 7 is odd. term at index 4, then zeros.
+	// DecodeBody treats last byte as terminal (0) and chars include trailing
+	// zero units — not equal to "hi", or terminal mismatch if term was 0x01.
+	oddPad, err := EncodeBodyPadded("a-b", 9) // body has hyphen → term 0x01; body len 7
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(EncodeBody("a-b")) != 7 {
+		t.Fatalf("a-b body len %d", len(EncodeBody("a-b")))
+	}
+	// Full pad DecodeBody: last byte is 0 (padding), not the real terminal.
+	if got, err := DecodeBody(oddPad); err == nil && got == "a-b" {
+		t.Fatal("DecodeBody(full padded) must not equal original string")
 	}
 }
 
@@ -333,11 +378,15 @@ func TestDecodeErrors(t *testing.T) {
 	if _, err := DecodeBody([]byte{0x61, 0x00, 0x02}); !errors.Is(err, ErrInvalidBody) {
 		t.Fatalf("bad terminal: %v", err)
 	}
-	// Terminal mismatch: non-ASCII char with terminal 0.
-	// 'é' = U+00E9 → needs terminal 0x01.
-	bad := []byte{0xE9, 0x00, 0x00}
+	// Terminal mismatch: high-byte char (U+0100) requires terminal 0x01.
+	bad := []byte{0x00, 0x01, 0x00} // U+0100 LE + wrong terminal 0x00
 	if _, err := DecodeBody(bad); !errors.Is(err, ErrInvalidBody) {
 		t.Fatalf("terminal mismatch: %v", err)
+	}
+	// Hyphen requires terminal 0x01; wrong terminal 0x00.
+	badHyphen := []byte{0x2D, 0x00, 0x00}
+	if _, err := DecodeBody(badHyphen); !errors.Is(err, ErrInvalidBody) {
+		t.Fatalf("hyphen terminal mismatch: %v", err)
 	}
 }
 

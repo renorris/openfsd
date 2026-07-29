@@ -248,6 +248,23 @@ check_no_imports "internal/clientinject" "${MODULE}/internal/clientinject/..." \
   "${MODULE}/internal/auth" \
   "${MODULE}/internal/serviceapi"
 
+# cmd/openfsd-client — auxiliary Client Setup tool; never FSD/server internals.
+# Skips cleanly until the package lands (same pattern as other missing pkgs).
+# GUI deps (e.g. Fyne) are third-party and allowed; only hard-forbid server-side
+# packages listed below. Tighten to an allowlist when the cmd exists if needed.
+check_no_imports "cmd/openfsd-client" "${MODULE}/cmd/openfsd-client/..." \
+  "${MODULE}/internal/server" \
+  "${MODULE}/internal/web" \
+  "${MODULE}/internal/afv" \
+  "${MODULE}/internal/db" \
+  "${MODULE}/internal/postoffice" \
+  "${MODULE}/internal/session" \
+  "${MODULE}/internal/cluster" \
+  "${MODULE}/internal/sweatbox" \
+  "${MODULE}/internal/metar" \
+  "${MODULE}/internal/auth" \
+  "${MODULE}/internal/serviceapi"
+
 if [[ "$failed" -ne 0 ]]; then
   echo
   echo "Import graph check FAILED. See AGENTS.md §2."

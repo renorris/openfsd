@@ -8,6 +8,21 @@
 // The compressed length encodes the size of the following blob bytes (UTF-16
 // payload + terminal). Payload budgets for in-place PE overwrite count body
 // bytes only (UTF-16 + terminal), not the length prefix.
+//
+// # In-place PE overwrite contract
+//
+// When replacing a stock string whose body slot is budgetBytes long:
+//
+//  1. newBody := EncodeBody(s)  (must fit: FitsBudget(s, budgetBytes))
+//  2. Rewrite the compressed length prefix to len(newBody) (not budgetBytes).
+//  3. Write EncodeBodyPadded(s, budgetBytes) at the body file offset so any
+//     residual stock bytes past the real terminal are zeroed and cannot leak.
+//
+// EncodeBodyPadded is NOT a valid #US body of length budgetBytes when the
+// string is shorter than the budget: the terminal sits at len(EncodeBody(s))-1,
+// with zeros after it. Callers must always rewrite the length prefix to the
+// unpadded body length. DecodeBody on the full padded buffer will fail or
+// produce garbage — only DecodeBody(padded[:len(EncodeBody(s))]) is valid.
 package cilus
 
 import (
@@ -67,8 +82,10 @@ func DecodeUserString(blob []byte) (string, error) {
 }
 
 // EncodeBody encodes only the body (UTF-16LE + terminal), with no length
-// prefix. Used for in-place overwrite at body_file_offset when the length
-// prefix stays the same. Always succeeds for any Go string.
+// prefix. Always succeeds for any Go string.
+//
+// For in-place PE overwrite of a fixed stock slot, use EncodeBodyPadded and
+// rewrite the compressed length prefix to len(EncodeBody(s)); see package doc.
 func EncodeBody(s string) []byte {
 	// utf16.Encode handles surrogates for runes > 0xFFFF.
 	u16 := utf16.Encode([]rune(s))
@@ -132,9 +149,20 @@ func FitsBudget(s string, budgetBytes int) bool {
 	return BodyBudgetBytes(s) <= budgetBytes
 }
 
-// EncodeBodyPadded encodes s as a #US body and zero-fills to budgetBytes so
-// leftover stock characters cannot leak on in-place overwrite. Returns
-// ErrBudgetExceeded if the encoded body is longer than budgetBytes, and
+// EncodeBodyPadded encodes s as a #US body and zero-fills the remainder of a
+// stock slot of size budgetBytes so leftover stock characters cannot leak.
+//
+// Contract (normative for PE patchers):
+//
+//   - The returned buffer is budgetBytes long: EncodeBody(s) followed by zeros.
+//   - When len(EncodeBody(s)) < budgetBytes, the buffer is NOT a valid #US body
+//     of length budgetBytes (terminal is early; zeros are residual orphan bytes).
+//   - The caller MUST rewrite the compressed length prefix to len(EncodeBody(s)),
+//     then write this padded buffer at the body file offset.
+//   - When the new body length equals the stock budget, the length prefix may be
+//     left unchanged (same body size).
+//
+// Returns ErrBudgetExceeded if EncodeBody(s) is longer than budgetBytes, and
 // ErrInvalidBudget if budgetBytes is negative.
 func EncodeBodyPadded(s string, budgetBytes int) ([]byte, error) {
 	if budgetBytes < 0 {
@@ -153,12 +181,23 @@ func EncodeBodyPadded(s string, budgetBytes int) ([]byte, error) {
 	return out, nil
 }
 
-// terminalByte returns 0x00 if every UTF-16 code unit is ≤ 0x007F, else 0x01.
-// Per ECMA-335 II.24.2.4: "a final byte holding a 0 or 1; 1 if any UTF16
-// character has a high byte, or is a surrogate".
+// terminalByte returns the ECMA-335 II.24.2.4 #US terminal byte for u16.
+//
+// The final byte is 1 if and only if any UTF-16 code unit has any bit set in
+// its top byte, or its low byte is any of: 0x01–0x08, 0x0E–0x1F, 0x27, 0x2D,
+// 0x7F. Otherwise it is 0.
+//
+// Note: ASCII hyphen ('-', 0x2D) forces terminal 0x01. Stock VATSIM JWT URLs
+// containing "fsd-jwt" therefore end with 0x01, not 0x00. Conversely, many
+// BMP characters with a non-zero low byte outside the special set (e.g. 'é'
+// U+00E9) yield terminal 0x00 when the high byte is clear.
 func terminalByte(u16 []uint16) byte {
 	for _, c := range u16 {
-		if c > 0x007F {
+		lo := byte(c)
+		if c > 0x00FF ||
+			(lo >= 0x01 && lo <= 0x08) ||
+			(lo >= 0x0E && lo <= 0x1F) ||
+			lo == 0x27 || lo == 0x2D || lo == 0x7F {
 			return 0x01
 		}
 	}

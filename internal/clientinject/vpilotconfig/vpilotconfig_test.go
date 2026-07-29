@@ -6,6 +6,7 @@ import (
 	"crypto/des"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -23,9 +24,46 @@ func TestDeriveKey(t *testing.T) {
 	if !bytes.Equal(k1[16:24], k1[0:8]) {
 		t.Fatalf("key extension mismatch: %x vs %x", k1[16:24], k1[0:8])
 	}
+	// Fixed production golden (MD5 of ConfigGUID || first 8 of that MD5).
+	// MD5(5575ac09-f2de-4a1e-808b-e3398e17f8bf) = 9bf2bf12df6e3fb45c0db019e1982a10
+	wantHex := "9bf2bf12df6e3fb45c0db019e1982a109bf2bf12df6e3fb4"
+	gotHex := fmt.Sprintf("%x", k1)
+	if gotHex != wantHex {
+		t.Fatalf("DeriveKey hex:\n got %s\nwant %s", gotHex, wantHex)
+	}
 	// TripleDES accepts the key.
 	if _, err := des.NewTripleDESCipher(k1); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Production ciphertext goldens (3DES-ECB-PKCS7 + std Base64), cross-checked
+// against OpenSSL. Lock vPilot crypto so MD5/key/ECB/PKCS7 cannot soft-pass.
+func TestEncryptGoldens(t *testing.T) {
+	cases := []struct {
+		plain string
+		b64   string
+	}{
+		{"http://status.vatsim.net/", "pZ9u441bE4a2NCGgqMxKNvwAIy0qEA+AwXB8c3sV90c="},
+		{"", "QV3c4DoqB1Y="},
+		{"AUTOMATIC|fsd.connect.vatsim.net", "vN0yvTPHb8iCqOBSDgJOad3JH+XEldSS/AAjLSoQD4BBXdzgOioHVg=="},
+	}
+	for _, tc := range cases {
+		got, err := Encrypt(tc.plain)
+		if err != nil {
+			t.Fatalf("Encrypt(%q): %v", tc.plain, err)
+		}
+		if got != tc.b64 {
+			t.Fatalf("Encrypt(%q):\n got %s\nwant %s", tc.plain, got, tc.b64)
+		}
+		// Decrypt golden back to plaintext.
+		plain, err := Decrypt(tc.b64)
+		if err != nil {
+			t.Fatalf("Decrypt golden for %q: %v", tc.plain, err)
+		}
+		if plain != tc.plain {
+			t.Fatalf("Decrypt golden: got %q want %q", plain, tc.plain)
+		}
 	}
 }
 
