@@ -97,23 +97,24 @@ echo "    script=${ISS_WIN}"
 echo "    SourceBin=${BIN_WIN}"
 echo "    OutputDir=${DIST_WIN}"
 
-# Quote defines so paths with spaces are one argument; pass script last.
-ISCC_CMD=(
-  "${ISCC_WIN}"
-  "/DMyAppVersion=${VERSION}"
-  "/DMyAppVersionInfo=${VI_VERSION}"
-  "/DSourceBin=${BIN_WIN}"
-  "/DOutputDir=${DIST_WIN}"
-)
+# One /D per arg; script path last. Paths must be Windows-style (see above).
 if [[ -f "${ICO}" ]]; then
   ICO_WIN="$(winpath "${ICO}")"
-  ISCC_CMD+=("/DSetupIcon=${ICO_WIN}")
+  "${ISCC_WIN}" \
+    "/DMyAppVersion=${VERSION}" \
+    "/DMyAppVersionInfo=${VI_VERSION}" \
+    "/DSourceBin=${BIN_WIN}" \
+    "/DOutputDir=${DIST_WIN}" \
+    "/DSetupIcon=${ICO_WIN}" \
+    "${ISS_WIN}"
+else
+  "${ISCC_WIN}" \
+    "/DMyAppVersion=${VERSION}" \
+    "/DMyAppVersionInfo=${VI_VERSION}" \
+    "/DSourceBin=${BIN_WIN}" \
+    "/DOutputDir=${DIST_WIN}" \
+    "${ISS_WIN}"
 fi
-ISCC_CMD+=("${ISS_WIN}")
-
-# Run via cmd.exe so quoting matches Windows ISCC expectations under msys2.
-cmd.exe //C "$(printf '%q ' "${ISCC_CMD[@]}")" 2>/dev/null || \
-  "${ISCC_CMD[@]}"
 
 # Also ship portable zip of the bare binary for power users.
 PORTABLE="${DIST_ROOT}/${BIN_NAME}-${VERSION}-windows-${GOARCH}-portable.zip"
