@@ -6,8 +6,11 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/renorris/openfsd/internal/clientinject"
 	"github.com/renorris/openfsd/internal/clientinject/adapters"
@@ -23,6 +26,8 @@ const (
 	ExitRevertFailed  = 4
 	ExitClientRunning = 5
 	ExitPlanBlockers  = 6
+	// ExitClientProcess: client binary started but exited non-zero (ephemeral launch).
+	ExitClientProcess = 7
 )
 
 const usageText = `openfsd-client — openfsd Client Setup (GUI + headless CLI)
@@ -48,7 +53,9 @@ Shared flags for plan|apply|health|launch:
 Launch-only flags:
   --ephemeral             Phase 1 hybrid shadow PE: patch a temp PE copy, cwd=install
                           root (DLLs resolve from install); durable config rewrite
-                          remains default. Install PE stays stock.
+                          remains default (with .openfsd-bak; restored only if
+                          apply fails). Install PE stays stock. Nested DLL shadow
+                          preserves relpath under temp (Phase 1 typically PE-only).
 
 Readiness honesty:
   Default JWT path /api/v1/fsd-jwt allows max host 12 characters for in-place #US
@@ -66,6 +73,7 @@ Exit codes:
   4 revert failed
   5 client running / file locked
   6 plan blockers
+  7 client process exited non-zero (ephemeral launch only)
 `
 
 // Run parses args and executes a subcommand. stdout/stderr are injectable for tests.
@@ -316,7 +324,12 @@ func cmdLaunch(args []string, stdout, stderr io.Writer) int {
 		}
 
 		// Phase 1 hybrid shadow PE launch (Appendix B).
-		plan, err := eng.Plan(context.Background(), install, ep)
+		// Cancel on SIGINT/SIGTERM so the child is killed (CommandContext) and
+		// temp shadow dirs are still cleaned (best-effort; SIGKILL can orphan).
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+
+		plan, err := eng.Plan(ctx, install, ep)
 		if err != nil {
 			return mapPlanErr(err, stderr)
 		}
@@ -330,19 +343,40 @@ func cmdLaunch(args []string, stdout, stderr io.Writer) int {
 		if fromPlan := clientinject.LaunchArgsFromPlan(plan); len(fromPlan) > 0 {
 			launchArgs = fromPlan
 		}
-		fmt.Fprintf(stdout, "ephemeral shadow launch: cwd=%s pe=temp-copy durable_config=true\n", install.RootDir)
+		fmt.Fprintf(stdout, "ephemeral shadow launch: cwd=%s pe=temp-copy durable_config=true (bak+restore on apply fail)\n", install.RootDir)
+		fmt.Fprintf(stdout, "note: successful launch leaves install config rewritten; install PE stays stock\n")
 		fmt.Fprintf(stdout, "launch args: %s\n", strings.Join(launchArgs, " "))
-		session, err := eng.LaunchShadow(context.Background(), plan, launchArgs, clientinject.ShadowLaunchConfig{})
+		session, err := eng.LaunchShadow(ctx, plan, launchArgs, clientinject.ShadowLaunchConfig{})
 		if err != nil {
-			fmt.Fprintf(stderr, "ephemeral launch: %v\n", err)
-			return ExitApplyFailed
+			return mapLaunchErr(err, stderr)
 		}
 		if session != nil {
-			fmt.Fprintf(stdout, "ephemeral launch finished (temp_kept=%v install_pe_stock_fp=%s)\n",
-				session.KeptTemp(), session.InstallPEFingerprint)
+			fmt.Fprintf(stdout, "ephemeral launch finished (temp_kept=%v exe=%s install_pe_stock_fp=%s)\n",
+				session.KeptTemp(), session.Exe, session.InstallPEFingerprint)
 		}
 		return ExitOK
 	})
+}
+
+func mapLaunchErr(err error, stderr io.Writer) int {
+	fmt.Fprintf(stderr, "ephemeral launch: %v\n", err)
+	if clientinject.IsProcessExit(err) {
+		return ExitClientProcess
+	}
+	if errors.Is(err, clientinject.ErrClientRunning) || strings.Contains(strings.ToLower(err.Error()), "running") || strings.Contains(strings.ToLower(err.Error()), "locked") {
+		return ExitClientRunning
+	}
+	if strings.Contains(err.Error(), "blockers") {
+		return ExitPlanBlockers
+	}
+	if strings.Contains(err.Error(), "sha1") || strings.Contains(err.Error(), "hash") {
+		return ExitHashMismatch
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		// Canceled after prepare: treat as apply/launch aborted (not client exit).
+		return ExitApplyFailed
+	}
+	return ExitApplyFailed
 }
 
 func withInstallPlan(ef *endpointFlags, stdout, stderr io.Writer, fn func(*clientinject.Engine, clientinject.Install, clientinject.Endpoints) int) int {

@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/renorris/openfsd/internal/clientinject"
 )
 
 func TestRun_HelpNoArgs(t *testing.T) {
@@ -72,6 +74,17 @@ func TestRun_HelpMentionsEphemeral(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "--ephemeral") {
 		t.Fatalf("help missing --ephemeral: %s", out.String())
+	}
+	if !strings.Contains(out.String(), "7 client process") {
+		t.Fatalf("help missing exit 7: %s", out.String())
+	}
+}
+
+func TestMapLaunchErr_ProcessExit(t *testing.T) {
+	var errBuf bytes.Buffer
+	code := mapLaunchErr(&clientinject.ProcessExitError{Name: "vPilot.exe", ExitCode: 2}, &errBuf)
+	if code != ExitClientProcess {
+		t.Fatalf("code=%d want %d err=%s", code, ExitClientProcess, errBuf.String())
 	}
 }
 
