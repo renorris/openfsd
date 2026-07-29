@@ -71,10 +71,12 @@ if [[ ! -f "${ICO}" ]] && [[ -f "${PKG_ROOT}/assets/icon-512.png" ]] && command 
   magick "${PKG_ROOT}/assets/icon-512.png" -define icon:auto-resize=256,128,64,48,32,16 "${ICO}"
 fi
 
-# ISCC is a native Windows tool. Use mixed paths (D:/a/...) not backslashes:
-# bash double-quotes turn \a in D:\a\... into an escape, which corrupts /D args
-# and ISCC reports "more than one script filename".
-winpath() {
+# ISCC is a native Windows tool. Calling it from MSYS2 bash with multiple
+# /Dname=value args is fragile (path conversion + quoting → "more than one
+# script filename"). Bake defines into a one-shot wrapper .iss and invoke
+# ISCC with only that single script path via PowerShell (no MSYS argv munging).
+winpath_m() {
+  # Mixed path: D:/a/... (safe in .iss double-quoted strings)
   if command -v cygpath >/dev/null 2>&1; then
     cygpath -m "$1"
   elif command -v cygpath.exe >/dev/null 2>&1; then
@@ -84,10 +86,20 @@ winpath() {
   fi
 }
 
-BIN_WIN="$(winpath "${BIN_PATH}")"
-DIST_WIN="$(winpath "${DIST_ROOT}")"
-ISS_WIN="$(winpath "${ISS}")"
-# Keep ISCC as the env path; call through cmd if needed.
+winpath_w() {
+  # Windows path: D:\a\... (for PowerShell literal paths)
+  if command -v cygpath >/dev/null 2>&1; then
+    cygpath -w "$1"
+  elif command -v cygpath.exe >/dev/null 2>&1; then
+    cygpath.exe -w "$1"
+  else
+    winpath_m "$1" | sed 's|/|\\|g'
+  fi
+}
+
+BIN_WIN="$(winpath_m "${BIN_PATH}")"
+DIST_WIN="$(winpath_m "${DIST_ROOT}")"
+ISS_WIN="$(winpath_m "${ISS}")"
 ISCC_EXE="${ISCC}"
 
 echo "==> Inno Setup ${VERSION} (VersionInfo ${VI_VERSION})"
@@ -96,22 +108,42 @@ echo "    script=${ISS_WIN}"
 echo "    SourceBin=${BIN_WIN}"
 echo "    OutputDir=${DIST_WIN}"
 
-# Build a response-style arg list without bash backslash escapes.
-# Prefer cmd.exe /c with a carefully quoted line (spaces in Program Files).
 run_iscc() {
-  local icon_def=""
-  if [[ -f "${ICO}" ]]; then
-    icon_def="/DSetupIcon=$(winpath "${ICO}")"
+  local wrap wrap_m iscc_w wrap_w
+  # Same directory as openfsd-client.iss so relative paths (LicenseFile, etc.) resolve.
+  wrap="${SCRIPT_DIR}/_iscc_wrapper.iss"
+  # iss double-quoted strings: escape " and \ only
+  iss_escape() {
+    printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+  }
+  {
+    printf '#define MyAppVersion "%s"\n' "$(iss_escape "${VERSION}")"
+    printf '#define MyAppVersionInfo "%s"\n' "$(iss_escape "${VI_VERSION}")"
+    printf '#define SourceBin "%s"\n' "$(iss_escape "${BIN_WIN}")"
+    printf '#define OutputDir "%s"\n' "$(iss_escape "${DIST_WIN}")"
+    if [[ -f "${ICO}" ]]; then
+      printf '#define SetupIcon "%s"\n' "$(iss_escape "$(winpath_m "${ICO}")")"
+    fi
+    # Full copy (not #include): relative paths like LicenseFile stay rooted at SCRIPT_DIR.
+    cat "${ISS}"
+  } >"${wrap}"
+  # shellcheck disable=SC2064
+  trap 'rm -f "${wrap}"' RETURN
+
+  wrap_m="$(winpath_m "${wrap}")"
+  echo "    wrapper=${wrap_m}"
+
+  iscc_w="$(winpath_w "${ISCC_EXE}")"
+  wrap_w="$(winpath_w "${wrap}")"
+
+  if command -v powershell.exe >/dev/null 2>&1; then
+    # Single-quoted PowerShell literals — no expansion, no MSYS /D conversion.
+    powershell.exe -NoProfile -Command \
+      "& '$(printf '%s' "${iscc_w}" | sed "s/'/''/g")' '$(printf '%s' "${wrap_w}" | sed "s/'/''/g")'"
+  else
+    # Fallback: still only one script arg (no /D flags).
+    MSYS2_ARG_CONV_EXCL='*' "${ISCC_EXE}" "${wrap_m}"
   fi
-  # MSYS2_ARG_CONV_EXCL prevents msys from rewriting /D* as paths.
-  MSYS2_ARG_CONV_EXCL='/D*' \
-    "${ISCC_EXE}" \
-    "/DMyAppVersion=${VERSION}" \
-    "/DMyAppVersionInfo=${VI_VERSION}" \
-    "/DSourceBin=${BIN_WIN}" \
-    "/DOutputDir=${DIST_WIN}" \
-    ${icon_def:+"${icon_def}"} \
-    "${ISS_WIN}"
 }
 
 run_iscc
