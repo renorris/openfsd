@@ -91,9 +91,51 @@ else
   fi
 fi
 
+# ---------------------------------------------------------------------------
+# No PE binaries / *.exe / *.dll in git (client injector legal posture).
+# Allowlist: none today. .research/ is gitignored and must not be tracked.
+# ---------------------------------------------------------------------------
+echo "==> Hygiene: no PE binaries / *.exe / *.dll in git"
+
+# Fail if .research/ is somehow tracked (gitignored local RE extracts).
+research_tracked="$(git ls-files '.research' '.research/*' 2>/dev/null || true)"
+if [[ -n "$research_tracked" ]]; then
+  echo "    FAIL: .research/ must not be tracked (gitignored RE extracts only):"
+  printf '    %s\n' $research_tracked
+  failed=1
+fi
+
+pe_hit=0
+while IFS= read -r f; do
+  [[ -z "$f" || ! -f "$f" ]] && continue
+  base="$(basename "$f")"
+  # Extension check (case-insensitive).
+  case "${base}" in
+    *.exe|*.EXE|*.dll|*.DLL|*.exe.*|*.dll.*)
+      echo "    FAIL: tracked binary extension: $f"
+      pe_hit=1
+      failed=1
+      continue
+      ;;
+  esac
+  # PE magic "MZ" at start of file (Windows PE / DOS stub).
+  # Skip empty files and non-regular paths already filtered.
+  magic="$(dd if="$f" bs=2 count=1 2>/dev/null | LC_ALL=C od -An -tx1 | tr -d ' \n')"
+  if [[ "$magic" == "4d5a" ]]; then
+    echo "    FAIL: PE magic MZ at start of tracked file: $f"
+    pe_hit=1
+    failed=1
+  fi
+done < <(git ls-files -z 2>/dev/null | tr '\0' '\n')
+
+if [[ "$pe_hit" -eq 0 && -z "$research_tracked" ]]; then
+  echo "    OK"
+fi
+
 if [[ "$failed" -ne 0 ]]; then
   echo
-  echo "Hygiene check FAILED. See AGENTS.md (no panic/reflect/fmt.Print/log.Print in library code)."
+  echo "Hygiene check FAILED. See AGENTS.md (no panic/reflect/fmt.Print/log.Print in library code;"
+  echo "no PE/*.exe/*.dll commits; no tracked .research/)."
   echo "Note: matches in string literals can be false positives; restructure if needed."
   exit 1
 fi

@@ -227,6 +227,27 @@ check_no_imports "internal/afv" "${MODULE}/internal/afv/..." \
   "${MODULE}/internal/sweatbox" \
   "${MODULE}/internal/metar"
 
+# internal/clientinject/cilus — pure CLR #US; stdlib only
+check_stdlib_only "internal/clientinject/cilus" "${MODULE}/internal/clientinject/cilus/..."
+
+# internal/clientinject/vpilotconfig — pure vPilot 3DES config; stdlib only
+check_stdlib_only "internal/clientinject/vpilotconfig" "${MODULE}/internal/clientinject/vpilotconfig/..."
+
+# internal/clientinject (engine + subpackages) — must not import server/web/afv/…
+# Skips cleanly until the parent package tree has Go packages.
+check_no_imports "internal/clientinject" "${MODULE}/internal/clientinject/..." \
+  "${MODULE}/internal/server" \
+  "${MODULE}/internal/web" \
+  "${MODULE}/internal/afv" \
+  "${MODULE}/internal/db" \
+  "${MODULE}/internal/postoffice" \
+  "${MODULE}/internal/session" \
+  "${MODULE}/internal/cluster" \
+  "${MODULE}/internal/sweatbox" \
+  "${MODULE}/internal/metar" \
+  "${MODULE}/internal/auth" \
+  "${MODULE}/internal/serviceapi"
+
 if [[ "$failed" -ne 0 ]]; then
   echo
   echo "Import graph check FAILED. See AGENTS.md §2."
