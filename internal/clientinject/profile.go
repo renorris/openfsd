@@ -20,26 +20,35 @@ const RequiredSchemaVersion = 2
 
 // Profile is a loaded schema_version 2 document (fingerprint + mutations).
 type Profile struct {
-	SchemaVersion          int                   `yaml:"schema_version"`
-	ClientID               string                `yaml:"client_id"`
-	DisplayName            string                `yaml:"display_name"`
-	Vendor                 string                `yaml:"vendor"`
-	LicenseNote            string                `yaml:"license_note"`
-	ProfileVersion         string                `yaml:"profile_version"`
-	SupportedClientVersion string                `yaml:"supported_client_version"`
-	Released               string                `yaml:"released"`
-	DownloadPage           string                `yaml:"download_page"`
-	Installer              *InstallerSpec        `yaml:"installer"`
-	PrimaryBinary          PrimaryBinarySpec     `yaml:"primary_binary"`
-	ConfigFiles            []ConfigFileSpec      `yaml:"config_files"`
-	RelatedBinaries        []string              `yaml:"related_binaries"`
-	CLR                    *CLRSpec              `yaml:"clr"`
-	Strings                map[string]StringSpec `yaml:"strings"`
-	USFreeSlots            []USFreeSlot          `yaml:"us_free_slots"`
-	Mutations              []ProfileMutationSpec `yaml:"mutations"`
-	Launch                 LaunchSpec            `yaml:"launch"`
+	SchemaVersion          int               `yaml:"schema_version"`
+	ClientID               string            `yaml:"client_id"`
+	DisplayName            string            `yaml:"display_name"`
+	Vendor                 string            `yaml:"vendor"`
+	LicenseNote            string            `yaml:"license_note"`
+	ProfileVersion         string            `yaml:"profile_version"`
+	SupportedClientVersion string            `yaml:"supported_client_version"`
+	Released               string            `yaml:"released"`
+	DownloadPage           string            `yaml:"download_page"`
+	Installer              *InstallerSpec    `yaml:"installer"`
+	PrimaryBinary          PrimaryBinarySpec `yaml:"primary_binary"`
+	ConfigFiles            []ConfigFileSpec  `yaml:"config_files"`
+	RelatedBinaries        []string          `yaml:"related_binaries"`
+	// PESections documents native PE section maps (xPilot-class VA→file conversion).
+	PESections  []PESectionSpec       `yaml:"pe_sections"`
+	CLR         *CLRSpec              `yaml:"clr"`
+	Strings     map[string]StringSpec `yaml:"strings"`
+	USFreeSlots []USFreeSlot          `yaml:"us_free_slots"`
+	Mutations   []ProfileMutationSpec `yaml:"mutations"`
+	Launch      LaunchSpec            `yaml:"launch"`
 	// ProfileID is the stem of the YAML file (e.g. "vpilot-3.12.1"), set by loader.
 	ProfileID string `yaml:"-"`
+}
+
+// PESectionSpec is a PE section raw/virtual base for VA→file offset conversion.
+type PESectionSpec struct {
+	Name         string        `yaml:"name"`
+	RawOffset    FlexibleInt64 `yaml:"raw_offset"`
+	VirtualStart FlexibleInt64 `yaml:"virtual_start"`
 }
 
 // InstallerSpec describes the upstream installer (metadata only).
@@ -115,8 +124,31 @@ type ProfileMutationSpec struct {
 	FileOffset  *FlexibleInt64 `yaml:"file_offset"`
 	NewBytes    []byte         `yaml:"new_bytes"`
 	OnlyIf      string         `yaml:"only_if"`
+	// AvailableBytes is the padded-string slot size (padded_string kind).
+	AvailableBytes *FlexibleInt64 `yaml:"available_bytes"`
+	// Encoding is "utf8" / "ascii" / "utf16le" for padded_string.
+	Encoding string `yaml:"encoding"`
+	// EndpointKey selects a planned URL: "status_json", "fsd_jwt", "status", "afv_base", …
+	EndpointKey string `yaml:"endpoint_key"`
+	// LengthOf, when set on raw_overwrite, writes a single-byte length of that endpoint URL.
+	LengthOf string `yaml:"length_of"`
 	// Fields is free-form for config_rewrite / vpilot_config.
 	Fields map[string]any `yaml:"fields"`
+}
+
+// FileOffsetOf returns the VA→file conversion for a section-relative virtual address,
+// or (-1, false) if the section is unknown.
+func (p *Profile) FileOffsetOf(sectionName string, virtualAddr int64) (int64, bool) {
+	if p == nil {
+		return -1, false
+	}
+	for _, sec := range p.PESections {
+		if sec.Name != sectionName {
+			continue
+		}
+		return sec.RawOffset.Int64() + (virtualAddr - sec.VirtualStart.Int64()), true
+	}
+	return -1, false
 }
 
 // LaunchSpec holds default launch flag templates.

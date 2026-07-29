@@ -15,6 +15,7 @@ import (
 	"github.com/renorris/openfsd/internal/clientinject"
 	"github.com/renorris/openfsd/internal/clientinject/adapters"
 	"github.com/renorris/openfsd/internal/clientinject/adapters/vpilot"
+	"github.com/renorris/openfsd/internal/clientinject/adapters/xpilot"
 )
 
 // Exit codes (design: docs/design/client-runtime-injector.md).
@@ -35,7 +36,7 @@ const usageText = `openfsd-client — openfsd Client Setup (GUI + headless CLI)
 Usage:
   openfsd-client                          Launch GUI when a display is available; else this help
   openfsd-client list-profiles
-  openfsd-client detect --client vpilot
+  openfsd-client detect --client vpilot|xpilot
   openfsd-client plan|apply|revert|health|launch [flags]
 
 Shared flags for plan|apply|health|launch:
@@ -44,10 +45,10 @@ Shared flags for plan|apply|health|launch:
   --fsd-port PORT         FSD TCP port (default 6809, omitted from server list when default)
   --fsd-server-name NAME  CachedServers label (default OPENFSD)
   --afv-base URL          AFV REST public base (optional)
-  --force-disable-afv     Always launch with -novoice
-  --prefer-short-jwt      Prefer short JWT paths (/j, /fsd-jwt, …) for #US budget
-  --install DIR           vPilot install directory (required when not auto-detected)
-  --client ID             Client adapter id (default vpilot)
+  --force-disable-afv     Always launch with -novoice (vPilot)
+  --prefer-short-jwt      Prefer short JWT paths (/j, /fsd-jwt, …) for #US budget (vPilot)
+  --install DIR           Client install directory (required when not auto-detected)
+  --client ID             Client adapter id (vpilot|xpilot; default vpilot)
   --profiles-dir DIR      Optional override profile directory (YAML)
 
 Launch-only flags:
@@ -58,12 +59,14 @@ Launch-only flags:
                           preserves relpath under temp (Phase 1 typically PE-only).
 
 Readiness honesty:
-  Default JWT path /api/v1/fsd-jwt allows max host 12 characters for in-place #US
-  patch (budget 35 runes). Use --prefer-short-jwt for /j (max host 25) if the
-  server has fixed short JWT routes (direct POST /j, not a 302 redirect).
+  vPilot: default JWT path /api/v1/fsd-jwt allows max host 12 characters for
+  in-place #US patch (budget 35 runes). Use --prefer-short-jwt for /j (max host
+  25) if the server has fixed short JWT routes (direct POST /j, not a 302).
   Long hostnames without short paths or free-slot remap are plan blockers.
   AFV PE ret-disable is out of scope until research gate R2; over-budget AFV
   falls back to -novoice.
+  xPilot 3.0.1: PE padded_string + LEA fixups for status.json + fsd-jwt; large
+  slot budgets; AFV not retargeted; unknown PE hashes refused.
 
 Exit codes:
   0 ok
@@ -410,11 +413,23 @@ func buildInstall(eng *clientinject.Engine, clientID, root string) clientinject.
 	switch clientID {
 	case "vpilot":
 		install = vpilot.InstallFromDir(root)
+	case "xpilot":
+		install = xpilot.InstallFromDir(root)
 	default:
+		// Fall back to profile primary binary name when available.
+		primary := "client.exe"
+		if eng != nil && eng.Profiles != nil {
+			for _, p := range eng.Profiles.ForClient(clientID) {
+				if p.PrimaryBinary.RelativePath != "" {
+					primary = p.PrimaryBinary.RelativePath
+					break
+				}
+			}
+		}
 		install = clientinject.Install{
 			ClientID:  clientID,
 			RootDir:   root,
-			PrimaryPE: filepath.Join(root, "vPilot.exe"),
+			PrimaryPE: filepath.Join(root, primary),
 		}
 	}
 	seedInstallFromManifest(eng, &install)

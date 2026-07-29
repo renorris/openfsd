@@ -1,0 +1,116 @@
+# openfsd client profile — schema v2. Do NOT ship xPilot binaries.
+# Offsets from docs/client-injector/research/xpilot.md (prior-art VA→file conversion).
+# Version-pinned by primary PE SHA-1; refuse unknown hashes.
+
+schema_version: 2
+client_id: xpilot
+display_name: xPilot
+vendor: Justin Shannon / xPilot project
+license_note: Proprietary; not redistributable by openfsd
+profile_version: "2"
+supported_client_version: "3.0.1"
+download_page: https://github.com/xpilot-project/xpilot/releases
+
+primary_binary:
+  relative_path: xPilot.exe
+  default_install_globs:
+    windows:
+      - "%ProgramFiles%\\xPilot\\xPilot.exe"
+      - "%ProgramFiles(x86)%\\xPilot\\xPilot.exe"
+  sha1: 1ae61e1d4a624751124a49cd992c90f948c31d37
+  pe:
+    clr: false
+    architecture: x86_64
+
+# No client-local config rewrite in the 3.0.1 prior-art path (status JSON feed only).
+config_files: []
+
+# PE section map from prior art (documentation + VA→file helper tests).
+pe_sections:
+  - name: .text
+    raw_offset: 0x400
+    virtual_start: 0x140001000
+  - name: .idata
+    raw_offset: 0x01A5A200
+    virtual_start: 0x141A5B000
+  - name: .data
+    raw_offset: 0x027F9000
+    virtual_start: 0x1427FA000
+
+# Logical string budgets (padded .idata slots). Stock bodies not required for plan.
+strings:
+  status_json:
+    stock: ""
+    payload_budget_bytes: 0x3B5
+    template: "{{.StatusJSONURL}}"
+  fsd_jwt:
+    stock: ""
+    payload_budget_bytes: 0x3B4
+    template: "{{.JWTURL}}"
+
+us_free_slots: []
+
+mutations:
+  # --- Relocated string slots (padded) ---
+  - id: write_status_json
+    kind: padded_string
+    description: Write openfsd status.json URL into .idata free slot (UTF-8)
+    file_offset: 0x1AAE7AE
+    available_bytes: 0x3B5
+    encoding: utf8
+    endpoint_key: status_json
+
+  - id: write_fsd_jwt
+    kind: padded_string
+    description: Write openfsd fsd-jwt URL into .idata free slot (UTF-16LE)
+    file_offset: 0x1A9582C
+    available_bytes: 0x3B4
+    encoding: utf16le
+    endpoint_key: fsd_jwt
+
+  # --- LEA RIP fixups (content-independent; point at relocated slots) ---
+  - id: patch_status_lea
+    kind: raw_overwrite
+    description: Overwrite status.json LEA RIP displacement
+    file_offset: 0x2810E
+    new_bytes: [0x9C, 0x68, 0xA8, 0x01]
+
+  - id: patch_fsd_jwt_lea_1
+    kind: raw_overwrite
+    description: Overwrite fsd-jwt LEA RIP (site 1)
+    file_offset: 0x34FFE
+    new_bytes: [0x2A, 0x0A, 0xA6, 0x01]
+
+  - id: patch_fsd_jwt_lea_2
+    kind: raw_overwrite
+    description: Overwrite fsd-jwt LEA RIP (site 2)
+    file_offset: 0x6B208
+    new_bytes: [0x20, 0xA8, 0xA2, 0x01]
+
+  # --- Dynamic single-byte length immediates (Apply fills from endpoint URL len) ---
+  - id: patch_status_len
+    kind: raw_overwrite
+    description: status.json URL length immediate (1 byte = rune/byte count)
+    file_offset: 0x28107
+    length_of: status_json
+
+  - id: patch_fsd_jwt_len_1
+    kind: raw_overwrite
+    description: fsd-jwt URL length immediate site 1
+    file_offset: 0x3500A
+    length_of: fsd_jwt
+
+  - id: patch_fsd_jwt_len_2
+    kind: raw_overwrite
+    description: fsd-jwt URL length immediate site 2
+    file_offset: 0x6B214
+    length_of: fsd_jwt
+
+  # --- Neutralise stock FSD auto host ---
+  - id: break_fsd_vatsim_net
+    kind: raw_overwrite
+    description: Overwrite fsd.vatsim.net residual with "foo"
+    file_offset: 0x1CBE440
+    new_bytes: [0x66, 0x6F, 0x6F]
+
+launch: {}

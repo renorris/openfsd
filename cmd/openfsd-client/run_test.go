@@ -39,6 +39,9 @@ func TestRun_ListProfiles(t *testing.T) {
 	if !strings.Contains(out.String(), "vpilot-3.12.1") {
 		t.Fatalf("expected embedded profile: %s", out.String())
 	}
+	if !strings.Contains(out.String(), "xpilot-3.0.1") {
+		t.Fatalf("expected xpilot profile: %s", out.String())
+	}
 }
 
 func TestRun_PlanUsageMissingInstall(t *testing.T) {
