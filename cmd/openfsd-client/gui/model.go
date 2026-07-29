@@ -129,8 +129,8 @@ func IsPublicVATSIMHost(hostOrURL string) bool {
 	return ok
 }
 
-// PublicVATSIMWarning returns a non-empty warning when WebBaseURL points at a
-// known public VATSIM host.
+// PublicVATSIMWarning returns a non-empty warning when WebBaseURL's host is in
+// PublicVATSIMHosts. Only WebBaseURL is gated (not FSDHost / AFVBaseURL).
 func PublicVATSIMWarning(webBase string) string {
 	host := WebBaseHost(webBase)
 	if host == "" || !IsPublicVATSIMHost(host) {

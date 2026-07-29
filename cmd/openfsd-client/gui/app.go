@@ -33,10 +33,15 @@ func Run(engine *clientinject.Engine) error {
 
 	ctrl := newController(engine, a, w)
 	w.SetContent(ctrl.buildUI())
+	// Stop debounced plan timer and ignore late fyne.Do updates after close.
+	w.SetOnClosed(func() {
+		ctrl.stop()
+	})
 	ctrl.loadSettingsAndRefresh()
 
 	// Prefer showing; on headless Fyne may panic or fail — caller can recover.
 	w.ShowAndRun()
+	ctrl.stop()
 	return nil
 }
 

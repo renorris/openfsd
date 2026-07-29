@@ -8,8 +8,9 @@ const LegalApplyBanner = "For private openfsd networks you are authorized to use
 	"Do not use this tool to reconfigure clients for the public VATSIM network."
 
 // PublicVATSIMHosts is the known public VATSIM host set used for soft warnings
-// when WebBaseURL (or related endpoints) point at production VATSIM services.
-// Matching does not hard-block Apply; the user may override with "I understand".
+// when WebBaseURL's host matches (design: gate on Web base only; FSD/AFV hosts
+// are not checked here). Matching does not hard-block Apply; the user may
+// override with "I understand" for the current session only.
 var PublicVATSIMHosts = map[string]struct{}{
 	"auth.vatsim.net":        {},
 	"status.vatsim.net":      {},

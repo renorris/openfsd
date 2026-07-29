@@ -23,13 +23,22 @@ import (
 
 // controller owns form widgets and wires them to the engine.
 // All layout is client-agnostic; per-client behavior flows from Adapter + Plan.
+//
+// Concurrency: c.mu protects form, closed, busy, planTimer, lastPlan, and
+// preflight. Widget mutations run only on the Fyne UI thread (callbacks or
+// fyne.Do). Heavy Plan/Apply/hash work runs on worker goroutines.
 type controller struct {
 	eng *clientinject.Engine
 	app fyne.App
 	win fyne.Window
 
-	form FormState
-	mu   sync.Mutex
+	mu        sync.Mutex
+	form      FormState
+	closed    bool
+	busy      bool // Apply/Revert/Launch in flight
+	planTimer *time.Timer
+	lastPlan  *clientinject.Plan
+	preflight error
 
 	slots       []ClientSlot
 	slotByLabel map[string]ClientSlot
@@ -61,11 +70,6 @@ type controller struct {
 	launchBtn *widget.Button
 
 	logEntry *widget.Entry
-
-	// debounce dry-plan
-	planTimer *time.Timer
-	lastPlan  *clientinject.Plan
-	preflight error
 }
 
 func newController(eng *clientinject.Engine, a fyne.App, w fyne.Window) *controller {
@@ -81,6 +85,38 @@ func newController(eng *clientinject.Engine, a fyne.App, w fyne.Window) *control
 		c.slotByLabel[SlotLabel(s)] = s
 	}
 	return c
+}
+
+// stop cancels debounced dry-plan work and marks the controller closed so late
+// fyne.Do callbacks skip widget updates after window teardown.
+func (c *controller) stop() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.closed = true
+	if c.planTimer != nil {
+		c.planTimer.Stop()
+		c.planTimer = nil
+	}
+}
+
+func (c *controller) isClosed() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.closed
+}
+
+// formCopy returns a snapshot of FormState under the form mutex.
+func (c *controller) formCopy() FormState {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.form
+}
+
+// updateForm mutates FormState under the form mutex (UI-thread writers).
+func (c *controller) updateForm(fn func(*FormState)) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	fn(&c.form)
 }
 
 func (c *controller) buildUI() fyne.CanvasObject {
@@ -103,18 +139,17 @@ func (c *controller) buildUI() fyne.CanvasObject {
 	c.clientSelect = widget.NewSelect(labels, func(sel string) {
 		slot, ok := c.slotByLabel[sel]
 		if !ok || !slot.Enabled {
-			// Revert to previous enabled selection.
 			c.syncClientSelectFromForm()
 			c.appendLog("Client %q is not available yet.", sel)
 			return
 		}
-		c.form.ClientID = slot.ID
+		c.updateForm(func(f *FormState) { f.ClientID = slot.ID })
 		c.schedulePlan()
 	})
 	if firstEnabled != "" {
 		c.clientSelect.SetSelected(firstEnabled)
 		if s, ok := c.slotByLabel[firstEnabled]; ok {
-			c.form.ClientID = s.ID
+			c.updateForm(func(f *FormState) { f.ClientID = s.ID })
 		}
 	}
 
@@ -122,7 +157,7 @@ func (c *controller) buildUI() fyne.CanvasObject {
 	c.installEntry = widget.NewEntry()
 	c.installEntry.SetPlaceHolder("Client install directory")
 	c.installEntry.OnChanged = func(s string) {
-		c.form.InstallPath = s
+		c.updateForm(func(f *FormState) { f.InstallPath = s })
 		c.schedulePlan()
 	}
 	c.detectBtn = widget.NewButton("Detect", func() {
@@ -151,14 +186,14 @@ func (c *controller) buildUI() fyne.CanvasObject {
 	c.webBaseEntry = widget.NewEntry()
 	c.webBaseEntry.SetPlaceHolder("https://fsd.example.com")
 	c.webBaseEntry.OnChanged = func(s string) {
-		c.form.WebBaseURL = s
+		c.updateForm(func(f *FormState) { f.WebBaseURL = s })
 		c.updatePublicVATSIMHint()
 		c.schedulePlan()
 	}
 	c.fsdHostEntry = widget.NewEntry()
 	c.fsdHostEntry.SetPlaceHolder("fsd.example.com")
 	c.fsdHostEntry.OnChanged = func(s string) {
-		c.form.FSDHost = s
+		c.updateForm(func(f *FormState) { f.FSDHost = s })
 		c.schedulePlan()
 	}
 	c.fsdPortEntry = widget.NewEntry()
@@ -168,33 +203,33 @@ func (c *controller) buildUI() fyne.CanvasObject {
 		if err != nil {
 			return
 		}
-		c.form.FSDPort = n
+		c.updateForm(func(f *FormState) { f.FSDPort = n })
 		c.schedulePlan()
 	}
 	c.fsdServerEntry = widget.NewEntry()
 	c.fsdServerEntry.SetText("OPENFSD")
 	c.fsdServerEntry.OnChanged = func(s string) {
-		c.form.FSDServerName = s
+		c.updateForm(func(f *FormState) { f.FSDServerName = s })
 		c.schedulePlan()
 	}
 	c.afvBaseEntry = widget.NewEntry()
 	c.afvBaseEntry.SetPlaceHolder("https://voice.example.com (optional)")
 	c.afvBaseEntry.OnChanged = func(s string) {
-		c.form.AFVBaseURL = s
+		c.updateForm(func(f *FormState) { f.AFVBaseURL = s })
 		c.schedulePlan()
 	}
 	c.forceNoVoice = widget.NewCheck("Force disable voice (-novoice)", func(v bool) {
-		c.form.ForceDisableAFV = v
+		c.updateForm(func(f *FormState) { f.ForceDisableAFV = v })
 		c.schedulePlan()
 	})
 	c.preferShortJWT = widget.NewCheck("Prefer short JWT path (/j, …)", func(v bool) {
-		c.form.PreferShortJWTPath = v
+		c.updateForm(func(f *FormState) { f.PreferShortJWTPath = v })
 		c.schedulePlan()
 	})
 	c.publicVATSIMLbl = widget.NewLabel("")
 	c.publicVATSIMLbl.Wrapping = fyne.TextWrapWord
 	c.publicVATSIMAck = widget.NewCheck("I understand (public VATSIM host override)", func(v bool) {
-		c.form.UnderstandPublicVATSIM = v
+		c.updateForm(func(f *FormState) { f.UnderstandPublicVATSIM = v })
 		c.refreshApplyEnabled()
 	})
 
@@ -235,7 +270,6 @@ func (c *controller) buildUI() fyne.CanvasObject {
 	c.logEntry.Wrapping = fyne.TextWrapWord
 	c.logEntry.Disable()
 
-	// Assemble scrollable body
 	body := container.NewVBox(
 		header,
 		widget.NewCard("Client", "", c.clientSelect),
@@ -256,13 +290,13 @@ func (c *controller) buildUI() fyne.CanvasObject {
 		widget.NewCard("Log", "", c.logEntry),
 	)
 
-	scroll := container.NewVScroll(body)
-	return scroll
+	return container.NewVScroll(body)
 }
 
 func (c *controller) syncClientSelectFromForm() {
+	id := c.formCopy().ClientID
 	for _, s := range c.slots {
-		if s.Enabled && s.ID == c.form.ClientID {
+		if s.Enabled && s.ID == id {
 			c.clientSelect.SetSelected(SlotLabel(s))
 			return
 		}
@@ -280,22 +314,26 @@ func (c *controller) loadSettingsAndRefresh() {
 		c.appendLog("load settings: %v", err)
 		return
 	}
-	s.ApplyToForm(&c.form)
-	// Push into widgets without infinite OnChanged loops is fine; they schedule plan.
-	if c.form.ClientID != "" {
+	c.updateForm(func(f *FormState) {
+		s.ApplyToForm(f)
+		// Never restore public-VATSIM override across sessions.
+		f.UnderstandPublicVATSIM = false
+	})
+	f := c.formCopy()
+	if f.ClientID != "" {
 		c.syncClientSelectFromForm()
 	}
-	c.installEntry.SetText(c.form.InstallPath)
-	c.webBaseEntry.SetText(c.form.WebBaseURL)
-	c.fsdHostEntry.SetText(c.form.FSDHost)
-	c.fsdPortEntry.SetText(FormatPortString(c.form.FSDPort))
-	if c.form.FSDServerName != "" {
-		c.fsdServerEntry.SetText(c.form.FSDServerName)
+	c.installEntry.SetText(f.InstallPath)
+	c.webBaseEntry.SetText(f.WebBaseURL)
+	c.fsdHostEntry.SetText(f.FSDHost)
+	c.fsdPortEntry.SetText(FormatPortString(f.FSDPort))
+	if f.FSDServerName != "" {
+		c.fsdServerEntry.SetText(f.FSDServerName)
 	}
-	c.afvBaseEntry.SetText(c.form.AFVBaseURL)
-	c.forceNoVoice.SetChecked(c.form.ForceDisableAFV)
-	c.preferShortJWT.SetChecked(c.form.PreferShortJWTPath)
-	c.publicVATSIMAck.SetChecked(c.form.UnderstandPublicVATSIM)
+	c.afvBaseEntry.SetText(f.AFVBaseURL)
+	c.forceNoVoice.SetChecked(f.ForceDisableAFV)
+	c.preferShortJWT.SetChecked(f.PreferShortJWTPath)
+	c.publicVATSIMAck.SetChecked(false)
 	c.updatePublicVATSIMHint()
 	c.schedulePlan()
 	c.appendLog("Loaded settings from %s", path)
@@ -306,7 +344,7 @@ func (c *controller) saveSettings() {
 	if err != nil {
 		return
 	}
-	if err := SaveSettings(path, SettingsFromForm(c.form)); err != nil {
+	if err := SaveSettings(path, SettingsFromForm(c.formCopy())); err != nil {
 		c.appendLog("save settings: %v", err)
 		return
 	}
@@ -324,7 +362,7 @@ func (c *controller) appendLog(format string, args ...any) {
 }
 
 func (c *controller) updatePublicVATSIMHint() {
-	warn := PublicVATSIMWarning(c.form.WebBaseURL)
+	warn := PublicVATSIMWarning(c.formCopy().WebBaseURL)
 	if warn == "" {
 		c.publicVATSIMLbl.SetText("")
 		return
@@ -335,18 +373,29 @@ func (c *controller) updatePublicVATSIMHint() {
 func (c *controller) schedulePlan() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.closed {
+		return
+	}
 	if c.planTimer != nil {
 		c.planTimer.Stop()
 	}
-	// Debounce dry-plan on keystroke / form change.
+	// Debounce dry-plan on keystroke / form change (runs off UI thread).
 	c.planTimer = time.AfterFunc(350*time.Millisecond, func() {
 		c.runDryPlan()
 	})
 }
 
+// runDryPlan executes Plan / preflight / hash on a worker goroutine, then
+// marshals UI updates via fyne.Do. Form is snapshotted under c.mu.
 func (c *controller) runDryPlan() {
-	// Snapshot form under lock-free read (widgets already wrote form fields).
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return
+	}
 	f := c.form
+	c.mu.Unlock()
+
 	issues := ValidateForm(f)
 
 	install := BuildInstall(c.eng, f.ClientID, f.InstallPath)
@@ -356,7 +405,6 @@ func (c *controller) runDryPlan() {
 			preflightErr = err
 		}
 	}
-	// Best-effort hash for fingerprint when PE readable.
 	if install.HashSHA1 == "" && install.PrimaryPE != "" {
 		if sum, err := fileSHA1OS(install.PrimaryPE); err == nil {
 			install.HashSHA1 = sum
@@ -374,15 +422,18 @@ func (c *controller) runDryPlan() {
 	var planErr error
 	if len(issues) == 0 && f.InstallPath != "" {
 		plan, planErr = c.eng.Plan(context.Background(), install, f.Endpoints())
-		if planErr != nil {
-			// Still show fingerprint; plan panel shows error.
-		}
 	}
 
-	// Update UI on main thread.
 	fyne.Do(func() {
+		c.mu.Lock()
+		if c.closed {
+			c.mu.Unlock()
+			return
+		}
 		c.preflight = preflightErr
 		c.lastPlan = plan
+		c.mu.Unlock()
+
 		c.fingerprint.SetText(FormatFingerprint(install, profileID, preflightErr))
 		if len(install.ConfigPaths) > 0 {
 			c.configList.SetText("Config files:\n  • " + strings.Join(install.ConfigPaths, "\n  • "))
@@ -420,9 +471,24 @@ func (c *controller) runDryPlan() {
 }
 
 func (c *controller) refreshApplyEnabled() {
-	issues := ValidateForm(c.form)
-	ok, reason := CanApply(c.form, c.lastPlan, issues)
-	if c.preflight != nil && errors.Is(c.preflight, clientinject.ErrClientRunning) {
+	c.mu.Lock()
+	f := c.form
+	plan := c.lastPlan
+	preflight := c.preflight
+	busy := c.busy
+	c.mu.Unlock()
+
+	if busy {
+		c.applyBtn.Disable()
+		c.revertBtn.Disable()
+		c.launchBtn.Disable()
+		c.applyBtn.SetText("Apply (working…)")
+		return
+	}
+
+	issues := ValidateForm(f)
+	ok, reason := CanApply(f, plan, issues)
+	if preflight != nil && errors.Is(preflight, clientinject.ErrClientRunning) {
 		ok = false
 		reason = "client appears to be running — quit before Apply"
 	}
@@ -437,14 +503,20 @@ func (c *controller) refreshApplyEnabled() {
 	} else {
 		c.applyBtn.SetText("Apply")
 	}
-	// Revert enabled when install path set
-	if strings.TrimSpace(c.form.InstallPath) == "" {
+	if strings.TrimSpace(f.InstallPath) == "" {
 		c.revertBtn.Disable()
 		c.launchBtn.Disable()
 	} else {
 		c.revertBtn.Enable()
 		c.launchBtn.Enable()
 	}
+}
+
+func (c *controller) setBusy(v bool) {
+	c.mu.Lock()
+	c.busy = v
+	c.mu.Unlock()
+	c.refreshApplyEnabled()
 }
 
 func truncate(s string, n int) string {
@@ -455,9 +527,10 @@ func truncate(s string, n int) string {
 }
 
 func (c *controller) onDetect() {
-	cand, ok := FirstDetectPath(c.eng, c.form.ClientID)
+	f := c.formCopy()
+	cand, ok := FirstDetectPath(c.eng, f.ClientID)
 	if !ok {
-		c.appendLog("No install detected for %s — set path manually.", c.form.ClientID)
+		c.appendLog("No install detected for %s — set path manually.", f.ClientID)
 		dialog.ShowInformation("Detect", "No install found for this client on this machine. Enter the install path manually.", c.win)
 		return
 	}
@@ -466,12 +539,15 @@ func (c *controller) onDetect() {
 }
 
 func (c *controller) onApply() {
-	// Soft legal banner every Apply.
+	f := c.formCopy()
 	msg := LegalApplyBanner
-	if warn := PublicVATSIMWarning(c.form.WebBaseURL); warn != "" {
+	if warn := PublicVATSIMWarning(f.WebBaseURL); warn != "" {
 		msg += "\n\n" + warn
 	}
-	if c.lastPlan != nil && len(c.lastPlan.Blockers) > 0 {
+	c.mu.Lock()
+	plan := c.lastPlan
+	c.mu.Unlock()
+	if plan != nil && len(plan.Blockers) > 0 {
 		dialog.ShowError(fmt.Errorf("plan has blockers — fix endpoints first"), c.win)
 		return
 	}
@@ -485,7 +561,7 @@ func (c *controller) onApply() {
 }
 
 func (c *controller) doApply() {
-	f := c.form
+	f := c.formCopy()
 	issues := ValidateForm(f)
 	if len(issues) > 0 {
 		dialog.ShowError(fmt.Errorf("%s", issues[0].Message), c.win)
@@ -495,34 +571,59 @@ func (c *controller) doApply() {
 		dialog.ShowError(fmt.Errorf("public VATSIM host — check “I understand” or change Web base URL"), c.win)
 		return
 	}
-	install := BuildInstall(c.eng, f.ClientID, f.InstallPath)
-	plan, err := c.eng.Plan(context.Background(), install, f.Endpoints())
-	if err != nil {
-		c.appendLog("plan: %v", err)
-		dialog.ShowError(err, c.win)
-		return
-	}
-	if len(plan.Blockers) > 0 {
-		c.appendLog("plan blocked: %s", strings.Join(plan.Blockers, "; "))
-		dialog.ShowError(fmt.Errorf("plan blockers: %s", strings.Join(plan.Blockers, "; ")), c.win)
-		return
-	}
-	c.appendLog("Applying %d mutations…", len(plan.Mutations))
-	res, err := c.eng.Apply(context.Background(), plan)
-	if err != nil {
-		c.appendLog("apply failed: %v", err)
-		dialog.ShowError(err, c.win)
-		c.schedulePlan()
-		return
-	}
-	c.saveSettings()
-	c.appendLog("Applied OK manifest=%s applied=%v", res.ManifestPath, res.Applied)
-	dialog.ShowInformation("Apply complete", fmt.Sprintf("Patched successfully.\nManifest: %s\nApplied: %v", res.ManifestPath, res.Applied), c.win)
-	c.schedulePlan()
+
+	c.setBusy(true)
+	c.appendLog("Planning / applying…")
+	eng := c.eng
+	go func() {
+		install := BuildInstall(eng, f.ClientID, f.InstallPath)
+		plan, err := eng.Plan(context.Background(), install, f.Endpoints())
+		if err != nil {
+			fyne.Do(func() {
+				if c.isClosed() {
+					return
+				}
+				c.setBusy(false)
+				c.appendLog("plan: %v", err)
+				dialog.ShowError(err, c.win)
+			})
+			return
+		}
+		if len(plan.Blockers) > 0 {
+			fyne.Do(func() {
+				if c.isClosed() {
+					return
+				}
+				c.setBusy(false)
+				c.appendLog("plan blocked: %s", strings.Join(plan.Blockers, "; "))
+				dialog.ShowError(fmt.Errorf("plan blockers: %s", strings.Join(plan.Blockers, "; ")), c.win)
+			})
+			return
+		}
+		nMut := len(plan.Mutations)
+		res, err := eng.Apply(context.Background(), plan)
+		fyne.Do(func() {
+			if c.isClosed() {
+				return
+			}
+			c.setBusy(false)
+			if err != nil {
+				c.appendLog("apply failed: %v", err)
+				dialog.ShowError(err, c.win)
+				c.schedulePlan()
+				return
+			}
+			c.saveSettings()
+			c.appendLog("Applied OK manifest=%s applied=%v (%d mutations)", res.ManifestPath, res.Applied, nMut)
+			dialog.ShowInformation("Apply complete", fmt.Sprintf("Patched successfully.\nManifest: %s\nApplied: %v", res.ManifestPath, res.Applied), c.win)
+			c.schedulePlan()
+		})
+	}()
 }
 
 func (c *controller) onRevert() {
-	root := strings.TrimSpace(c.form.InstallPath)
+	f := c.formCopy()
+	root := strings.TrimSpace(f.InstallPath)
 	if root == "" {
 		dialog.ShowError(fmt.Errorf("install path required"), c.win)
 		return
@@ -531,43 +632,80 @@ func (c *controller) onRevert() {
 		if !yes {
 			return
 		}
-		if err := c.eng.Revert(context.Background(), filepath.Clean(root)); err != nil {
-			c.appendLog("revert: %v", err)
-			dialog.ShowError(err, c.win)
-			return
-		}
-		c.appendLog("Reverted %s", root)
-		dialog.ShowInformation("Revert complete", "Stock files restored from backup.", c.win)
-		c.schedulePlan()
+		c.setBusy(true)
+		c.appendLog("Reverting…")
+		eng := c.eng
+		rootClean := filepath.Clean(root)
+		go func() {
+			err := eng.Revert(context.Background(), rootClean)
+			fyne.Do(func() {
+				if c.isClosed() {
+					return
+				}
+				c.setBusy(false)
+				if err != nil {
+					c.appendLog("revert: %v", err)
+					dialog.ShowError(err, c.win)
+					return
+				}
+				c.appendLog("Reverted %s", rootClean)
+				dialog.ShowInformation("Revert complete", "Stock files restored from backup.", c.win)
+				c.schedulePlan()
+			})
+		}()
 	}, c.win)
 }
 
 func (c *controller) onLaunch() {
-	f := c.form
-	install := BuildInstall(c.eng, f.ClientID, f.InstallPath)
-	a, ok := c.eng.Adapters[f.ClientID]
-	if !ok {
-		dialog.ShowError(fmt.Errorf("no adapter for %q", f.ClientID), c.win)
-		return
-	}
-	args := a.LaunchArgs(install, f.Endpoints())
-	pe := clientinject.AbsPrimaryPE(install)
-	if pe == "" {
-		dialog.ShowError(fmt.Errorf("no primary PE path"), c.win)
-		return
-	}
-	c.appendLog("Launch: %s %s", pe, strings.Join(args, " "))
-	cmd := exec.Command(pe, args...)
-	cmd.Dir = install.RootDir
-	if err := cmd.Start(); err != nil {
-		// Best-effort (Wine / non-Windows may fail).
-		c.appendLog("launch failed: %v (use printed args manually)", err)
-		dialog.ShowInformation("Launch", fmt.Sprintf("Could not start process:\n%v\n\nCommand:\n%s %s\n\nWorking directory:\n%s",
-			err, pe, strings.Join(args, " "), install.RootDir), c.win)
-		return
-	}
-	_ = cmd.Process.Release()
-	c.appendLog("Started pid (detached)")
+	f := c.formCopy()
+	c.setBusy(true)
+	eng := c.eng
+	go func() {
+		install := BuildInstall(eng, f.ClientID, f.InstallPath)
+		a, ok := eng.Adapters[f.ClientID]
+		if !ok {
+			fyne.Do(func() {
+				if c.isClosed() {
+					return
+				}
+				c.setBusy(false)
+				dialog.ShowError(fmt.Errorf("no adapter for %q", f.ClientID), c.win)
+			})
+			return
+		}
+		args := a.LaunchArgs(install, f.Endpoints())
+		pe := clientinject.AbsPrimaryPE(install)
+		if pe == "" {
+			fyne.Do(func() {
+				if c.isClosed() {
+					return
+				}
+				c.setBusy(false)
+				dialog.ShowError(fmt.Errorf("no primary PE path"), c.win)
+			})
+			return
+		}
+		cmd := exec.Command(pe, args...)
+		cmd.Dir = install.RootDir
+		startErr := cmd.Start()
+		if startErr == nil {
+			_ = cmd.Process.Release()
+		}
+		fyne.Do(func() {
+			if c.isClosed() {
+				return
+			}
+			c.setBusy(false)
+			c.appendLog("Launch: %s %s", pe, strings.Join(args, " "))
+			if startErr != nil {
+				c.appendLog("launch failed: %v (use printed args manually)", startErr)
+				dialog.ShowInformation("Launch", fmt.Sprintf("Could not start process:\n%v\n\nCommand:\n%s %s\n\nWorking directory:\n%s",
+					startErr, pe, strings.Join(args, " "), install.RootDir), c.win)
+				return
+			}
+			c.appendLog("Started pid (detached)")
+		})
+	}()
 }
 
 func fileSHA1OS(path string) (string, error) {
@@ -576,7 +714,5 @@ func fileSHA1OS(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// local hash to avoid exporting engine helper
-	sum := sha1SumHex(data)
-	return sum, nil
+	return sha1SumHex(data), nil
 }

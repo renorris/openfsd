@@ -9,36 +9,38 @@ import (
 
 // Settings is the persisted user preferences (paths + endpoints only).
 // Never store passwords or network credentials.
+// UnderstandPublicVATSIM is intentionally NOT persisted — every session must
+// re-acknowledge a public VATSIM WebBaseURL soft warning.
 type Settings struct {
-	ClientID               string `json:"client_id,omitempty"`
-	InstallPath            string `json:"install_path,omitempty"`
-	WebBaseURL             string `json:"web_base_url,omitempty"`
-	FSDHost                string `json:"fsd_host,omitempty"`
-	FSDPort                int    `json:"fsd_port,omitempty"`
-	FSDServerName          string `json:"fsd_server_name,omitempty"`
-	AFVBaseURL             string `json:"afv_base_url,omitempty"`
-	ForceDisableAFV        bool   `json:"force_disable_afv,omitempty"`
-	PreferShortJWTPath     bool   `json:"prefer_short_jwt_path,omitempty"`
-	UnderstandPublicVATSIM bool   `json:"understand_public_vatsim,omitempty"`
+	ClientID           string `json:"client_id,omitempty"`
+	InstallPath        string `json:"install_path,omitempty"`
+	WebBaseURL         string `json:"web_base_url,omitempty"`
+	FSDHost            string `json:"fsd_host,omitempty"`
+	FSDPort            int    `json:"fsd_port,omitempty"`
+	FSDServerName      string `json:"fsd_server_name,omitempty"`
+	AFVBaseURL         string `json:"afv_base_url,omitempty"`
+	ForceDisableAFV    bool   `json:"force_disable_afv,omitempty"`
+	PreferShortJWTPath bool   `json:"prefer_short_jwt_path,omitempty"`
 }
 
 // SettingsFromForm copies persistable fields from FormState.
+// Does not include UnderstandPublicVATSIM (session-only ack).
 func SettingsFromForm(f FormState) Settings {
 	return Settings{
-		ClientID:               f.ClientID,
-		InstallPath:            f.InstallPath,
-		WebBaseURL:             f.WebBaseURL,
-		FSDHost:                f.FSDHost,
-		FSDPort:                f.FSDPort,
-		FSDServerName:          f.FSDServerName,
-		AFVBaseURL:             f.AFVBaseURL,
-		ForceDisableAFV:        f.ForceDisableAFV,
-		PreferShortJWTPath:     f.PreferShortJWTPath,
-		UnderstandPublicVATSIM: f.UnderstandPublicVATSIM,
+		ClientID:           f.ClientID,
+		InstallPath:        f.InstallPath,
+		WebBaseURL:         f.WebBaseURL,
+		FSDHost:            f.FSDHost,
+		FSDPort:            f.FSDPort,
+		FSDServerName:      f.FSDServerName,
+		AFVBaseURL:         f.AFVBaseURL,
+		ForceDisableAFV:    f.ForceDisableAFV,
+		PreferShortJWTPath: f.PreferShortJWTPath,
 	}
 }
 
 // ApplyToForm merges settings into form (non-empty / meaningful fields).
+// Never sets UnderstandPublicVATSIM — always leave false for a fresh session.
 func (s Settings) ApplyToForm(f *FormState) {
 	if f == nil {
 		return
@@ -64,7 +66,7 @@ func (s Settings) ApplyToForm(f *FormState) {
 	}
 	f.ForceDisableAFV = s.ForceDisableAFV
 	f.PreferShortJWTPath = s.PreferShortJWTPath
-	f.UnderstandPublicVATSIM = s.UnderstandPublicVATSIM
+	f.UnderstandPublicVATSIM = false
 }
 
 // DefaultConfigDir returns OS user config dir + openfsd-client.
