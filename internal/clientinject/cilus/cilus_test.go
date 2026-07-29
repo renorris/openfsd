@@ -432,3 +432,16 @@ func TestEncodeBodyPaddedEmpty(t *testing.T) {
 		t.Fatalf("padded empty: %x", out)
 	}
 }
+
+func TestLengthPrefixBytes(t *testing.T) {
+	p, err := LengthPrefixBytes(71)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p) != 1 || p[0] != 71 {
+		t.Fatalf("%x", p)
+	}
+	if _, err := LengthPrefixBytes(-1); err == nil {
+		t.Fatal("expected error for negative")
+	}
+}

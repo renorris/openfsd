@@ -204,6 +204,16 @@ func terminalByte(u16 []uint16) byte {
 	return 0x00
 }
 
+// LengthPrefixBytes returns the ECMA-335 compressed unsigned integer encoding
+// of bodyLen (the #US length prefix that precedes the body). Used by PE
+// patchers when rewriting the length prefix after EncodeBodyPadded.
+func LengthPrefixBytes(bodyLen int) ([]byte, error) {
+	if bodyLen < 0 {
+		return nil, fmt.Errorf("%w: negative bodyLen", ErrInvalidLength)
+	}
+	return encodeCompressedUInt(uint32(bodyLen))
+}
+
 // encodeCompressedUInt encodes n as an ECMA-335 compressed unsigned integer
 // (II.24.2.4 / blob heap length encoding).
 //
