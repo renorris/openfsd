@@ -9,8 +9,6 @@ import (
 
 // Settings is the persisted user preferences (paths + endpoints only).
 // Never store passwords or network credentials.
-// UnderstandPublicVATSIM is intentionally NOT persisted — every session must
-// re-acknowledge a public VATSIM WebBaseURL soft warning.
 type Settings struct {
 	ClientID           string `json:"client_id,omitempty"`
 	InstallPath        string `json:"install_path,omitempty"`
@@ -24,7 +22,6 @@ type Settings struct {
 }
 
 // SettingsFromForm copies persistable fields from FormState.
-// Does not include UnderstandPublicVATSIM (session-only ack).
 func SettingsFromForm(f FormState) Settings {
 	return Settings{
 		ClientID:           f.ClientID,
@@ -40,7 +37,6 @@ func SettingsFromForm(f FormState) Settings {
 }
 
 // ApplyToForm merges settings into form (non-empty / meaningful fields).
-// Never sets UnderstandPublicVATSIM — always leave false for a fresh session.
 func (s Settings) ApplyToForm(f *FormState) {
 	if f == nil {
 		return
@@ -66,7 +62,6 @@ func (s Settings) ApplyToForm(f *FormState) {
 	}
 	f.ForceDisableAFV = s.ForceDisableAFV
 	f.PreferShortJWTPath = s.PreferShortJWTPath
-	f.UnderstandPublicVATSIM = false
 }
 
 // DefaultConfigDir returns OS user config dir + openfsd-client.

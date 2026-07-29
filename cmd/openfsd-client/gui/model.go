@@ -11,7 +11,6 @@ import (
 )
 
 // FormState holds user-editable Client Setup fields (no passwords).
-// Client-agnostic: the same fields apply to every adapter.
 type FormState struct {
 	ClientID string
 
@@ -25,10 +24,6 @@ type FormState struct {
 
 	ForceDisableAFV    bool
 	PreferShortJWTPath bool
-
-	// UnderstandPublicVATSIM acknowledges the soft warning when WebBaseURL
-	// host is in PublicVATSIMHosts. Does not store passwords.
-	UnderstandPublicVATSIM bool
 }
 
 // DefaultFormState returns sensible defaults for a new session.
@@ -53,7 +48,7 @@ func (f FormState) Endpoints() clientinject.Endpoints {
 	}.Normalize()
 }
 
-// ValidationIssue is a form-level problem before Plan (empty path, bad URL, …).
+// ValidationIssue is a form-level problem before Plan.
 type ValidationIssue struct {
 	Field   string
 	Message string
@@ -66,24 +61,24 @@ func ValidateForm(f FormState) []ValidationIssue {
 		issues = append(issues, ValidationIssue{Field: "ClientID", Message: "select a client"})
 	}
 	if strings.TrimSpace(f.InstallPath) == "" {
-		issues = append(issues, ValidationIssue{Field: "InstallPath", Message: "install path is required"})
+		issues = append(issues, ValidationIssue{Field: "InstallPath", Message: "set install path"})
 	}
 	web := strings.TrimSpace(f.WebBaseURL)
 	if web == "" {
-		issues = append(issues, ValidationIssue{Field: "WebBaseURL", Message: "web base URL is required"})
+		issues = append(issues, ValidationIssue{Field: "WebBaseURL", Message: "web URL required"})
 	} else if _, err := url.ParseRequestURI(web); err != nil {
-		issues = append(issues, ValidationIssue{Field: "WebBaseURL", Message: "web base URL is not a valid absolute URL"})
+		issues = append(issues, ValidationIssue{Field: "WebBaseURL", Message: "invalid web URL"})
 	}
 	if strings.TrimSpace(f.FSDHost) == "" {
-		issues = append(issues, ValidationIssue{Field: "FSDHost", Message: "FSD host is required"})
+		issues = append(issues, ValidationIssue{Field: "FSDHost", Message: "FSD host required"})
 	}
 	if f.FSDPort < 0 || f.FSDPort > 65535 {
-		issues = append(issues, ValidationIssue{Field: "FSDPort", Message: "FSD port must be 0–65535 (0 = default 6809)"})
+		issues = append(issues, ValidationIssue{Field: "FSDPort", Message: "invalid port"})
 	}
 	afv := strings.TrimSpace(f.AFVBaseURL)
 	if afv != "" {
 		if _, err := url.ParseRequestURI(afv); err != nil {
-			issues = append(issues, ValidationIssue{Field: "AFVBaseURL", Message: "AFV base URL is not a valid absolute URL"})
+			issues = append(issues, ValidationIssue{Field: "AFVBaseURL", Message: "invalid AFV URL"})
 		}
 	}
 	return issues
@@ -97,7 +92,6 @@ func WebBaseHost(webBase string) string {
 	}
 	u, err := url.Parse(webBase)
 	if err != nil || u.Host == "" {
-		// Fallback: treat as bare host
 		host := webBase
 		if i := strings.Index(host, "://"); i >= 0 {
 			host = host[i+3:]
@@ -108,8 +102,7 @@ func WebBaseHost(webBase string) string {
 		}
 		return strings.ToLower(strings.TrimSpace(host))
 	}
-	host := u.Hostname()
-	return strings.ToLower(host)
+	return strings.ToLower(u.Hostname())
 }
 
 // IsPublicVATSIMHost reports whether host (or WebBaseURL host) is in the known
@@ -119,7 +112,6 @@ func IsPublicVATSIMHost(hostOrURL string) bool {
 	if host == "" {
 		return false
 	}
-	// If looks like a URL, extract host.
 	if strings.Contains(host, "://") || strings.Contains(host, "/") {
 		host = WebBaseHost(hostOrURL)
 	} else if h, _, err := net.SplitHostPort(host); err == nil {
@@ -129,146 +121,21 @@ func IsPublicVATSIMHost(hostOrURL string) bool {
 	return ok
 }
 
-// PublicVATSIMWarning returns a non-empty warning when WebBaseURL's host is in
-// PublicVATSIMHosts. Only WebBaseURL is gated (not FSDHost / AFVBaseURL).
-func PublicVATSIMWarning(webBase string) string {
-	host := WebBaseHost(webBase)
-	if host == "" || !IsPublicVATSIMHost(host) {
-		return ""
-	}
-	return fmt.Sprintf(
-		"Web base host %q is a known public VATSIM host. This tool is for private openfsd networks you are authorized to use. Check “I understand” only if that is intentional (e.g. local mirror).",
-		host,
-	)
-}
-
-// CanApply reports whether Apply should be enabled given form validation,
-// optional public-VATSIM override, and plan blockers.
+// CanApply reports whether Apply should proceed given form validation and plan.
 func CanApply(f FormState, plan *clientinject.Plan, formIssues []ValidationIssue) (ok bool, reason string) {
 	if len(formIssues) > 0 {
 		return false, formIssues[0].Message
 	}
-	if warn := PublicVATSIMWarning(f.WebBaseURL); warn != "" && !f.UnderstandPublicVATSIM {
-		return false, "Web base looks like public VATSIM — confirm “I understand” or change the URL"
+	if IsPublicVATSIMHost(f.WebBaseURL) {
+		return false, "use a different web URL"
 	}
 	if plan == nil {
 		return false, "no plan yet"
 	}
 	if len(plan.Blockers) > 0 {
-		return false, "plan has blockers"
+		return false, plan.Blockers[0]
 	}
 	return true, ""
-}
-
-// FormatConstraintLine formats one Plan.Constraints entry for the panel.
-func FormatConstraintLine(c clientinject.Constraint) string {
-	max := "n/a"
-	if c.MaxRunes > 0 {
-		max = strconv.Itoa(c.MaxRunes) + " runes"
-	}
-	strat := c.Strategy
-	if strat == "" {
-		strat = "n/a"
-	}
-	desc := c.Description
-	if desc == "" {
-		return fmt.Sprintf("%s — max %s — %s", c.Field, max, strat)
-	}
-	return fmt.Sprintf("%s — max %s — %s — %s", c.Field, max, strat, desc)
-}
-
-// FormatConstraints joins constraint lines for the multi-line panel.
-func FormatConstraints(cs []clientinject.Constraint) string {
-	if len(cs) == 0 {
-		return "(no constraints from plan yet)"
-	}
-	var b strings.Builder
-	for i, c := range cs {
-		if i > 0 {
-			b.WriteByte('\n')
-		}
-		b.WriteString(FormatConstraintLine(c))
-	}
-	return b.String()
-}
-
-// FormatMutations summarizes plan mutations for the log / preview.
-func FormatMutations(ms []clientinject.Mutation) string {
-	if len(ms) == 0 {
-		return "(no mutations)"
-	}
-	var b strings.Builder
-	for i, m := range ms {
-		if i > 0 {
-			b.WriteByte('\n')
-		}
-		fmt.Fprintf(&b, "• %s [%s] %s", m.ID, m.Kind, m.Description)
-	}
-	return b.String()
-}
-
-// FormatBlockers formats plan blockers.
-func FormatBlockers(bs []string) string {
-	if len(bs) == 0 {
-		return ""
-	}
-	var b strings.Builder
-	for i, s := range bs {
-		if i > 0 {
-			b.WriteByte('\n')
-		}
-		fmt.Fprintf(&b, "• %s", s)
-	}
-	return b.String()
-}
-
-// FormatWarnings formats plan warnings.
-func FormatWarnings(ws []string) string {
-	if len(ws) == 0 {
-		return ""
-	}
-	var b strings.Builder
-	for i, s := range ws {
-		if i > 0 {
-			b.WriteByte('\n')
-		}
-		fmt.Fprintf(&b, "• %s", s)
-	}
-	return b.String()
-}
-
-// FormatFingerprint summarizes install identity for the fingerprint panel.
-func FormatFingerprint(install clientinject.Install, profileID string, preflightErr error) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "Client: %s\n", install.ClientID)
-	fmt.Fprintf(&b, "Root: %s\n", install.RootDir)
-	fmt.Fprintf(&b, "Primary PE: %s\n", install.PrimaryPE)
-	if install.HashSHA1 != "" {
-		fmt.Fprintf(&b, "SHA-1: %s\n", install.HashSHA1)
-	} else {
-		b.WriteString("SHA-1: (not resolved)\n")
-	}
-	if profileID != "" {
-		fmt.Fprintf(&b, "Profile: %s\n", profileID)
-	} else if install.ProfileID != "" {
-		fmt.Fprintf(&b, "Profile: %s\n", install.ProfileID)
-	} else {
-		b.WriteString("Profile: (unresolved)\n")
-	}
-	if len(install.ConfigPaths) > 0 {
-		fmt.Fprintf(&b, "Config files:\n")
-		for _, p := range install.ConfigPaths {
-			fmt.Fprintf(&b, "  • %s\n", p)
-		}
-	} else {
-		b.WriteString("Config files: (none discovered)\n")
-	}
-	if preflightErr != nil {
-		fmt.Fprintf(&b, "\n⚠ Client appears to be running — quit completely before Apply.\n(%v)\n", preflightErr)
-	} else {
-		b.WriteString("\nPreflight: PE not locked (or path empty).\n")
-	}
-	return strings.TrimRight(b.String(), "\n")
 }
 
 // ParsePortString parses FSD port entry; empty or "6809" → 0 (default).
@@ -290,7 +157,7 @@ func ParsePortString(s string) (int, error) {
 	return n, nil
 }
 
-// FormatPortString displays FSD port for the form (empty means default).
+// FormatPortString displays FSD port for the form.
 func FormatPortString(port int) string {
 	if port == 0 || port == clientinject.DefaultFSDPort {
 		return strconv.Itoa(clientinject.DefaultFSDPort)

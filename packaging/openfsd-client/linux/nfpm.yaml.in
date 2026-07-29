@@ -1,0 +1,39 @@
+# nfpm config — openfsd-client .deb (plain binary + desktop entry)
+name: openfsd-client
+arch: ${NFPM_ARCH}
+platform: linux
+version: ${VERSION}
+section: net
+priority: optional
+maintainer: "openfsd contributors <https://github.com/renorris/openfsd>"
+description: |
+  openfsd Client Setup — configure Windows vPilot installs for private openfsd networks.
+  Installs the openfsd-client binary and a desktop menu entry.
+  User settings: ~/.config/openfsd-client/
+vendor: openfsd
+homepage: https://github.com/renorris/openfsd
+license: MIT
+contents:
+  - src: ${BIN_PATH}
+    dst: /usr/bin/openfsd-client
+    file_info:
+      mode: 0755
+  - src: ${DESKTOP_FILE}
+    dst: /usr/share/applications/openfsd-client.desktop
+    file_info:
+      mode: 0644
+  - src: ${ICON_128}
+    dst: /usr/share/icons/hicolor/128x128/apps/openfsd-client.png
+    file_info:
+      mode: 0644
+  - src: ${ICON_256}
+    dst: /usr/share/icons/hicolor/256x256/apps/openfsd-client.png
+    file_info:
+      mode: 0644
+  - src: ${ICON_512}
+    dst: /usr/share/icons/hicolor/512x512/apps/openfsd-client.png
+    file_info:
+      mode: 0644
+overrides:
+  deb:
+    scripts: {}

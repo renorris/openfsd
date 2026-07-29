@@ -13,24 +13,9 @@ type ClientSlot struct {
 	ComingSoonLabel string
 }
 
-// FutureClientCatalog lists planned multi-client product slots that are not
-// yet registered as adapters. When an adapter appears in DefaultAdapters, it
-// is merged as Enabled and removed from the "coming soon" presentation.
-//
-// This is a product catalog, not a layout special-case on a single client_id.
-//
-// Research / fingerprint mirrors (Apply still disabled until re-verify gates):
-//
-//	xpilot     — prior art xpilot-3.0.1 (PE padded_string); adapter not in tree yet
-//	euroscope  — docs/client-injector/research/euroscope-3.2.9.md
-//	vatsys     — docs/client-injector/research/vatsys-1.4.19.md
-//	trackaudio — docs/client-injector/research/trackaudio.md (docs only; no PE offsets)
-var FutureClientCatalog = []ClientSlot{
-	{ID: "xpilot", DisplayName: "xPilot", Enabled: false, ComingSoonLabel: "Coming soon"},
-	{ID: "euroscope", DisplayName: "Euroscope", Enabled: false, ComingSoonLabel: "Coming soon"},
-	{ID: "vatsys", DisplayName: "vatSys", Enabled: false, ComingSoonLabel: "Coming soon"},
-	{ID: "trackaudio", DisplayName: "TrackAudio", Enabled: false, ComingSoonLabel: "Coming soon"},
-}
+// FutureClientCatalog is empty for now — only Windows vPilot is shipped.
+// Planned multi-client slots can return here when adapters are ready.
+var FutureClientCatalog = []ClientSlot{}
 
 // BuildClientSlots merges registered adapters (enabled) with the future catalog
 // (disabled). Adapters take precedence by ID. Order: adapters first (registry
@@ -39,8 +24,8 @@ func BuildClientSlots(adapters map[string]clientinject.Adapter) []ClientSlot {
 	seen := make(map[string]struct{})
 	var out []ClientSlot
 
-	// Stable order: prefer known adapter IDs in a fixed product order, then any extras.
-	preferred := []string{"vpilot", "xpilot", "euroscope", "vatsys", "trackaudio"}
+	// Stable product order for known IDs, then any extras.
+	preferred := []string{"vpilot"}
 	for _, id := range preferred {
 		if a, ok := adapters[id]; ok && a != nil {
 			out = append(out, ClientSlot{
@@ -51,7 +36,6 @@ func BuildClientSlots(adapters map[string]clientinject.Adapter) []ClientSlot {
 			seen[id] = struct{}{}
 		}
 	}
-	// Any other registered adapters not in preferred list.
 	for id, a := range adapters {
 		if a == nil {
 			continue
@@ -66,7 +50,6 @@ func BuildClientSlots(adapters map[string]clientinject.Adapter) []ClientSlot {
 		})
 		seen[id] = struct{}{}
 	}
-	// Future catalog entries without a live adapter.
 	for _, fut := range FutureClientCatalog {
 		if _, ok := seen[fut.ID]; ok {
 			continue

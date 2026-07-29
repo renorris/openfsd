@@ -18,7 +18,7 @@ Tracked fingerprint mirror: `third_party/client-profiles/euroscope-3.2.9.yaml`
 | GUI | **Coming soon** (`euroscope` in `FutureClientCatalog`) |
 
 **Decision for PR-11:** document offsets and keep **Apply disabled**. Prior art is
-as solid as the xPilot 3.0.1 patchfile (hash-pinned `padded_string` +
+as solid as a hash-pinned `padded_string` +
 `raw_overwrite`), but shipping Apply without re-verifying the stock PE digest
 against a user/vendor binary would risk silent wrong-offset writes on a
 different build. When re-verify passes, implement a hash-pinned adapter the
@@ -87,7 +87,7 @@ file_offset = section.raw_offset + (section_address - section.virtual_start)
 
 These three bytes are the **fixed** relocation of the code that references the
 JWT URL string written below. They are **not** length-dependent on the new URL
-(unlike xPilot LEA length immediates). Re-verify that the instruction at this
+(unlike LEA length immediates used by some PE adapters). Re-verify that the instruction at this
 site still matches stock before Apply.
 
 ### 3. Write new fsd-jwt URL — `padded_string`

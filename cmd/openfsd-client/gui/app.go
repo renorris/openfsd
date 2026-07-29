@@ -14,6 +14,12 @@ import (
 	"github.com/renorris/openfsd/internal/clientinject/adapters"
 )
 
+// Fixed 4:3 window — everything fits without scroll.
+const (
+	windowWidth  float32 = 640
+	windowHeight float32 = 480
+)
+
 // Run launches the openfsd Client Setup GUI. Blocks until the window closes.
 // engine may be nil — then DefaultEngine is used.
 func Run(engine *clientinject.Engine) error {
@@ -28,31 +34,27 @@ func Run(engine *clientinject.Engine) error {
 	a := app.NewWithID("com.openfsd.client-setup")
 
 	w := a.NewWindow("openfsd Client Setup")
-	w.Resize(fyne.NewSize(920, 780))
+	w.Resize(fyne.NewSize(windowWidth, windowHeight))
+	w.SetFixedSize(true)
 	w.SetMaster()
 
 	ctrl := newController(engine, a, w)
 	w.SetContent(ctrl.buildUI())
-	// Stop debounced plan timer and ignore late fyne.Do updates after close.
 	w.SetOnClosed(func() {
 		ctrl.stop()
 	})
 	ctrl.loadSettingsAndRefresh()
 
-	// Prefer showing; on headless Fyne may panic or fail — caller can recover.
 	w.ShowAndRun()
 	ctrl.stop()
 	return nil
 }
 
 // RunDefault is the process entry for no-CLI-args mode.
-// Returns an error if the GUI cannot start (e.g. no display); callers may
-// fall back to printing CLI help.
 func RunDefault() error {
 	if os.Getenv("OPENFSD_CLIENT_NO_GUI") == "1" {
 		return fmt.Errorf("gui: disabled by OPENFSD_CLIENT_NO_GUI=1")
 	}
-	// Soft check: DISPLAY / macOS always has a session usually.
 	if err := checkDisplayAvailable(); err != nil {
 		return err
 	}
@@ -60,9 +62,7 @@ func RunDefault() error {
 }
 
 func checkDisplayAvailable() error {
-	// Linux/X11/Wayland headless CI often has no display.
 	if os.Getenv("DISPLAY") == "" && os.Getenv("WAYLAND_DISPLAY") == "" {
-		// macOS and Windows do not use DISPLAY; allow those.
 		if goosIsUnixDisplayRequired() {
 			return fmt.Errorf("gui: no DISPLAY/WAYLAND_DISPLAY (headless?)")
 		}

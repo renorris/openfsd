@@ -4,14 +4,13 @@ package adapters
 import (
 	"github.com/renorris/openfsd/internal/clientinject"
 	"github.com/renorris/openfsd/internal/clientinject/adapters/vpilot"
-	"github.com/renorris/openfsd/internal/clientinject/adapters/xpilot"
 )
 
-// DefaultAdapters returns the built-in client adapters (vPilot first, then xPilot).
+// DefaultAdapters returns the built-in client adapters.
+// Today: Windows vPilot only.
 func DefaultAdapters() []clientinject.Adapter {
 	return []clientinject.Adapter{
 		vpilot.New(),
-		xpilot.New(),
 	}
 }
 

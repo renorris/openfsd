@@ -1,0 +1,12 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=openfsd Client Setup
+GenericName=Client Setup
+Comment=Configure pilot clients for private openfsd networks
+Exec=openfsd-client
+Icon=openfsd-client
+Terminal=false
+Categories=Network;Utility;
+Keywords=openfsd;vPilot;FSD;VATSIM;
+StartupNotify=true

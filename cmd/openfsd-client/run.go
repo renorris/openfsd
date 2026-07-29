@@ -15,8 +15,10 @@ import (
 	"github.com/renorris/openfsd/internal/clientinject"
 	"github.com/renorris/openfsd/internal/clientinject/adapters"
 	"github.com/renorris/openfsd/internal/clientinject/adapters/vpilot"
-	"github.com/renorris/openfsd/internal/clientinject/adapters/xpilot"
 )
+
+// version is set at link time by packaging (-ldflags "-X main.version=…").
+var version = "dev"
 
 // Exit codes (design: docs/design/client-runtime-injector.md).
 const (
@@ -31,12 +33,15 @@ const (
 	ExitClientProcess = 7
 )
 
-const usageText = `openfsd-client — openfsd Client Setup (GUI + headless CLI)
+// usageText is built at runtime so the linked version appears in help.
+func usageText() string {
+	return `openfsd-client — openfsd Client Setup (GUI + headless CLI)
+Version: ` + version + `
 
 Usage:
   openfsd-client                          Launch GUI when a display is available; else this help
   openfsd-client list-profiles
-  openfsd-client detect --client vpilot|xpilot
+  openfsd-client detect --client vpilot
   openfsd-client plan|apply|revert|health|launch [flags]
 
 Shared flags for plan|apply|health|launch:
@@ -48,7 +53,7 @@ Shared flags for plan|apply|health|launch:
   --force-disable-afv     Always launch with -novoice (vPilot)
   --prefer-short-jwt      Prefer short JWT paths (/j, /fsd-jwt, …) for #US budget (vPilot)
   --install DIR           Client install directory (required when not auto-detected)
-  --client ID             Client adapter id (vpilot|xpilot; default vpilot)
+  --client ID             Client adapter id (default vpilot; Windows vPilot only today)
   --profiles-dir DIR      Optional override profile directory (YAML)
 
 Launch-only flags:
@@ -65,8 +70,6 @@ Readiness honesty:
   Long hostnames without short paths or free-slot remap are plan blockers.
   AFV PE ret-disable is out of scope until research gate R2; over-budget AFV
   falls back to -novoice.
-  xPilot 3.0.1: PE padded_string + LEA fixups for status.json + fsd-jwt; large
-  slot budgets; AFV not retargeted; unknown PE hashes refused.
 
 Exit codes:
   0 ok
@@ -78,11 +81,12 @@ Exit codes:
   6 plan blockers
   7 client process exited non-zero (ephemeral launch only)
 `
+}
 
 // Run parses args and executes a subcommand. stdout/stderr are injectable for tests.
 func Run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprint(stdout, usageText)
+		fmt.Fprint(stdout, usageText())
 		return ExitOK
 	}
 	cmd := args[0]
@@ -90,7 +94,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 
 	switch cmd {
 	case "help", "-h", "--help":
-		fmt.Fprint(stdout, usageText)
+		fmt.Fprint(stdout, usageText())
 		return ExitOK
 	case "list-profiles":
 		return cmdListProfiles(rest, stdout, stderr)
@@ -108,7 +112,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return cmdLaunch(rest, stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "unknown subcommand %q\n\n", cmd)
-		fmt.Fprint(stderr, usageText)
+		fmt.Fprint(stderr, usageText())
 		return ExitUsage
 	}
 }
@@ -413,8 +417,6 @@ func buildInstall(eng *clientinject.Engine, clientID, root string) clientinject.
 	switch clientID {
 	case "vpilot":
 		install = vpilot.InstallFromDir(root)
-	case "xpilot":
-		install = xpilot.InstallFromDir(root)
 	default:
 		// Fall back to profile primary binary name when available.
 		primary := "client.exe"

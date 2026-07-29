@@ -22,7 +22,11 @@ node_modules/
 /fsdweb
 /fsd
 /openfsd
+/openfsd-client
 /openfsd-migrate-to-rqlite
+
+# Packaging output (installers, staged bundles)
+/dist/
 
 # User-fetched X-Plane Global Airports data and bulk conversion output.
 # Tooling under cmd/, internal/xp12aptdat/, scripts/ is tracked.

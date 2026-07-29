@@ -51,44 +51,8 @@ func TestLoadEmbedded(t *testing.T) {
 	if len(list) < 1 {
 		t.Fatal("ForClient empty")
 	}
-
-	// xPilot 3.0.1 embed profile (second client).
-	xp, ok := store.Get("xpilot-3.0.1")
-	if !ok {
-		t.Fatal("missing xpilot-3.0.1")
-	}
-	if xp.ClientID != "xpilot" {
-		t.Fatalf("client=%q", xp.ClientID)
-	}
-	if xp.PrimaryBinary.SHA1 != "1ae61e1d4a624751124a49cd992c90f948c31d37" {
-		t.Fatalf("xpilot sha1=%q", xp.PrimaryBinary.SHA1)
-	}
-	if len(xp.PESections) < 2 {
-		t.Fatalf("pe_sections=%d", len(xp.PESections))
-	}
-	// status string VA → file offset from research notes.
-	off, ok := xp.FileOffsetOf(".idata", 0x141AAF5AE)
-	if !ok || off != 0x1AAE7AE {
-		t.Fatalf("status file offset=%#x ok=%v", off, ok)
-	}
-	// Ensure padded_string mutations have file offsets.
-	var sawPadded, sawLen bool
-	for _, m := range xp.Mutations {
-		if m.Kind == "padded_string" {
-			sawPadded = true
-			if m.FileOffset == nil || m.AvailableBytes == nil {
-				t.Fatalf("padded mutation incomplete: %+v", m)
-			}
-		}
-		if m.LengthOf != "" {
-			sawLen = true
-		}
-	}
-	if !sawPadded || !sawLen {
-		t.Fatalf("padded=%v length_of=%v mutations=%d", sawPadded, sawLen, len(xp.Mutations))
-	}
-	if _, ok := store.LookupByHash("xpilot", "1AE61E1D4A624751124A49CD992C90F948C31D37"); !ok {
-		t.Fatal("xpilot lookup by hash failed")
+	if _, ok := store.Get("xpilot-3.0.1"); ok {
+		t.Fatal("xpilot profile must not be embedded")
 	}
 }
 

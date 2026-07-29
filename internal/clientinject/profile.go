@@ -33,7 +33,7 @@ type Profile struct {
 	PrimaryBinary          PrimaryBinarySpec `yaml:"primary_binary"`
 	ConfigFiles            []ConfigFileSpec  `yaml:"config_files"`
 	RelatedBinaries        []string          `yaml:"related_binaries"`
-	// PESections documents native PE section maps (xPilot-class VA→file conversion).
+	// PESections documents native PE section maps (VA→file conversion for padded_string adapters).
 	PESections  []PESectionSpec       `yaml:"pe_sections"`
 	CLR         *CLRSpec              `yaml:"clr"`
 	Strings     map[string]StringSpec `yaml:"strings"`

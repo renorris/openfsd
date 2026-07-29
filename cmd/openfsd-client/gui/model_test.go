@@ -2,7 +2,6 @@ package gui
 
 import (
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/renorris/openfsd/internal/clientinject"
@@ -54,14 +53,7 @@ func TestWebBaseHost_AndPublicVATSIM(t *testing.T) {
 		t.Fatal("expected public VATSIM host")
 	}
 	if IsPublicVATSIMHost("https://fsd.ex.co") {
-		t.Fatal("private host should not warn")
-	}
-	warn := PublicVATSIMWarning("https://voice1.vatsim.net")
-	if warn == "" || !strings.Contains(warn, "voice1.vatsim.net") {
-		t.Fatalf("warn=%q", warn)
-	}
-	if PublicVATSIMWarning("https://openfsd.example.com") != "" {
-		t.Fatal("unexpected warning")
+		t.Fatal("private host should not match")
 	}
 }
 
@@ -82,37 +74,8 @@ func TestCanApply(t *testing.T) {
 	}
 	f.WebBaseURL = "https://auth.vatsim.net"
 	ok, reason = CanApply(f, &clientinject.Plan{}, nil)
-	if ok || !strings.Contains(reason, "VATSIM") {
-		t.Fatalf("expected VATSIM gate: ok=%v reason=%q", ok, reason)
-	}
-	f.UnderstandPublicVATSIM = true
-	ok, _ = CanApply(f, &clientinject.Plan{}, nil)
-	if !ok {
-		t.Fatal("override should allow")
-	}
-}
-
-func TestFormatConstraints(t *testing.T) {
-	s := FormatConstraints([]clientinject.Constraint{{
-		Field: "JWTURL", MaxRunes: 35, Strategy: "in_place", Description: "budget",
-	}})
-	if !strings.Contains(s, "JWTURL") || !strings.Contains(s, "35") {
-		t.Fatalf("%s", s)
-	}
-	if FormatConstraints(nil) == "" {
-		t.Fatal("empty constraints should still return placeholder")
-	}
-}
-
-func TestFormatFingerprint_Running(t *testing.T) {
-	s := FormatFingerprint(clientinject.Install{
-		ClientID:  "vpilot",
-		RootDir:   "/x",
-		PrimaryPE: "/x/vPilot.exe",
-		HashSHA1:  "abc",
-	}, "vpilot-3.12.1", clientinject.ErrClientRunning)
-	if !strings.Contains(s, "running") {
-		t.Fatalf("%s", s)
+	if ok || reason == "" {
+		t.Fatalf("expected public host block: ok=%v reason=%q", ok, reason)
 	}
 }
 
@@ -150,31 +113,16 @@ func TestSettingsRoundTrip(t *testing.T) {
 	if got.InstallPath != s.InstallPath || got.WebBaseURL != s.WebBaseURL || got.FSDPort != 6810 {
 		t.Fatalf("%+v", got)
 	}
-	// missing file
 	empty, err := LoadSettings(filepath.Join(dir, "nope.json"))
 	if err != nil || empty.ClientID != "" {
 		t.Fatalf("empty=%+v err=%v", empty, err)
 	}
 }
 
-func TestBuildClientSlots(t *testing.T) {
-	// Fake adapter map with only vpilot
-	type mini struct {
-		id, name string
-	}
-	// Use real engine adapters shape via fake implementing interface is heavy;
-	// BuildClientSlots with empty map still returns future catalog.
+func TestBuildClientSlots_EmptyWithoutAdapters(t *testing.T) {
 	slots := BuildClientSlots(nil)
-	if len(slots) < 4 {
-		t.Fatalf("expected future catalog, got %d", len(slots))
-	}
-	for _, s := range slots {
-		if s.Enabled {
-			t.Fatalf("nil adapters should not enable: %+v", s)
-		}
-		if !strings.Contains(SlotLabel(s), "Coming soon") {
-			t.Fatalf("label=%q", SlotLabel(s))
-		}
+	if len(slots) != 0 {
+		t.Fatalf("expected empty slots without adapters, got %d", len(slots))
 	}
 }
 
@@ -192,14 +140,5 @@ func TestFormStateEndpoints(t *testing.T) {
 	}
 	if ep.JWTURL() != "https://fsd.ex.co/j" {
 		t.Fatalf("jwt=%q", ep.JWTURL())
-	}
-}
-
-func TestLegalConstants(t *testing.T) {
-	if LegalApplyBanner == "" || LegalOneLiner == "" {
-		t.Fatal("legal text required")
-	}
-	if !strings.Contains(strings.ToLower(LegalApplyBanner), "private") {
-		t.Fatal(LegalApplyBanner)
 	}
 }

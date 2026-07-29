@@ -169,34 +169,18 @@ func TestFirstDetectPath(t *testing.T) {
 	}
 }
 
-func TestSettingsDoesNotPersistPublicVATSIMAck(t *testing.T) {
+func TestSettingsFromForm_RoundTrip(t *testing.T) {
 	f := FormState{
-		ClientID:               "vpilot",
-		InstallPath:            "/x",
-		WebBaseURL:             "https://auth.vatsim.net",
-		FSDHost:                "h",
-		UnderstandPublicVATSIM: true,
+		ClientID:    "vpilot",
+		InstallPath: "/x",
+		WebBaseURL:  "https://fsd.ex.co",
+		FSDHost:     "h",
 	}
 	s := SettingsFromForm(f)
-	// Round-trip via JSON as saved on disk.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "settings.json")
 	if err := SaveSettings(path, s); err != nil {
 		t.Fatal(err)
-	}
-	// Ensure raw JSON does not contain the ack key.
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(raw) != "" {
-		var m map[string]any
-		if err := json.Unmarshal(raw, &m); err != nil {
-			t.Fatal(err)
-		}
-		if _, ok := m["understand_public_vatsim"]; ok {
-			t.Fatalf("should not persist understand_public_vatsim: %s", raw)
-		}
 	}
 	got, err := LoadSettings(path)
 	if err != nil {
@@ -204,10 +188,7 @@ func TestSettingsDoesNotPersistPublicVATSIMAck(t *testing.T) {
 	}
 	var f2 FormState
 	got.ApplyToForm(&f2)
-	if f2.UnderstandPublicVATSIM {
-		t.Fatal("ApplyToForm must not restore public VATSIM ack")
-	}
-	if f2.WebBaseURL != f.WebBaseURL {
-		t.Fatalf("WebBaseURL=%q", f2.WebBaseURL)
+	if f2.WebBaseURL != f.WebBaseURL || f2.InstallPath != f.InstallPath {
+		t.Fatalf("%+v", f2)
 	}
 }

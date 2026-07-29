@@ -17,11 +17,11 @@
 
 **Product name: openfsd Client Setup** (binary `openfsd-client`). This is a **generic, cross-platform, minimal desktop GUI** (plus headless CLI) that configures **user-installed** third-party FSD/AFV clients so they connect to a private **openfsd** deployment. Phase 0 is an **on-disk + config patcher with reversible backups** — not a true in-memory runtime injector. “Runtime” strategies (shadow launch, process inject) are **later phases** only; do not market Phase 0 as memory-only rewriting.
 
-openfsd speaks modern VATSIM-shaped FSD and optional AFV, but third-party clients (vPilot, xPilot, Euroscope, vatSys, TrackAudio, …) ship with **hardcoded VATSIM endpoints** (JWT issuer, status/datafeed URLs, AFV voice base). Operators today depend on **external, CLI-centric, version-brittle patch utilities** that often **disable AFV** rather than retargeting it.
+openfsd speaks modern VATSIM-shaped FSD and optional AFV, but third-party clients (vPilot and others) ship with **hardcoded VATSIM endpoints** (JWT issuer, status/datafeed URLs, AFV voice base). Operators today depend on **external, CLI-centric, version-brittle patch utilities** that often **disable AFV** rather than retargeting it. Client Setup ships **Windows vPilot only**.
 
 **Critical product shape (client-agnostic):**
 
-1. User selects **which client** (vPilot today; xPilot, Euroscope, vatSys, TrackAudio later).
+1. User selects **which client** (Windows vPilot only today).
 2. User points at the client’s **install location on disk** (or accepts auto-detect).
 3. User configures openfsd endpoints (web base, FSD host/port, AFV voice base, etc.).
 4. Tool runs the **adapter-specific** mutation strategy for that client version.
@@ -158,7 +158,7 @@ flowchart TB
     ENGINE[internal/clientinject Engine]
     AD[Adapter registry]
     VP[vPilotAdapter]
-    XP[xPilotAdapter future]
+    XP[other adapters — out of scope]
     PROF["embedded profiles<br/>internal/clientinject/profiles"]
     DISK[(User install tree)]
     BAK[(.openfsd-bak + manifest)]
@@ -792,7 +792,7 @@ String-inventory `GeoVR.Client.dll`, `GeoVR.Connection.dll`, `GeoVR.Shared.dll` 
 
 Same adapter registry as before. **GUI rule:** no `if client_id == "vpilot"` for layout, budgets, or buttons. All per-client behavior flows from `Adapter` + `Plan.Constraints` + profile-driven mutation lists.
 
-xPilot / Euroscope use `padded_string` + `raw_overwrite` families from prior-art YAML as **research seeds**, re-verified per version hash.
+Euroscope and similar clients may use `padded_string` + `raw_overwrite` families from prior-art YAML as **research seeds**, re-verified per version hash (not shipped adapters).
 
 ### GUI information architecture
 
@@ -1108,7 +1108,7 @@ Gates are tracked under `docs/client-injector/research/`; profiles gain offsets 
 | `cil_ldstr_remap` | `cil_ldstr_remap` | Free slot + ldstr bytes |
 | `cil_us_or_remap` | expanded by planner | Prefer in-place else remap |
 | `raw_overwrite` / `section_overwrite` | `raw_overwrite` | |
-| `padded_string` | `padded_string` | xPilot-class |
+| `padded_string` | `padded_string` | PE padded-string class |
 | `afv_disable` | `afv_disable_pe` or `launch_flag` | PE only if offset set |
 | `launch_flag` | `launch_flag` | e.g. `-novoice` |
 
@@ -1271,12 +1271,15 @@ go build -o openfsd-client ./cmd/openfsd-client
 | **Deps** | PR-6 |
 | **Description** | Temp PE (+ mutated DLLs only), cwd=install root, durable config default (Appendix B). |
 
-### PR-10: xPilot adapter (second client)
+### PR-10: additional client adapters — **out of scope**
+
+Windows **vPilot only** for Client Setup. Former “xPilot adapter” work was removed;
+do not reintroduce half-finished multi-client adapters until a full gate is ready.
 
 | | |
 |--|--|
-| **Title** | `clientinject: xPilot version-pinned adapter` |
-| **Files** | `adapters/xpilot/*`, embed profile, research notes, GUI enable |
+| **Status** | Cancelled / deferred |
+| **Was** | `adapters/xpilot/*`, embed profile, research notes, GUI enable |
 | **Deps** | PR-3 engine; PR-7 GUI list |
 | **Description** | Proves multi-client; re-verify offsets vs prior art for chosen hash. |
 

@@ -1,0 +1,232 @@
+# Build traditional OS installers for openfsd-client (plain Go binary).
+#
+# | OS      | Artifact                          | Install location                          |
+# |---------|-----------------------------------|-------------------------------------------|
+# | Windows | Inno Setup *-setup.exe            | %ProgramFiles%\openfsd-client\            |
+# | macOS   | .pkg + .dmg                       | /Applications/openfsd Client Setup.app    |
+# | Linux   | .deb + .tar.gz                    | /usr/bin/openfsd-client                   |
+#
+# User config (created by the app, not the installer):
+#   Windows %AppData%\openfsd-client\
+#   macOS   ~/Library/Application Support/openfsd-client/
+#   Linux   ~/.config/openfsd-client/
+
+name: openfsd-client packages
+
+on:
+  push:
+    branches: [main, dev]
+    tags: ["v*", "client-v*"]
+    paths:
+      - "cmd/openfsd-client/**"
+      - "internal/clientinject/**"
+      - "packaging/openfsd-client/**"
+      - ".github/workflows/openfsd-client-packages.yml"
+      - "go.mod"
+      - "go.sum"
+  pull_request:
+    paths:
+      - "cmd/openfsd-client/**"
+      - "internal/clientinject/**"
+      - "packaging/openfsd-client/**"
+      - ".github/workflows/openfsd-client-packages.yml"
+      - "go.mod"
+      - "go.sum"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: openfsd-client-packages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package-linux:
+    name: Linux .deb
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Fyne / OpenGL build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gcc libgl1-mesa-dev xorg-dev libxcursor-dev libxrandr-dev \
+            libxinerama-dev libxi-dev libxxf86vm-dev pkg-config \
+            librsvg2-bin
+
+      - name: Version
+        id: ver
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            V="${GITHUB_REF_NAME#client-}"
+            V="${V#v}"
+            echo "version=${V}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=$(git describe --tags --always --dirty | sed 's/^v//;s/^client-//')" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build packages
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          CGO_ENABLED: "1"
+        run: |
+          chmod +x packaging/openfsd-client/*.sh packaging/openfsd-client/*/*.sh
+          ./packaging/openfsd-client/build.sh
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: openfsd-client-linux
+          path: |
+            dist/openfsd-client/*.deb
+            dist/openfsd-client/*.tar.gz
+            dist/openfsd-client/SHA256SUMS
+          if-no-files-found: error
+
+  package-macos:
+    name: macOS .pkg + .dmg
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Version
+        id: ver
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            V="${GITHUB_REF_NAME#client-}"
+            V="${V#v}"
+            echo "version=${V}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=$(git describe --tags --always --dirty | sed 's/^v//;s/^client-//')" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build packages
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          CGO_ENABLED: "1"
+        run: |
+          chmod +x packaging/openfsd-client/*.sh packaging/openfsd-client/*/*.sh
+          ./packaging/openfsd-client/build.sh
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: openfsd-client-macos
+          path: |
+            dist/openfsd-client/*.pkg
+            dist/openfsd-client/*.dmg
+            dist/openfsd-client/*.tar.gz
+            dist/openfsd-client/SHA256SUMS
+          if-no-files-found: error
+
+  package-windows:
+    name: Windows Setup.exe
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Install MinGW (CGO for Fyne)
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          # Inherit setup-go PATH so `go` is visible inside msys2.
+          path-type: inherit
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-pkg-config
+            mingw-w64-x86_64-librsvg
+            mingw-w64-x86_64-imagemagick
+            zip
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress
+          if (-not (Test-Path "C:\Program Files (x86)\Inno Setup 6\ISCC.exe")) {
+            throw "ISCC.exe not found after Inno Setup install"
+          }
+
+      - name: Version
+        id: ver
+        shell: bash
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            V="${GITHUB_REF_NAME#client-}"
+            V="${V#v}"
+            echo "version=${V}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=$(git describe --tags --always --dirty | sed 's/^v//;s/^client-//')" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build packages
+        shell: msys2 {0}
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          CGO_ENABLED: "1"
+          ISCC: "C:/Program Files (x86)/Inno Setup 6/ISCC.exe"
+        run: |
+          export PATH="/mingw64/bin:${PATH}"
+          export CC=gcc
+          export CXX=g++
+          go version
+          gcc --version | head -1
+          chmod +x packaging/openfsd-client/*.sh packaging/openfsd-client/*/*.sh
+          ./packaging/openfsd-client/build.sh
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: openfsd-client-windows
+          path: |
+            dist/openfsd-client/*setup*
+            dist/openfsd-client/*portable*
+            dist/openfsd-client/*windows*
+            dist/openfsd-client/SHA256SUMS
+          if-no-files-found: error
+
+  # On version tags, attach installers to a GitHub Release.
+  release:
+    name: Publish release assets
+    needs: [package-linux, package-macos, package-windows]
+    if: github.ref_type == 'tag' && startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all package artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          pattern: openfsd-client-*
+          merge-multiple: true
+
+      - name: List assets
+        run: find release-assets -type f | sort
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/**
+          generate_release_notes: true
+          fail_on_unmatched_files: false

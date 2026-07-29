@@ -45,17 +45,22 @@ Coming soon in `openfsd-client`): [docs/client-injector/research/vatsys-1.4.19.m
 
 ## vPilot
 
-See [vPilot Patch Utility](https://github.com/renorris/vpilot-patch-utility)
+Use **openfsd Client Setup** (`openfsd-client`) for private-network endpoint
+retarget (Windows vPilot only today). Operator guide:
+[docs/client-injector/README.md](../docs/client-injector/README.md).
 
-## xPilot
+Installers (plain binary; no Fyne-specific packaging): Windows Setup.exe, macOS
+pkg/dmg, Linux deb — see [packaging/openfsd-client](../packaging/openfsd-client/README.md).
+Settings live under the OS user config dir (`openfsd-client`), not under the
+install path.
 
-See [here](https://github.com/renorris/openfsd-client-patch-utility).
+External prior art: [vPilot Patch Utility](https://github.com/renorris/vpilot-patch-utility).
 
 ## Voice (AFV)
 
 FSD data and **Audio for VATSIM (AFV)** voice are separate attachment planes. openfsd can serve AFV when started with **`-afv`** (see [Configuration](Configuration.md#afv-voice-optional) and [Deployment](Deployment.md#optional-afv-voice)).
 
-Clients such as **TrackAudio**, **xPilot**, and **VectorAudio** (AFV-Native-derived) need:
+Clients such as **TrackAudio** and **VectorAudio** (AFV-Native-derived) need:
 
 1. FSD host/port (or private-server entry) as usual
 2. A **voice base URL** pointing at the AFV REST API (`AFV_API_PUBLIC_BASE_URL` / your published HTTPS URL)

@@ -10,7 +10,7 @@ Operator documentation for [openfsd](https://github.com/renorris/openfsd).
 |------|-------------|
 | [Deployment](Deployment.md) | Docker Compose, Windows, single-binary run, optional cluster + AFV |
 | [Configuration](Configuration.md) | Env vars (FSD, web, cluster, AFV) and persistent DB settings |
-| [Client Connection](Client-Connection.md) | VRC, Euroscope, Swift, vPilot, xPilot; optional AFV voice |
+| [Client Connection](Client-Connection.md) | VRC, Euroscope, Swift, vPilot; optional AFV voice |
 | [Migrating from PostgreSQL](Migrating-from-PostgreSQL.md) | Convert an existing Postgres DB to SQLite |
 
 ## Admin / instructor web tools (in the product UI)

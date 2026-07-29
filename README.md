@@ -214,4 +214,4 @@ mkdocs serve
 
 Tracked source for the GitHub wiki is under [`wiki/`](wiki/) (Deployment, Configuration, Client Connection, Postgres migration).
 
-**Client Setup:** configure user-installed third-party clients for private openfsd networks with auxiliary binary `openfsd-client` — see [docs/client-injector/README.md](docs/client-injector/README.md) and [wiki/Client-Connection.md](wiki/Client-Connection.md).
+**Client Setup:** configure user-installed Windows vPilot for private openfsd networks with auxiliary binary `openfsd-client` — see [docs/client-injector/README.md](docs/client-injector/README.md) and [wiki/Client-Connection.md](wiki/Client-Connection.md). Traditional installers (Windows Setup, macOS pkg/dmg, Linux deb) are built in CI — [packaging/openfsd-client/README.md](packaging/openfsd-client/README.md).

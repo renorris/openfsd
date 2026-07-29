@@ -31,7 +31,7 @@ radios). openfsd AFV design treats it as a first-class consumer of:
 
 See `docs/design/afv-server.md` and `wiki/Client-Connection.md` § Voice (AFV).
 
-TrackAudio is **not** a full FSD pilot client like vPilot/xPilot. FSD traffic
+TrackAudio is **not** a full FSD pilot client like vPilot. FSD traffic
 usually stays in a separate client; TrackAudio attaches for **voice**.
 
 ## Why PE patching is not the default path

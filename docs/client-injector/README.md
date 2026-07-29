@@ -13,9 +13,9 @@ Version-pinned reverse-engineering notes live under
 
 ## What it is (and is not)
 
-openfsd Client Setup configures **user-installed** third-party FSD/AFV clients
-(vPilot first; more adapters later) so they talk to **your** openfsd deployment
-instead of the public VATSIM endpoints they ship with.
+openfsd Client Setup configures a **user-installed Windows vPilot** install so it
+talks to **your** openfsd deployment instead of the public VATSIM endpoints it
+ships with. Other pilot/ATC clients are out of scope for this tool for now.
 
 | Phase 0 (shipped intent) | Not Phase 0 |
 |--------------------------|-------------|
@@ -32,8 +32,8 @@ a “runtime-only injector.” Runtime strategies are later roadmap phases only.
 
 ## Legal
 
-- **Never redistribute** vPilot, xPilot, Euroscope, vatSys, or any other
-  proprietary client binary, installer, or patched derivative.
+- **Never redistribute** vPilot or any other proprietary client binary,
+  installer, or patched derivative.
 - Users must install the client **themselves** from the vendor (e.g.
   [vpilot.rosscarlson.dev](https://vpilot.rosscarlson.dev/Download)).
 - openfsd tracks **hashes, YAML profiles, research notes, and our code** —
@@ -61,6 +61,19 @@ go build -o openfsd-client ./cmd/openfsd-client
 
 `openfsd-client` is an **auxiliary** cmd (like `openfsd-migrate-*`). It is **not**
 a flag on the main `openfsd` server binary.
+
+### Installers (Windows / macOS / Linux)
+
+CI builds traditional OS installers that install the **plain binary** (not
+Fyne-specific packages). See [packaging/openfsd-client/README.md](../../packaging/openfsd-client/README.md).
+
+| Platform | Installer | Binary location | Settings |
+|----------|-----------|-----------------|----------|
+| Windows | Inno Setup `.exe` | `%ProgramFiles%\openfsd-client\` | `%AppData%\openfsd-client\` |
+| macOS | `.pkg` / `.dmg` | `/Applications/openfsd Client Setup.app` | `~/Library/Application Support/openfsd-client/` |
+| Linux | `.deb` | `/usr/bin/openfsd-client` | `~/.config/openfsd-client/` |
+
+Local: `./packaging/openfsd-client/build.sh` (on the target OS).
 
 ---
 
