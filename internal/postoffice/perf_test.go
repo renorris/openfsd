@@ -39,8 +39,8 @@ func searchATCCallsigns(p *PostOffice, self *session.Session) []string {
 	return callsignsOf(found)
 }
 
-// linearOracleSearch is a brute-force AABB scan used only in tests as the
-// reference semantics for the spatial hash.
+// linearOracleSearch is a brute-force primary-only AABB scan used only in
+// tests as the reference semantics for Search on primary-box fixtures.
 func linearOracleSearch(all []*session.Session, self *session.Session, atcOnly bool) []string {
 	sMin, sMax := geo.BoundingBox(self.LatLon(), self.VisRange.Load())
 	var found []string
@@ -53,6 +53,25 @@ func linearOracleSearch(all []*session.Session, self *session.Session, atcOnly b
 		}
 		oMin, oMax := geo.BoundingBox(other.LatLon(), other.VisRange.Load())
 		if !geo.AABBOverlap(sMin, sMax, oMin, oMax) {
+			continue
+		}
+		found = append(found, other.Callsign)
+	}
+	sort.Strings(found)
+	return found
+}
+
+// visBoxesOracleSearch is the exact Search predicate including SECPOS.
+func visBoxesOracleSearch(all []*session.Session, self *session.Session, atcOnly bool) []string {
+	var found []string
+	for _, other := range all {
+		if other == self {
+			continue
+		}
+		if atcOnly && !other.IsAtc {
+			continue
+		}
+		if !session.VisBoxesOverlap(self, other) {
 			continue
 		}
 		found = append(found, other.Callsign)
@@ -159,6 +178,43 @@ func TestSearch_EquivalenceToLinearOracle(t *testing.T) {
 		if fmt.Sprint(gotA) != fmt.Sprint(wantA) {
 			t.Fatalf("SearchATC(%s) grid=%v oracle=%v", pl.cs, gotA, wantA)
 		}
+	}
+}
+
+// TestSearch_EquivalenceToVisBoxesOracle includes a secondary-only pair.
+func TestSearch_EquivalenceToVisBoxesOracle(t *testing.T) {
+	p := New()
+	atc := newTestClient("LAX_CTR", 34.0, -118.0, 40*1852)
+	atc.IsAtc = true
+	pilot := newTestClient("N100", 36.0, -118.0, 50*1852)
+	near := newTestClient("NEAR", 34.01, -118.01, 50*1852)
+	for _, c := range []*session.Session{atc, pilot, near} {
+		if err := p.Register(c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !atc.SetSecondaryVisCenter(0, 36.0, -118.0) {
+		t.Fatal("SetSecondaryVisCenter")
+	}
+	all := []*session.Session{atc, pilot, near}
+	for _, self := range all {
+		got := searchCallsigns(p, self)
+		want := visBoxesOracleSearch(all, self, false)
+		if fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Fatalf("Search(%s)=%v oracle=%v", self.Callsign, got, want)
+		}
+		gotA := searchATCCallsigns(p, self)
+		wantA := visBoxesOracleSearch(all, self, true)
+		if fmt.Sprint(gotA) != fmt.Sprint(wantA) {
+			t.Fatalf("SearchATC(%s)=%v oracle=%v", self.Callsign, gotA, wantA)
+		}
+	}
+	// Primary-only oracle must miss the secondary-only pair (do not add SECPOS to it).
+	if contains(linearOracleSearch(all, pilot, false), "LAX_CTR") {
+		t.Fatal("linearOracleSearch is primary-only; must miss CTR↔pilot")
+	}
+	if !contains(visBoxesOracleSearch(all, pilot, false), "LAX_CTR") {
+		t.Fatal("visBoxesOracleSearch must include SECPOS pair")
 	}
 }
 
@@ -725,5 +781,461 @@ func TestRegisterRelease_IdentityGuard(t *testing.T) {
 	}
 	if p.liveLen() != 1 {
 		t.Fatalf("liveLen=%d", p.liveLen())
+	}
+	peer := newTestClient("PEER", 1, 1, 100000)
+	if err := p.Register(peer); err != nil {
+		t.Fatal(err)
+	}
+	gotCS := searchCallsigns(p, peer)
+	if !contains(gotCS, "SAME") {
+		t.Fatalf("identity-guard Search after ghost release = %v, want SAME", gotCS)
+	}
+}
+
+// TestSearch_SetLatLonWithoutUpdatePosition mirrors sweatbox syncSessionWire.
+func TestSearch_SetLatLonWithoutUpdatePosition(t *testing.T) {
+	p := New()
+	a := newTestClient("A", 0, 0, 50*1852)
+	b := newTestClient("B", 0, 0, 50*1852)
+	if err := p.Register(a); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Register(b); err != nil {
+		t.Fatal(err)
+	}
+	b.SetLatLon(50, 10)
+	if contains(searchCallsigns(p, a), "B") {
+		t.Fatal("SetLatLon without UpdatePosition must refresh sidecar (move out)")
+	}
+	b.SetLatLon(0, 0)
+	if !contains(searchCallsigns(p, a), "B") {
+		t.Fatal("SetLatLon without UpdatePosition must refresh sidecar (move back)")
+	}
+}
+
+// TestSearch_SetSecondaryWithoutUpdatePosition is the hook path for ' packets.
+func TestSearch_SetSecondaryWithoutUpdatePosition(t *testing.T) {
+	p := New()
+	atc := newTestClient("CTR", 34.0, -118.0, 40*1852)
+	atc.IsAtc = true
+	pilot := newTestClient("N1", 36.0, -118.0, 50*1852)
+	if err := p.Register(atc); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Register(pilot); err != nil {
+		t.Fatal(err)
+	}
+	if contains(searchCallsigns(p, pilot), "CTR") {
+		t.Fatal("primary-only should miss")
+	}
+	if !atc.SetSecondaryVisCenter(0, 36.0, -118.0) {
+		t.Fatal("SetSecondaryVisCenter")
+	}
+	if !contains(searchCallsigns(p, pilot), "CTR") {
+		t.Fatal("hook after SetSecondaryVisCenter must Search-hit")
+	}
+}
+
+// TestSearch_CompactConcurrentSECPOS forces ATC compact while a surviving ATC
+// mutates SECPOS. After wait, SearchATC must hit *without* re-setting SECPOS
+// (would pass a missing post-Store re-fill if we hooked first).
+func TestSearch_CompactConcurrentSECPOS(t *testing.T) {
+	const n = 80
+	p := New()
+	clients := make([]*session.Session, n)
+	for i := 0; i < n; i++ {
+		c := newTestClient(fmt.Sprintf("ATC%d", i), 34.0, -118.0, 40*1852)
+		c.IsAtc = true
+		clients[i] = c
+		if err := p.Register(c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	survivor := clients[n-1]
+	if !survivor.SetSecondaryVisCenter(0, 36.0, -118.0) {
+		t.Fatal("pre-compact SECPOS")
+	}
+	pilot := newTestClient("N100", 36.0, -118.0, 50*1852)
+	if err := p.Register(pilot); err != nil {
+		t.Fatal(err)
+	}
+
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				survivor.SetSecondaryVisCenter(0, 36.0, -118.0)
+			}
+		}
+	}()
+
+	for i := 0; i < n*3/4; i++ {
+		p.Release(clients[i])
+	}
+	close(stop)
+	wg.Wait()
+
+	if len(p.freeAtc) != 0 {
+		t.Fatalf("ATC compact did not run: freeAtc=%d", len(p.freeAtc))
+	}
+	// Do not re-set SECPOS first — sidecar must already be packed+refilled.
+	if !contains(searchATCCallsigns(p, pilot), survivor.Callsign) {
+		t.Fatalf("SearchATC after ATC compact (no extra mutator) = %v, want %s", searchATCCallsigns(p, pilot), survivor.Callsign)
+	}
+
+	survivor.ClearSecondaryVisCenters()
+	if contains(searchATCCallsigns(p, pilot), survivor.Callsign) {
+		t.Fatal("clear after compact should drop the pair")
+	}
+	if !survivor.SetSecondaryVisCenter(0, 36.0, -118.0) {
+		t.Fatal("re-set")
+	}
+	if !contains(searchATCCallsigns(p, pilot), survivor.Callsign) {
+		t.Fatal("post-compact hook without UpdatePosition must still SearchATC-hit packed row")
+	}
+}
+
+// TestSearch_CompactLiveConcurrentSECPOS grows the live slab to cap>=256 then
+// compactLiveLocked; Search must hit without an extra mutator.
+func TestSearch_CompactLiveConcurrentSECPOS(t *testing.T) {
+	const n = 256
+	p := New()
+	clients := make([]*session.Session, n)
+	for i := 0; i < n; i++ {
+		c := newTestClient(fmt.Sprintf("L%d", i), 34.0, -118.0, 40*1852)
+		if i == n-1 {
+			c.IsAtc = true
+		}
+		clients[i] = c
+		if err := p.Register(c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if capN := len(p.live.Load().slots); capN < 256 {
+		t.Fatalf("live slab cap=%d, want >=256", capN)
+	}
+	survivor := clients[n-1]
+	if !survivor.SetSecondaryVisCenter(0, 36.0, -118.0) {
+		t.Fatal("pre-compact SECPOS")
+	}
+	// Keep a pre-registered searcher (do not Register after n=256 or cap grows to 512
+	// and free>=remaining may not hold). Place them under the secondary.
+	pilot := clients[n-2]
+	pilot.SetGeo(36.0, -118.0, 50*1852)
+
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				survivor.SetSecondaryVisCenter(0, 36.0, -118.0)
+			}
+		}
+	}()
+
+	// Release half so free >= remaining (128/128) and cap >= 256.
+	for i := 0; i < n/2; i++ {
+		p.Release(clients[i])
+	}
+	close(stop)
+	wg.Wait()
+
+	if len(p.freeLive) != 0 {
+		t.Fatalf("live compact did not run: freeLive=%d", len(p.freeLive))
+	}
+	if !contains(searchCallsigns(p, pilot), survivor.Callsign) {
+		t.Fatalf("Search after live compact (no extra mutator) = %v", searchCallsigns(p, pilot))
+	}
+	survivor.ClearSecondaryVisCenters()
+	if contains(searchCallsigns(p, pilot), survivor.Callsign) {
+		t.Fatal("clear after live compact should miss")
+	}
+	if !survivor.SetSecondaryVisCenter(0, 36.0, -118.0) {
+		t.Fatal("re-set")
+	}
+	if !contains(searchCallsigns(p, pilot), survivor.Callsign) {
+		t.Fatal("post-live-compact hook without UpdatePosition must Search-hit")
+	}
+}
+
+// TestLiveSlab_GrowConcurrentHook registers past the 128-slot grow while an
+// early occupant mutates geo; after grow, Search must hit without an extra mutator.
+func TestLiveSlab_GrowConcurrentHook(t *testing.T) {
+	const n = 200
+	p := New()
+	early := newTestClient("EARLY", 34.0, -118.0, 40*1852)
+	early.IsAtc = true
+	if err := p.Register(early); err != nil {
+		t.Fatal(err)
+	}
+	if !early.SetSecondaryVisCenter(0, 36.0, -118.0) {
+		t.Fatal("SECPOS")
+	}
+	pilot := newTestClient("N100", 36.0, -118.0, 50*1852)
+	if err := p.Register(pilot); err != nil {
+		t.Fatal(err)
+	}
+
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				early.SetSecondaryVisCenter(0, 36.0, -118.0)
+				early.SetLatLon(34.0, -118.0)
+			}
+		}
+	}()
+
+	for i := 0; i < n; i++ {
+		c := newTestClient(fmt.Sprintf("G%d", i), 0, 0, 1000)
+		if err := p.Register(c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	close(stop)
+	wg.Wait()
+
+	if len(p.live.Load().slots) < 256 {
+		t.Fatalf("expected grow past 128, cap=%d", len(p.live.Load().slots))
+	}
+	if !contains(searchCallsigns(p, pilot), "EARLY") {
+		t.Fatal("after grow, Search without extra mutator must hit EARLY via SECPOS")
+	}
+	early.ClearSecondaryVisCenters()
+	if contains(searchCallsigns(p, pilot), "EARLY") {
+		t.Fatal("clear after grow should miss")
+	}
+	early.SetLatLon(36.0, -118.0) // no UpdatePosition
+	if !contains(searchCallsigns(p, pilot), "EARLY") {
+		t.Fatal("SetLatLon after grow without UpdatePosition must refresh sidecar")
+	}
+}
+
+// TestLiveSlab_GrowCopiesSidecar registers past initial cap so grow copies SoA+live.
+func TestLiveSlab_GrowCopiesSidecar(t *testing.T) {
+	const n = 200
+	p := New()
+	clients := make([]*session.Session, n)
+	for i := 0; i < n; i++ {
+		clients[i] = newTestClient(fmt.Sprintf("G%d", i), 34.0, -118.0, 50*1852)
+		if err := p.Register(clients[i]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := searchCallsigns(p, clients[0])
+	if len(got) != n-1 {
+		t.Fatalf("after grow Search found %d, want %d", len(got), n-1)
+	}
+}
+
+// TestLiveSlab_GrowRefillAfterSECPOS injects SetSecondary between SoA copy and
+// Store. Without post-publish re-fill the new slab keeps a primary-only row.
+func TestLiveSlab_GrowRefillAfterSECPOS(t *testing.T) {
+	p := New()
+	atc := newTestClient("CTR", 34.0, -118.0, 40*1852)
+	atc.IsAtc = true
+	if err := p.Register(atc); err != nil {
+		t.Fatal(err)
+	}
+	pilot := newTestClient("N1", 36.0, -118.0, 50*1852)
+	if err := p.Register(pilot); err != nil {
+		t.Fatal(err)
+	}
+	if contains(searchCallsigns(p, pilot), "CTR") {
+		t.Fatal("primary-only must miss")
+	}
+
+	cap0 := len(p.live.Load().slots)
+	for i := p.liveLen(); i < cap0; i++ {
+		c := newTestClient(fmt.Sprintf("F%d", i), 0, 0, 1000)
+		if err := p.Register(c); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var injected atomic.Bool
+	growCopyHook = func() {
+		if injected.Load() {
+			return
+		}
+		if !atc.SetSecondaryVisCenter(0, 36.0, -118.0) {
+			t.Error("SetSecondaryVisCenter during grow")
+			return
+		}
+		injected.Store(true)
+	}
+	defer func() { growCopyHook = nil }()
+
+	if err := p.Register(newTestClient("GROW", 0, 0, 1000)); err != nil {
+		t.Fatal(err)
+	}
+	growCopyHook = nil
+
+	if !injected.Load() {
+		t.Fatal("grow copy hook did not run")
+	}
+	if !session.VisBoxesOverlap(atc, pilot) {
+		t.Fatal("exact must hit after injected SECPOS")
+	}
+	if !contains(searchCallsigns(p, pilot), "CTR") {
+		t.Fatal("grow re-fill must publish SECPOS written between copy and Store")
+	}
+}
+
+// TestATCSlab_GrowRefillAfterSECPOS is the ATC-slab counterpart.
+func TestATCSlab_GrowRefillAfterSECPOS(t *testing.T) {
+	p := New()
+	atc := newTestClient("CTR", 34.0, -118.0, 40*1852)
+	atc.IsAtc = true
+	if err := p.Register(atc); err != nil {
+		t.Fatal(err)
+	}
+	pilot := newTestClient("N1", 36.0, -118.0, 50*1852)
+	if err := p.Register(pilot); err != nil {
+		t.Fatal(err)
+	}
+
+	cap0 := len(p.atcLive.Load().slots)
+	for i := int(p.atcCount.Load()); i < cap0; i++ {
+		c := newTestClient(fmt.Sprintf("A%d", i), 0, 0, 1000)
+		c.IsAtc = true
+		if err := p.Register(c); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var injected atomic.Bool
+	growCopyHook = func() {
+		if injected.Load() {
+			return
+		}
+		if !atc.SetSecondaryVisCenter(0, 36.0, -118.0) {
+			t.Error("SetSecondaryVisCenter during ATC grow")
+			return
+		}
+		injected.Store(true)
+	}
+	defer func() { growCopyHook = nil }()
+
+	extra := newTestClient("AGROW", 0, 0, 1000)
+	extra.IsAtc = true
+	if err := p.Register(extra); err != nil {
+		t.Fatal(err)
+	}
+	growCopyHook = nil
+
+	if !injected.Load() {
+		t.Fatal("ATC grow copy hook did not run")
+	}
+	if !contains(searchATCCallsigns(p, pilot), "CTR") {
+		t.Fatal("ATC grow re-fill must publish SECPOS written between copy and Store")
+	}
+}
+
+func TestIdxPool_OversizedDropped(t *testing.T) {
+	big := make([]int32, 0, idxPoolMaxCap+1)
+	ptr := &big
+	releaseIdx(ptr)
+	got := acquireIdx()
+	if cap(*got) > idxPoolMaxCap {
+		t.Fatalf("acquireIdx returned oversized buffer cap=%d", cap(*got))
+	}
+	releaseIdx(got)
+	releaseIdx(nil)
+}
+
+func TestStoreUnionSidecar_IdentityNoWrite(t *testing.T) {
+	p := New()
+	s := newTestClient("S", 0, 0, 1000)
+	// Unregistered: indices −1, slot not published.
+	p.storeUnionSidecar(s)
+	p.writeOne(&p.live, 0, s, 0, 0, 1, 1)
+	if slab := p.live.Load(); slab.live[0] != 0 {
+		t.Fatal("must not write sidecar when slot != s")
+	}
+}
+
+// TestStoreUnionSidecar_IdentityAfterReregister: old session must not smash
+// the reused slot’s union. A write that ignores slots[idx]!=s would FN Search.
+func TestStoreUnionSidecar_IdentityAfterReregister(t *testing.T) {
+	p := New()
+	old := newTestClient("SAME", 0, 0, 1000)
+	if err := p.Register(old); err != nil {
+		t.Fatal(err)
+	}
+	oldIdx := old.SlabLive()
+	p.Release(old)
+
+	neu := newTestClient("SAME", 50.0, 10.0, 80*1852)
+	if err := p.Register(neu); err != nil {
+		t.Fatal(err)
+	}
+	if neu.SlabLive() != oldIdx {
+		t.Fatalf("expected free-list reuse: neu=%d old=%d", neu.SlabLive(), oldIdx)
+	}
+	peer := newTestClient("PEER", 50.0, 10.0, 80*1852)
+	if err := p.Register(peer); err != nil {
+		t.Fatal(err)
+	}
+	if !contains(searchCallsigns(p, peer), "SAME") {
+		t.Fatal("peer should find neu before smash attempt")
+	}
+
+	// Stale writes as if old still owned the packed row (tiny equator box).
+	p.writeOne(&p.live, oldIdx, old, -1, -1, -0.9, -0.9)
+	old.SetSlabLive(oldIdx)
+	p.storeUnionSidecar(old)
+	old.SetGeo(0, 0, 1) // hook cleared on Release
+
+	if !contains(searchCallsigns(p, peer), "SAME") {
+		t.Fatal("identity check must ignore old writeOne/storeUnionSidecar/SetGeo on reused slot")
+	}
+}
+
+// TestSearch_SetVisRangeWithoutUpdatePosition: expand ATC range so exact
+// overlap becomes true. Search from the still-small pilot: a stale small
+// ATC sidecar would coarse-miss. Do not SetGeo the pilot.
+func TestSearch_SetVisRangeWithoutUpdatePosition(t *testing.T) {
+	p := New()
+	// 0.3° apart: 100 m boxes cannot meet; 40 NM ATC box reaches the pilot.
+	atc := newTestClient("CTR", 34.0, -118.0, 100)
+	atc.IsAtc = true
+	pilot := newTestClient("N1", 34.3, -118.0, 100)
+	if err := p.Register(atc); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Register(pilot); err != nil {
+		t.Fatal(err)
+	}
+	if contains(searchCallsigns(p, pilot), "CTR") {
+		t.Fatal("small ranges must not overlap")
+	}
+	if session.VisBoxesOverlap(atc, pilot) {
+		t.Fatal("exact predicate must miss at 100 m")
+	}
+
+	atc.SetVisRange(40 * 1852)
+	if !session.VisBoxesOverlap(atc, pilot) {
+		t.Fatal("exact predicate must hit after ATC range expand")
+	}
+	if !contains(searchCallsigns(p, pilot), "CTR") {
+		t.Fatal("SetVisRange without UpdatePosition must refresh sidecar (Search from small-box pilot)")
 	}
 }

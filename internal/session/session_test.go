@@ -27,6 +27,105 @@ func TestNew_ZeroCoords(t *testing.T) {
 	if s.Synthetic {
 		t.Fatal("Synthetic must default false for normal clients")
 	}
+	if s.SlabLive() != -1 || s.SlabATC() != -1 {
+		t.Fatalf("slab indices after New = live=%d atc=%d, want −1", s.SlabLive(), s.SlabATC())
+	}
+}
+
+func TestUnionVisBox_PrimaryOnlyAndSECPOS(t *testing.T) {
+	const rangeM = 40 * 1852
+	s := New(context.Background(), nil, nil, LoginData{Callsign: "CTR", IsAtc: true})
+	s.SetGeo(34.0, -118.0, rangeM)
+
+	uMin, uMax := s.UnionVisBox()
+	vMin, vMax := s.VisBox()
+	if uMin != vMin || uMax != vMax {
+		t.Fatalf("without SECPOS UnionVisBox=%v/%v VisBox=%v/%v", uMin, uMax, vMin, vMax)
+	}
+
+	if !s.SetSecondaryVisCenter(0, 36.0, -118.0) {
+		t.Fatal("SetSecondaryVisCenter")
+	}
+	if !s.SetSecondaryVisCenter(3, 34.0, -122.0) {
+		t.Fatal("sparse west secondary")
+	}
+	uMin, uMax = s.UnionVisBox()
+	if uMax[0] <= vMax[0] {
+		t.Fatalf("union max lat %v should expand north of primary %v", uMax[0], vMax[0])
+	}
+	if uMin[0] > vMin[0] {
+		t.Fatalf("union min lat %v should not shrink primary %v", uMin[0], vMin[0])
+	}
+	if uMin[1] >= vMin[1] {
+		t.Fatalf("union min lon %v should expand west of primary %v", uMin[1], vMin[1])
+	}
+
+	s.ClearSecondaryVisCenters()
+	uMin, uMax = s.UnionVisBox()
+	vMin, vMax = s.VisBox()
+	if uMin != vMin || uMax != vMax {
+		t.Fatalf("after clear UnionVisBox=%v/%v VisBox=%v/%v", uMin, uMax, vMin, vMax)
+	}
+}
+
+func TestVisChangedHook_PublicMutatorsOnce(t *testing.T) {
+	s := New(context.Background(), nil, nil, LoginData{Callsign: "H"})
+	var n atomic.Int32
+	s.SetVisChangedHook(func(*Session) { n.Add(1) })
+
+	s.SetGeo(34.0, -118.0, 40*1852)
+	if n.Load() != 1 {
+		t.Fatalf("SetGeo fired hook %d times, want 1", n.Load())
+	}
+
+	s.SetLatLon(34.1, -118.1)
+	if n.Load() != 2 {
+		t.Fatalf("SetLatLon fired hook %d times, want 2 total", n.Load())
+	}
+
+	s.SetVisRange(50 * 1852)
+	if n.Load() != 3 {
+		t.Fatalf("SetVisRange fired hook %d times, want 3 total", n.Load())
+	}
+
+	if !s.SetSecondaryVisCenter(0, 36.0, -118.0) {
+		t.Fatal("SetSecondaryVisCenter")
+	}
+	if n.Load() != 4 {
+		t.Fatalf("SetSecondaryVisCenter(true) fired hook %d times, want 4 total", n.Load())
+	}
+
+	if s.SetSecondaryVisCenter(-1, 0, 0) {
+		t.Fatal("out-of-range SetSecondaryVisCenter should fail")
+	}
+	if n.Load() != 4 {
+		t.Fatalf("SetSecondaryVisCenter(false) must not fire hook, got %d", n.Load())
+	}
+
+	s.ClearSecondaryVisCenters()
+	if n.Load() != 5 {
+		t.Fatalf("ClearSecondaryVisCenters fired hook %d times, want 5 total", n.Load())
+	}
+
+	s.SetVisChangedHook(nil)
+	s.SetGeo(0, 0, 1000)
+	if n.Load() != 5 {
+		t.Fatalf("nil hook must not fire, got %d", n.Load())
+	}
+}
+
+func TestSlabIndices_Setters(t *testing.T) {
+	s := New(context.Background(), nil, nil, LoginData{})
+	s.SetSlabLive(3)
+	s.SetSlabATC(7)
+	if s.SlabLive() != 3 || s.SlabATC() != 7 {
+		t.Fatalf("SlabLive=%d SlabATC=%d", s.SlabLive(), s.SlabATC())
+	}
+	s.SetSlabLive(-1)
+	s.SetSlabATC(-1)
+	if s.SlabLive() != -1 || s.SlabATC() != -1 {
+		t.Fatal("expected −1 after clear")
+	}
 }
 
 func TestSecondaryVisCenters_AndVisBoxesOverlap(t *testing.T) {

@@ -134,6 +134,15 @@ type Session struct {
 	// Concurrent Search readers load the pointer; may observe a stale snapshot.
 	secVis atomic.Pointer[secVisSnapshot]
 
+	// visChangedHook is invoked once at the end of each public geo mutator.
+	// Nil means unregistered (sidecar no-op). Writer: postoffice Register/Release.
+	visChangedHook atomic.Pointer[VisChangedHook]
+
+	// Slab indices into the postoffice live / ATC pointer slabs.
+	// −1 = not present. Separate so live and ATC compact independently.
+	slabLive atomic.Int32
+	slabATC  atomic.Int32
+
 	ClosestVelocityClientDistance float64 // Closest Velocity-compatible client distance in meters (local Search only)
 
 	// RemoteClosestVelocityM is the multi-peer mesh aggregate min distance (meters).
@@ -192,6 +201,11 @@ type Session struct {
 // under lock.
 type SendEnqueueObserver func(callsign string, enqueuedAt time.Time, queueDepth int)
 
+// VisChangedHook is invoked once at the end of each public geo mutator
+// (SetGeo, SetLatLon, SetVisRange, successful SetSecondaryVisCenter,
+// ClearSecondaryVisCenters). Used by postoffice to refresh the AABB sidecar.
+type VisChangedHook func(s *Session)
+
 // sendChanCap is the outbound buffer depth. Position storms use SendPosition
 // (latest-wins) so a slow peer cannot stall the broadcaster.
 const sendChanCap = 32
@@ -208,6 +222,8 @@ func New(ctx context.Context, conn net.Conn, scanner *bufio.Scanner, data LoginD
 		sendChan:  make(chan string, sendChanCap),
 		LoginData: data,
 	}
+	s.slabLive.Store(-1)
+	s.slabATC.Store(-1)
 	s.SetLatLon(0, 0)
 	// Unset remote $SF proximity = +Inf (never treat zero as "0 m away").
 	s.RemoteClosestVelocityM.Store(math.Inf(1))
@@ -460,6 +476,7 @@ func (s *Session) SetLatLon(lat, lon float64) {
 	s.lonBits.Store(math.Float64bits(lon))
 	s.refreshVisBox(lat, lon, s.VisRange.Load())
 	s.recomputeSecondaryBoxes(s.VisRange.Load())
+	s.fireVisChanged()
 }
 
 // SetVisRange stores visibility range (meters) and refreshes VisBox.
@@ -469,6 +486,7 @@ func (s *Session) SetVisRange(rangeM float64) {
 	ll := s.LatLon()
 	s.refreshVisBox(ll[0], ll[1], rangeM)
 	s.recomputeSecondaryBoxes(rangeM)
+	s.fireVisChanged()
 }
 
 // SetGeo sets lat, lon, and visibility range together (single VisBox refresh).
@@ -480,6 +498,67 @@ func (s *Session) SetGeo(lat, lon, rangeM float64) {
 	s.VisRange.Store(rangeM)
 	s.refreshVisBox(lat, lon, rangeM)
 	s.recomputeSecondaryBoxes(rangeM)
+	s.fireVisChanged()
+}
+
+// SetVisChangedHook installs or clears the geo-mutation hook. nil clears.
+func (s *Session) SetVisChangedHook(h VisChangedHook) {
+	if h == nil {
+		s.visChangedHook.Store(nil)
+		return
+	}
+	s.visChangedHook.Store(&h)
+}
+
+func (s *Session) fireVisChanged() {
+	p := s.visChangedHook.Load()
+	if p == nil {
+		return
+	}
+	h := *p
+	if h != nil {
+		h(s)
+	}
+}
+
+// SetSlabLive records this session's index in the postoffice live slab (−1 = absent).
+func (s *Session) SetSlabLive(idx int32) { s.slabLive.Store(idx) }
+
+// SetSlabATC records this session's index in the postoffice ATC slab (−1 = absent).
+func (s *Session) SetSlabATC(idx int32) { s.slabATC.Store(idx) }
+
+// SlabLive returns the live-slab index, or −1 if not registered in that slab.
+func (s *Session) SlabLive() int32 { return s.slabLive.Load() }
+
+// SlabATC returns the ATC-slab index, or −1 if not in the ATC slab.
+func (s *Session) SlabATC() int32 { return s.slabATC.Load() }
+
+// UnionVisBox is primary VisBox ∪ every valid SECPOS secondary AABB (degrees).
+// Pure read of VisBox() + secVis snapshot — no extra stored edges.
+func (s *Session) UnionVisBox() (min, max [2]float64) {
+	min, max = s.VisBox()
+	snap := s.secVis.Load()
+	if snap == nil {
+		return min, max
+	}
+	for i := range snap.slots {
+		if !snap.slots[i].valid {
+			continue
+		}
+		if snap.slots[i].minLat < min[0] {
+			min[0] = snap.slots[i].minLat
+		}
+		if snap.slots[i].minLon < min[1] {
+			min[1] = snap.slots[i].minLon
+		}
+		if snap.slots[i].maxLat > max[0] {
+			max[0] = snap.slots[i].maxLat
+		}
+		if snap.slots[i].maxLon > max[1] {
+			max[1] = snap.slots[i].maxLon
+		}
+	}
+	return min, max
 }
 
 // VisBox returns the cached axis-aligned visibility box [min, max] in degrees.
@@ -530,6 +609,7 @@ type secVisSlot struct {
 // (vatSys SendPosition order: % primary, then ' for each secondary).
 func (s *Session) ClearSecondaryVisCenters() {
 	s.secVis.Store(nil)
+	s.fireVisChanged()
 }
 
 // SetSecondaryVisCenter stores or replaces secondary center at zero-based index.
@@ -556,6 +636,7 @@ func (s *Session) SetSecondaryVisCenter(index int, lat, lon float64) bool {
 		maxLon: maxLon,
 	}
 	s.secVis.Store(&next)
+	s.fireVisChanged()
 	return true
 }
 

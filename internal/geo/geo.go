@@ -85,6 +85,13 @@ func AABBOverlap(minA, maxA, minB, maxB [2]float64) bool {
 		minA[1] <= maxB[1] && maxA[1] >= minB[1]
 }
 
+// AABBOverlapF32 is the float32 inclusive overlap test (same predicate as AABBOverlap).
+// NaN comparisons are false, so a NaN edge never reports a hit.
+func AABBOverlapF32(minA, maxA, minB, maxB [2]float32) bool {
+	return minA[0] <= maxB[0] && maxA[0] >= minB[0] &&
+		minA[1] <= maxB[1] && maxA[1] >= minB[1]
+}
+
 // QuantizeDeg quantizes a lat/lon degree value to a fixed grid.
 // quantumDeg is the cell size in degrees (e.g. 0.001° ≈ 111 m of latitude).
 func QuantizeDeg(v, quantumDeg float64) float64 {

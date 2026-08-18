@@ -162,6 +162,45 @@ func TestAABBOverlap(t *testing.T) {
 	}
 }
 
+func TestAABBOverlapF32(t *testing.T) {
+	if !AABBOverlapF32([2]float32{0, 0}, [2]float32{1, 1}, [2]float32{0.5, 0.5}, [2]float32{2, 2}) {
+		t.Fatal("expected overlap")
+	}
+	if !AABBOverlapF32([2]float32{0, 0}, [2]float32{1, 1}, [2]float32{1, 1}, [2]float32{2, 2}) {
+		t.Fatal("inclusive touch must overlap")
+	}
+	if AABBOverlapF32([2]float32{0, 0}, [2]float32{1, 1}, [2]float32{2, 2}, [2]float32{3, 3}) {
+		t.Fatal("expected no overlap")
+	}
+	nan := float32(math.NaN())
+	if AABBOverlapF32([2]float32{nan, 0}, [2]float32{1, 1}, [2]float32{0, 0}, [2]float32{1, 1}) {
+		t.Fatal("NaN min lat must not overlap")
+	}
+	if AABBOverlapF32([2]float32{0, nan}, [2]float32{1, 1}, [2]float32{0, 0}, [2]float32{1, 1}) {
+		t.Fatal("NaN min lon must not overlap")
+	}
+	if AABBOverlapF32([2]float32{0, 0}, [2]float32{nan, 1}, [2]float32{0, 0}, [2]float32{1, 1}) {
+		t.Fatal("NaN max lat must not overlap")
+	}
+	if AABBOverlapF32([2]float32{0, 0}, [2]float32{1, nan}, [2]float32{0, 0}, [2]float32{1, 1}) {
+		t.Fatal("NaN max lon must not overlap")
+	}
+	if !AABBOverlapF32(
+		[2]float32{float32(math.Inf(-1)), float32(math.Inf(-1))},
+		[2]float32{float32(math.Inf(1)), float32(math.Inf(1))},
+		[2]float32{0, 0}, [2]float32{1, 1},
+	) {
+		t.Fatal("±Inf extent must overlap a finite box")
+	}
+	if AABBOverlapF32(
+		[2]float32{float32(math.Inf(1)), 0},
+		[2]float32{float32(math.Inf(1)), 1},
+		[2]float32{0, 0}, [2]float32{1, 1},
+	) {
+		t.Fatal("+Inf-only min should not overlap a finite box")
+	}
+}
+
 func TestQuantizeCenter(t *testing.T) {
 	q := QuantizeCenter([2]float64{34.0004, -118.0006}, 0.001)
 	if q[0] != 34.0 || q[1] != -118.001 {

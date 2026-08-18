@@ -18,6 +18,7 @@ Operational rules for agents and humans changing this repository. This file is t
 | `internal/auth` | JWT + VATSIM auth state | No TCP |
 | `internal/session` | Per-connection state + send worker | Does not import postoffice/server |
 | `internal/postoffice` | Registry (map/tree of participants) | Depends on session ports, not server |
+| `internal/postoffice/aabbfilter` | Scalar AABB sidecar `FilterOverlap` | **stdlib + `internal/geo` only**; no parent postoffice/session |
 | `internal/metar` | Worker pool + injectable HTTP | Side-effect boundary |
 | `internal/sweatbox` | Pure sim (taxi, engine, kinematics; apt/air via twrfiles) | **stdlib + `internal/geo` + `pkg/twrfiles`**; no protocol/session/server |
 | `internal/server` | TCP accept, login, handlers, service HTTP | DI via `server.New` / `server.NewDefault` |
@@ -43,7 +44,8 @@ Operational rules for agents and humans changing this repository. This file is t
 ```
 cmd/openfsd       → internal/server, internal/web, internal/afv, …
 internal/server   → session, postoffice, protocol, auth, metar, db, sweatbox, serviceapi, cluster
-internal/postoffice → geo, session
+internal/postoffice → geo, session, postoffice/aabbfilter
+internal/postoffice/aabbfilter → geo (stdlib + geo only)
 internal/metar    → protocol, session
 internal/sweatbox → geo, pkg/twrfiles
 internal/cluster  → geo (+ stdlib, google/uuid); never server/web/db/postoffice/session
@@ -79,6 +81,7 @@ Enforce with `scripts/check-import-graph.sh`.
 | `pkg/afvprotocol` | Non-stdlib other than `golang.org/x/crypto` |
 | `pkg/fsdclient` | `internal/*` |
 | `internal/session` | `postoffice`, `server`, `web`, `metar` |
+| `internal/postoffice/aabbfilter` | Parent `postoffice`, `session`, `server`, `web`, `cluster`, `afv`; any third-party |
 | `internal/geo` | Any non-stdlib import |
 | `internal/web` | `session`, `postoffice`, `metar`, `sweatbox`, `server`, `cluster`, `afv` |
 | `internal/serviceapi` | `server`, `session`, `postoffice`, `web`, `sweatbox`, `cluster` |
@@ -190,6 +193,7 @@ Enforced by `scripts/check-coverage.sh` (CI).
 | `internal/geo` | ≥98% | **Hard** |
 | `internal/auth` | ≥95% | **Hard** |
 | `internal/postoffice` | ≥90% | **Hard** |
+| `internal/postoffice/aabbfilter` | ≥90% | **Hard** |
 | `internal/sweatbox` | ≥95% | **Hard** |
 | `internal/cluster` | ≥90% | **Hard** |
 | `internal/clientinject/cilus` | ≥98% | **Hard** |

@@ -21,9 +21,10 @@
 // # Geospatial model
 //
 // Range uses axis-aligned visibility-box overlap (historical FSD semantics)
-// via session VisBox / geo.AABBOverlap. At VATSIM-scale N (≤~15k) a lock-free
-// O(N) slab scan with cached AABB edges is faster under concurrent position
-// storms than a global R-tree or multi-cell hash (no write convoy).
+// via a lock-free float32 union-AABB sidecar (FilterOverlap) plus exact
+// session.VisBoxesOverlap on coarse hits. At VATSIM-scale N (≤~15k) this
+// beats a global R-tree or multi-cell hash under concurrent position storms
+// (no write convoy).
 //
 // Live membership is an atomic pointer slab with free-list tombstones so
 // Register/Release are O(1) amortized (not O(N) COW copies).
@@ -39,6 +40,7 @@ import (
 	"sync/atomic"
 
 	"github.com/renorris/openfsd/internal/geo"
+	"github.com/renorris/openfsd/internal/postoffice/aabbfilter"
 	"github.com/renorris/openfsd/internal/session"
 )
 
@@ -72,11 +74,36 @@ func releaseFound(p *[]*session.Session) {
 	foundPool.Put(p)
 }
 
+// idxPool recycles FilterOverlap destination slices.
+var idxPool = sync.Pool{
+	New: func() any {
+		s := make([]int32, 0, 64)
+		return &s
+	},
+}
+
+const idxPoolMaxCap = 32768 // same spirit as foundPoolMaxCap
+
+func acquireIdx() *[]int32 {
+	p := idxPool.Get().(*[]int32)
+	*p = (*p)[:0]
+	return p
+}
+
+func releaseIdx(p *[]int32) {
+	if p == nil || cap(*p) > idxPoolMaxCap {
+		return
+	}
+	idxPool.Put(p)
+}
+
 // liveSlab is an immutable-header slab of atomic session pointers.
 // After a slab is published via atomic.Pointer, only slot values mutate
 // (Register Store(s), Release Store(nil)). Grow publishes a new slab.
 type liveSlab struct {
-	slots []atomic.Pointer[session.Session]
+	slots                          []atomic.Pointer[session.Session]
+	minLat, minLon, maxLat, maxLon []float32 // expanded degrees; ordinary stores
+	live                           []byte    // 0 = hole, ≠0 = occupied
 }
 
 // regMeta is the callsign map value: session + O(1) slab indices for remove.
@@ -120,7 +147,108 @@ func newLiveSlab(capHint int) *liveSlab {
 	if capHint < 1 {
 		capHint = 1
 	}
-	return &liveSlab{slots: make([]atomic.Pointer[session.Session], capHint)}
+	s := &liveSlab{
+		slots:  make([]atomic.Pointer[session.Session], capHint),
+		minLat: make([]float32, capHint),
+		minLon: make([]float32, capHint),
+		maxLat: make([]float32, capHint),
+		maxLon: make([]float32, capHint),
+		live:   make([]byte, capHint),
+	}
+	nan := float32(math.NaN())
+	for i := 0; i < capHint; i++ {
+		s.minLat[i] = nan
+		s.minLon[i] = nan
+		s.maxLat[i] = nan
+		s.maxLon[i] = nan
+	}
+	return s
+}
+
+func copySlabOccupants(dst, src *liveSlab) {
+	n := len(src.slots)
+	for i := 0; i < n; i++ {
+		dst.slots[i].Store(src.slots[i].Load())
+	}
+	copySidecarSoA(dst, src)
+}
+
+// copySidecarSoA copies union-AABB words.
+//
+// Design called for //go:norace only on sidecar loads. Production also marks
+// these store helpers: concurrent compact re-fill / grow copy / hook writes
+// are the same accepted torn-float32 contract as VisBox. This is not a
+// license to share dst unsafely, and Search must not RaceDisable.
+
+//go:norace
+func copySidecarSoA(dst, src *liveSlab) {
+	copy(dst.minLat, src.minLat)
+	copy(dst.minLon, src.minLon)
+	copy(dst.maxLat, src.maxLat)
+	copy(dst.maxLon, src.maxLon)
+	copy(dst.live, src.live)
+}
+
+// storeSidecarRow writes one expanded AABB + live flag (torn stores accepted).
+// norace: see copySidecarSoA (extends load-only norace to compact/hook stores).
+
+//go:norace
+func storeSidecarRow(slab *liveSlab, i int, qMinLat, qMinLon, qMaxLat, qMaxLon float32, live byte) {
+	slab.minLat[i] = qMinLat
+	slab.minLon[i] = qMinLon
+	slab.maxLat[i] = qMaxLat
+	slab.maxLon[i] = qMaxLon
+	slab.live[i] = live
+}
+
+//go:norace
+func clearSidecarLive(slab *liveSlab, i int) {
+	slab.live[i] = 0
+}
+
+//go:norace
+func nanSidecarEdges(slab *liveSlab, i int) {
+	nan := float32(math.NaN())
+	slab.minLat[i] = nan
+	slab.minLon[i] = nan
+	slab.maxLat[i] = nan
+	slab.maxLon[i] = nan
+}
+
+const maxSidecarRetries = 8
+
+func (p *PostOffice) onVisChanged(s *session.Session) {
+	p.storeUnionSidecar(s)
+}
+
+func (p *PostOffice) storeUnionSidecar(s *session.Session) {
+	if s == nil {
+		return
+	}
+	min, max := s.UnionVisBox()
+	qMinLat, qMinLon, qMaxLat, qMaxLon := aabbfilter.ExpandF32(min, max)
+	p.writeOne(&p.live, s.SlabLive(), s, qMinLat, qMinLon, qMaxLat, qMaxLon)
+	if atc := s.SlabATC(); atc >= 0 {
+		p.writeOne(&p.atcLive, atc, s, qMinLat, qMinLon, qMaxLat, qMaxLon)
+	}
+}
+
+func (p *PostOffice) writeOne(slabPtr *atomic.Pointer[liveSlab], idx int32, s *session.Session, qMinLat, qMinLon, qMaxLat, qMaxLon float32) {
+	for attempt := 0; attempt < maxSidecarRetries; attempt++ {
+		slab := slabPtr.Load()
+		if slab == nil || idx < 0 || int(idx) >= len(slab.slots) {
+			return
+		}
+		if slab.slots[idx].Load() != s {
+			return // released, compacted away, or not yet published — NEVER write
+		}
+		i := int(idx)
+		storeSidecarRow(slab, i, qMinLat, qMinLon, qMaxLat, qMaxLon, 1)
+		if slabPtr.Load() != slab {
+			continue // grow/compact published a new header; retry
+		}
+		return
+	}
 }
 
 func (p *PostOffice) claimLiveSlotLocked() int32 {
@@ -140,10 +268,12 @@ func (p *PostOffice) claimLiveSlotLocked() int32 {
 		newCap = 128
 	}
 	fresh := newLiveSlab(newCap)
-	for i := 0; i < len(slab.slots); i++ {
-		fresh.slots[i].Store(slab.slots[i].Load())
+	copySlabOccupants(fresh, slab)
+	if growCopyHook != nil {
+		growCopyHook()
 	}
 	p.live.Store(fresh)
+	p.refillSidecarLocked()
 	idx := int32(p.liveUsed)
 	p.liveUsed++
 	return idx
@@ -166,24 +296,41 @@ func (p *PostOffice) claimAtcSlotLocked() int32 {
 		newCap = 32
 	}
 	fresh := newLiveSlab(newCap)
-	for i := 0; i < len(slab.slots); i++ {
-		fresh.slots[i].Store(slab.slots[i].Load())
+	copySlabOccupants(fresh, slab)
+	if growCopyHook != nil {
+		growCopyHook()
 	}
 	p.atcLive.Store(fresh)
+	p.refillSidecarLocked()
 	idx := int32(p.atcUsed)
 	p.atcUsed++
 	return idx
 }
 
+// growCopyHook, if set, runs after a grow SoA copy and before Store.
+// Tests use it to inject SetSecondary in the copy/Store window. Nil in production.
+var growCopyHook func()
+
+// refillSidecarLocked writes current UnionVisBox into published sidecar rows.
+// Caller holds clientMapLock. Same post-publish refresh as compact.
+func (p *PostOffice) refillSidecarLocked() {
+	for _, meta := range p.clientMap {
+		p.storeUnionSidecar(meta.s)
+	}
+}
+
 // snapshotAppendLocked claims live (and ATC) slab slots for s. Caller holds clientMapLock.
 func (p *PostOffice) snapshotAppendLocked(s *session.Session) (liveIdx, atcIdx int32) {
 	liveIdx = p.claimLiveSlotLocked()
-	p.live.Load().slots[liveIdx].Store(s)
-	p.liveCount.Add(1)
-
 	atcIdx = -1
 	if s.IsAtc {
 		atcIdx = p.claimAtcSlotLocked()
+	}
+	s.SetSlabLive(liveIdx)
+	s.SetSlabATC(atcIdx)
+	p.live.Load().slots[liveIdx].Store(s)
+	p.liveCount.Add(1)
+	if atcIdx >= 0 {
 		p.atcLive.Load().slots[atcIdx].Store(s)
 		p.atcCount.Add(1)
 	}
@@ -192,14 +339,24 @@ func (p *PostOffice) snapshotAppendLocked(s *session.Session) (liveIdx, atcIdx i
 
 // snapshotRemoveLocked nils slab slots for meta. Caller holds clientMapLock.
 func (p *PostOffice) snapshotRemoveLocked(meta *regMeta) {
+	s := meta.s
+	s.SetVisChangedHook(nil)
+	s.SetSlabLive(-1)
+	s.SetSlabATC(-1)
 	if slab := p.live.Load(); slab != nil && meta.liveIdx >= 0 && int(meta.liveIdx) < len(slab.slots) {
-		slab.slots[meta.liveIdx].Store(nil)
+		i := int(meta.liveIdx)
+		clearSidecarLive(slab, i)
+		slab.slots[i].Store(nil)
+		nanSidecarEdges(slab, i)
 		p.freeLive = append(p.freeLive, meta.liveIdx)
 		p.liveCount.Add(-1)
 	}
 	if meta.atcIdx >= 0 {
 		if slab := p.atcLive.Load(); slab != nil && int(meta.atcIdx) < len(slab.slots) {
-			slab.slots[meta.atcIdx].Store(nil)
+			i := int(meta.atcIdx)
+			clearSidecarLive(slab, i)
+			slab.slots[i].Store(nil)
+			nanSidecarEdges(slab, i)
 			p.freeAtc = append(p.freeAtc, meta.atcIdx)
 			p.atcCount.Add(-1)
 		}
@@ -241,11 +398,20 @@ func (p *PostOffice) compactLiveLocked() {
 	for _, meta := range p.clientMap {
 		fresh.slots[i].Store(meta.s)
 		meta.liveIdx = int32(i)
+		meta.s.SetSlabLive(int32(i))
+		min, max := meta.s.UnionVisBox()
+		q0, q1, q2, q3 := aabbfilter.ExpandF32(min, max)
+		storeSidecarRow(fresh, i, q0, q1, q2, q3, 1)
 		i++
 	}
 	p.live.Store(fresh)
 	p.liveUsed = i
 	p.freeLive = p.freeLive[:0]
+	// Re-fill AFTER publish while still holding clientMapLock.
+	// Closes: compact copied UnionVisBox, concurrent SetSecondary wrote the
+	// OLD slab (p.live still old ⇒ hook retry did not run), then compact
+	// published a stale primary-only row — lasting SECPOS FN.
+	p.refillSidecarLocked()
 }
 
 func (p *PostOffice) compactAtcLocked() {
@@ -262,11 +428,16 @@ func (p *PostOffice) compactAtcLocked() {
 		}
 		fresh.slots[i].Store(meta.s)
 		meta.atcIdx = int32(i)
+		meta.s.SetSlabATC(int32(i))
+		min, max := meta.s.UnionVisBox()
+		q0, q1, q2, q3 := aabbfilter.ExpandF32(min, max)
+		storeSidecarRow(fresh, i, q0, q1, q2, q3, 1)
 		i++
 	}
 	p.atcLive.Store(fresh)
 	p.atcUsed = i
 	p.freeAtc = p.freeAtc[:0]
+	p.refillSidecarLocked()
 }
 
 func (p *PostOffice) liveLen() int {
@@ -283,6 +454,9 @@ func (p *PostOffice) Register(s *session.Session) error {
 	}
 	liveIdx, atcIdx := p.snapshotAppendLocked(s)
 	p.clientMap[s.Callsign] = &regMeta{s: s, liveIdx: liveIdx, atcIdx: atcIdx}
+	p.storeUnionSidecar(s)
+	s.SetVisChangedHook(p.onVisChanged)
+	p.storeUnionSidecar(s)
 	p.clientMapLock.Unlock()
 	return nil
 }
@@ -324,23 +498,25 @@ func (p *PostOffice) Search(s *session.Session, callback func(recipient *session
 	foundPtr := acquireFound()
 	defer releaseFound(foundPtr)
 
-	p.searchLinear(s, foundPtr, false)
+	p.scanSidecar(s, foundPtr, false)
 
-	// Closest-velocity over found (outside any postoffice lock).
+	// Closest-velocity: proto-101 pilots only; min DistanceSq; one sqrt → meters.
 	if !s.IsAtc && s.ProtoRevision == 101 {
 		sLL := s.LatLon()
-		minD := math.MaxFloat64
+		minD2 := math.MaxFloat64
 		for _, other := range *foundPtr {
 			if other.IsAtc || other.ProtoRevision != 101 {
 				continue
 			}
 			oLL := other.LatLon()
-			d := geo.ApproxDistance(sLL[0], sLL[1], oLL[0], oLL[1])
-			if d < minD {
-				minD = d
+			d2 := geo.DistanceSq(sLL[0], sLL[1], oLL[0], oLL[1])
+			if d2 < minD2 {
+				minD2 = d2
 			}
 		}
-		s.ClosestVelocityClientDistance = minD
+		if minD2 < math.MaxFloat64 {
+			s.ClosestVelocityClientDistance = math.Sqrt(minD2)
+		}
 	}
 
 	for _, recipient := range *foundPtr {
@@ -357,7 +533,7 @@ func (p *PostOffice) SearchATC(s *session.Session, callback func(recipient *sess
 	foundPtr := acquireFound()
 	defer releaseFound(foundPtr)
 
-	p.searchLinear(s, foundPtr, true)
+	p.scanSidecar(s, foundPtr, true)
 
 	for _, recipient := range *foundPtr {
 		if !callback(recipient) {
@@ -366,9 +542,8 @@ func (p *PostOffice) SearchATC(s *session.Session, callback func(recipient *sess
 	}
 }
 
-// searchLinear lock-free scans live or atcLive slabs using visibility AABBs.
-// Overlap includes primary VisBox and any SECPOS secondary centers (union search).
-func (p *PostOffice) searchLinear(s *session.Session, foundPtr *[]*session.Session, atcOnly bool) {
+// scanSidecar lock-free scans the union-AABB sidecar then exact VisBoxesOverlap.
+func (p *PostOffice) scanSidecar(s *session.Session, foundPtr *[]*session.Session, atcOnly bool) {
 	var slab *liveSlab
 	if atcOnly {
 		slab = p.atcLive.Load()
@@ -379,12 +554,30 @@ func (p *PostOffice) searchLinear(s *session.Session, foundPtr *[]*session.Sessi
 		return
 	}
 
-	for i := range slab.slots {
+	min, max := s.UnionVisBox()
+	q0, q1, q2, q3 := aabbfilter.ExpandF32(min, max)
+	query := [4]float32{q0, q1, q2, q3}
+
+	idxBuf := acquireIdx()
+	defer releaseIdx(idxBuf)
+	if n := len(slab.slots); cap(*idxBuf) < n {
+		grown := make([]int32, 0, n)
+		*idxBuf = grown
+	}
+	*idxBuf = aabbfilter.FilterOverlap(query, slab.minLat, slab.minLon, slab.maxLat, slab.maxLon, slab.live, (*idxBuf)[:0])
+
+	slotN := len(slab.slots)
+	for _, i := range *idxBuf {
+		if i < 0 || int(i) >= slotN {
+			continue
+		}
 		other := slab.slots[i].Load()
+		// Identity skip only. Do not skip i == SlabLive/SlabATC: compact
+		// remaps those indices while this scan still holds an older slab,
+		// and the old slot at that integer may be a different session.
 		if other == nil || other == s {
 			continue
 		}
-		// Primary + secondary multi-center mutual box overlap (SECPOS).
 		if !session.VisBoxesOverlap(s, other) {
 			continue
 		}

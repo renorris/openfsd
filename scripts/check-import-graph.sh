@@ -161,6 +161,19 @@ check_no_imports "internal/session" "${MODULE}/internal/session/..." \
   "${MODULE}/internal/web" \
   "${MODULE}/internal/metar"
 
+# internal/postoffice/aabbfilter — stdlib + internal/geo only
+check_imports_allowlist "internal/postoffice/aabbfilter" "${MODULE}/internal/postoffice/aabbfilter/..." \
+  "${MODULE}/internal/geo"
+
+# aabbfilter must not import parent postoffice or orchestration packages
+check_no_imports "internal/postoffice/aabbfilter" "${MODULE}/internal/postoffice/aabbfilter/..." \
+  "${MODULE}/internal/postoffice" \
+  "${MODULE}/internal/session" \
+  "${MODULE}/internal/server" \
+  "${MODULE}/internal/web" \
+  "${MODULE}/internal/cluster" \
+  "${MODULE}/internal/afv"
+
 # internal/geo — stdlib only
 check_stdlib_only "internal/geo" "${MODULE}/internal/geo/..."
 

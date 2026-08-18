@@ -7,7 +7,8 @@
 #
 # Hard floors (fail CI):
 #   pkg/protocol ≥98, pkg/twrfiles ≥98, pkg/afvprotocol ≥98, internal/geo ≥98,
-#   internal/auth ≥95, internal/postoffice ≥90, internal/sweatbox ≥95,
+#   internal/auth ≥95, internal/postoffice ≥90, internal/postoffice/aabbfilter ≥90,
+#   internal/sweatbox ≥95,
 #   internal/cluster ≥90, internal/clientinject/cilus ≥98,
 #   internal/clientinject/vpilotconfig ≥98, internal/clientinject/pepatch ≥95
 # Soft / reported only:
@@ -59,6 +60,7 @@ hard = {
     "internal/geo": 98.0,
     "internal/auth": 95.0,
     "internal/postoffice": 90.0,
+    "internal/postoffice/aabbfilter": 90.0,
     "internal/sweatbox": 95.0,
     "internal/cluster": 90.0,
     "internal/clientinject/cilus": 98.0,
